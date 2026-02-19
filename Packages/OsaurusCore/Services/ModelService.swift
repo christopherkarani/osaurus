@@ -100,6 +100,26 @@ struct ModelServiceRouter {
         let trimmed = requestedModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let isDefault = trimmed.isEmpty || trimmed.caseInsensitiveCompare("default") == .orderedSame
 
+        let isOpenClawRequest =
+            trimmed.hasPrefix("openclaw:")
+            || trimmed.hasPrefix("openclaw-model:")
+
+        if isOpenClawRequest {
+            for svc in remoteServices {
+                guard svc.isAvailable() else { continue }
+                if svc.handles(requestedModel: trimmed) {
+                    return .service(service: svc, effectiveModel: trimmed)
+                }
+            }
+            for svc in services {
+                guard svc.isAvailable() else { continue }
+                if svc.handles(requestedModel: trimmed) {
+                    return .service(service: svc, effectiveModel: trimmed)
+                }
+            }
+            return .none
+        }
+
         // First, check remote provider services (they use prefixed model names like "openai/gpt-4")
         // These take priority for explicit model requests with provider prefixes
         if !isDefault {

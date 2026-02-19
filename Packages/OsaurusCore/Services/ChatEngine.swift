@@ -75,7 +75,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         let services = self.services
 
         // Get remote provider services
-        let remoteServices = await getRemoteProviderServices()
+        let providerServices = await getRemoteProviderServices()
+        let gatewayServices = await getGatewayServices()
+        let remoteServices = providerServices + gatewayServices
 
         let route = ModelServiceRouter.resolve(
             requestedModel: request.model,
@@ -269,7 +271,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         let services = self.services
 
         // Get remote provider services
-        let remoteServices = await getRemoteProviderServices()
+        let providerServices = await getRemoteProviderServices()
+        let gatewayServices = await getGatewayServices()
+        let remoteServices = providerServices + gatewayServices
 
         let route = ModelServiceRouter.resolve(
             requestedModel: request.model,
@@ -433,6 +437,14 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     private func getRemoteProviderServices() async -> [ModelService] {
         return await MainActor.run {
             RemoteProviderManager.shared.connectedServices()
+        }
+    }
+
+    /// Fetch OpenClaw gateway service when the gateway is connected.
+    private func getGatewayServices() async -> [ModelService] {
+        return await MainActor.run {
+            guard OpenClawManager.shared.isConnected else { return [] }
+            return [OpenClawModelService.shared]
         }
     }
 }
