@@ -86,7 +86,7 @@ extension OpenClawActivityStore {
 
 extension OpenClawActivityStore {
 
-    private func processEventFrame(_ frame: EventFrame) {
+    func processEventFrame(_ frame: EventFrame) {
         // IMPORTANT: AnyCodable decoder stores dicts as [String: AnyCodable], NOT [String: Any].
         // Casting to [String: Any] silently returns nil. Must cast to [String: AnyCodable]
         // and unwrap each field via .value.
