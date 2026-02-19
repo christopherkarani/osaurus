@@ -29,7 +29,7 @@ public enum ActivityKind {
 }
 
 /// Status of an activity (used primarily for tool calls)
-public enum ActivityStatus {
+public enum ActivityStatus: Equatable {
     case pending
     case running
     case completed
@@ -116,7 +116,7 @@ public struct AssistantActivity {
 
 /// Represents a context compaction event
 public struct CompactionActivity {
-    public enum Phase {
+    public enum Phase: Equatable {
         case started
         case ended
         case willRetry
@@ -129,7 +129,7 @@ public struct CompactionActivity {
 
 /// Represents agent run lifecycle events (start, end, error)
 public struct LifecycleActivity {
-    public enum Phase {
+    public enum Phase: Equatable {
         case started
         case ended
         case error(String)
