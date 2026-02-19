@@ -97,6 +97,51 @@ public final class OpenClawManager: ObservableObject {
         }
     }
 
+    public enum ActiveSessionStatus: Equatable, Sendable {
+        case thinking
+        case usingTool(String)
+        case responding
+    }
+
+    public struct ActiveSessionUsage: Equatable, Sendable {
+        public let inputTokens: Int?
+        public let outputTokens: Int?
+        public let totalTokens: Int?
+
+        public init(inputTokens: Int?, outputTokens: Int?, totalTokens: Int?) {
+            self.inputTokens = inputTokens
+            self.outputTokens = outputTokens
+            self.totalTokens = totalTokens
+        }
+    }
+
+    public struct ActiveSessionInfo: Identifiable, Sendable, Equatable {
+        public let id: String
+        public let key: String
+        public let title: String
+        public let model: String?
+        public let status: ActiveSessionStatus
+        public let usage: ActiveSessionUsage?
+        public let updatedAt: Date
+
+        public init(
+            key: String,
+            title: String,
+            model: String?,
+            status: ActiveSessionStatus,
+            usage: ActiveSessionUsage?,
+            updatedAt: Date
+        ) {
+            self.id = key
+            self.key = key
+            self.title = title
+            self.model = model
+            self.status = status
+            self.usage = usage
+            self.updatedAt = updatedAt
+        }
+    }
+
     public static let shared = OpenClawManager()
 
     @Published public private(set) var configuration: OpenClawConfiguration
@@ -106,6 +151,7 @@ public final class OpenClawManager: ObservableObject {
     @Published public private(set) var environmentStatus: OpenClawEnvironmentStatus = .checking
     @Published public private(set) var channels: [ChannelInfo] = []
     @Published public private(set) var availableModels: [String] = []
+    @Published public private(set) var activeSessions: [ActiveSessionInfo] = []
     @Published public private(set) var lastHealth: OpenClawGatewayHealth?
     @Published public private(set) var lastError: String?
 
@@ -114,6 +160,7 @@ public final class OpenClawManager: ObservableObject {
     private var healthMonitorTask: Task<Void, Never>?
     private var trackedPID: Int?
     private var eventListenerID: UUID?
+    private var runToSessionKey: [String: String] = [:]
 
     public var isConnected: Bool {
         connectionState == .connected
@@ -311,6 +358,12 @@ public final class OpenClawManager: ObservableObject {
         saveConfiguration()
     }
 
+    public func emergencyStopSession(key: String) async throws {
+        try await OpenClawSessionManager.shared.patchSession(key: key, sendPolicy: "deny")
+        activeSessions.removeAll { $0.key == key }
+        runToSessionKey = runToSessionKey.filter { $0.value != key }
+    }
+
     public func updateConfiguration(_ config: OpenClawConfiguration) {
         configuration = config
         saveConfiguration()
@@ -350,8 +403,10 @@ public final class OpenClawManager: ObservableObject {
         connectionState = .disconnected
         channels = []
         availableModels = []
+        activeSessions = []
         lastHealth = nil
         trackedPID = nil
+        runToSessionKey = [:]
 
         if configuration.isEnabled {
             phase = gatewayStatus == .running ? .gatewayRunning : .configured
@@ -370,6 +425,7 @@ public final class OpenClawManager: ObservableObject {
             guard case let .event(frame) = push else { return }
             await MainActor.run {
                 self?.activityStore.processEventFrame(frame)
+                self?.ingestActiveSessionEvent(frame)
             }
         }
         eventListenerID = id
@@ -498,6 +554,204 @@ public final class OpenClawManager: ObservableObject {
             pid: pid,
             timestamp: Date()
         )
+    }
+
+    private func ingestActiveSessionEvent(_ frame: EventFrame) {
+        guard let payload = frame.payload?.value as? [String: OpenClawProtocol.AnyCodable],
+            let stream = payload["stream"]?.value as? String,
+            let runId = payload["runId"]?.value as? String
+        else {
+            return
+        }
+
+        let streamName = stream.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let data = payload["data"]?.value as? [String: OpenClawProtocol.AnyCodable] ?? [:]
+        let explicitSessionKey = stringValue(payload["sessionKey"]?.value)
+            ?? stringValue(data["sessionKey"]?.value)
+        if let explicitSessionKey, !explicitSessionKey.isEmpty {
+            runToSessionKey[runId] = explicitSessionKey
+        }
+
+        guard let sessionKey = runToSessionKey[runId], !sessionKey.isEmpty else { return }
+        let timestamp = parseEventTimestamp(payload["ts"]?.value) ?? Date()
+        let metadata = OpenClawSessionManager.shared.sessions.first(where: { $0.key == sessionKey })
+        let sessionTitle = normalizedTitle(metadata?.title, fallback: sessionKey)
+        let sessionModel = normalizedString(metadata?.model) ?? stringValue(data["model"]?.value)
+
+        switch streamName {
+        case "lifecycle":
+            let phase = stringValue(data["phase"]?.value)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+                ?? ""
+            if phase == "end" || phase == "error" {
+                removeActiveSession(for: sessionKey)
+                runToSessionKey.removeValue(forKey: runId)
+                return
+            }
+            upsertActiveSession(
+                for: sessionKey,
+                title: sessionTitle,
+                model: sessionModel,
+                status: .thinking,
+                usage: resolveUsage(data: data, metadata: metadata),
+                updatedAt: timestamp
+            )
+
+        case "tool":
+            let phase = stringValue(data["phase"]?.value)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+                ?? ""
+            if phase == "result" {
+                upsertActiveSession(
+                    for: sessionKey,
+                    title: sessionTitle,
+                    model: sessionModel,
+                    status: .responding,
+                    usage: resolveUsage(data: data, metadata: metadata),
+                    updatedAt: timestamp
+                )
+                return
+            }
+
+            let toolName = normalizedString(stringValue(data["name"]?.value)) ?? "unknown"
+            upsertActiveSession(
+                for: sessionKey,
+                title: sessionTitle,
+                model: sessionModel,
+                status: .usingTool(toolName),
+                usage: resolveUsage(data: data, metadata: metadata),
+                updatedAt: timestamp
+            )
+
+        case "assistant":
+            upsertActiveSession(
+                for: sessionKey,
+                title: sessionTitle,
+                model: sessionModel,
+                status: .responding,
+                usage: resolveUsage(data: data, metadata: metadata),
+                updatedAt: timestamp
+            )
+
+        case "thinking":
+            upsertActiveSession(
+                for: sessionKey,
+                title: sessionTitle,
+                model: sessionModel,
+                status: .thinking,
+                usage: resolveUsage(data: data, metadata: metadata),
+                updatedAt: timestamp
+            )
+
+        default:
+            break
+        }
+    }
+
+    private func upsertActiveSession(
+        for key: String,
+        title: String,
+        model: String?,
+        status: ActiveSessionStatus,
+        usage: ActiveSessionUsage?,
+        updatedAt: Date
+    ) {
+        let existing = activeSessions.first(where: { $0.key == key })
+        let merged = ActiveSessionInfo(
+            key: key,
+            title: title,
+            model: normalizedString(model) ?? existing?.model,
+            status: status,
+            usage: usage ?? existing?.usage,
+            updatedAt: updatedAt
+        )
+
+        if let index = activeSessions.firstIndex(where: { $0.key == key }) {
+            activeSessions[index] = merged
+        } else {
+            activeSessions.append(merged)
+        }
+        activeSessions.sort { $0.updatedAt > $1.updatedAt }
+    }
+
+    private func removeActiveSession(for key: String) {
+        activeSessions.removeAll { $0.key == key }
+    }
+
+    private func parseEventTimestamp(_ raw: Any?) -> Date? {
+        if let ms = intValue(raw), ms > 0 {
+            return Date(timeIntervalSince1970: TimeInterval(ms) / 1000)
+        }
+        if let value = doubleValue(raw), value > 0 {
+            return Date(timeIntervalSince1970: value / 1000)
+        }
+        return nil
+    }
+
+    private func resolveUsage(
+        data: [String: OpenClawProtocol.AnyCodable],
+        metadata: OpenClawSessionManager.GatewaySession?
+    ) -> ActiveSessionUsage? {
+        var input: Int? = intValue(data["inputTokens"]?.value) ?? intValue(data["input"]?.value)
+        var output: Int? = intValue(data["outputTokens"]?.value) ?? intValue(data["output"]?.value)
+        var total: Int? = intValue(data["totalTokens"]?.value) ?? intValue(data["total"]?.value)
+
+        if let usage = data["usage"]?.value as? [String: OpenClawProtocol.AnyCodable] {
+            input = input
+                ?? intValue(usage["input"]?.value)
+                ?? intValue(usage["inputTokens"]?.value)
+            output = output
+                ?? intValue(usage["output"]?.value)
+                ?? intValue(usage["outputTokens"]?.value)
+            total = total
+                ?? intValue(usage["total"]?.value)
+                ?? intValue(usage["totalTokens"]?.value)
+        }
+
+        if total == nil, let contextTokens = metadata?.contextTokens {
+            total = contextTokens
+        }
+
+        if input == nil, output == nil, total == nil {
+            return nil
+        }
+        return ActiveSessionUsage(inputTokens: input, outputTokens: output, totalTokens: total)
+    }
+
+    private func intValue(_ raw: Any?) -> Int? {
+        if let value = raw as? Int {
+            return value
+        }
+        if let value = raw as? Double {
+            return Int(value)
+        }
+        if let value = raw as? String {
+            return Int(value.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        return nil
+    }
+
+    private func stringValue(_ raw: Any?) -> String? {
+        guard let raw else { return nil }
+        if let value = raw as? String {
+            return value
+        }
+        return String(describing: raw)
+    }
+
+    private func normalizedString(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !value.isEmpty
+        else {
+            return nil
+        }
+        return value
+    }
+
+    private func normalizedTitle(_ value: String?, fallback: String) -> String {
+        normalizedString(value) ?? fallback
     }
 
     private func doubleValue(_ raw: Any?) -> Double? {

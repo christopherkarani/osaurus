@@ -101,6 +101,15 @@ struct OpenClawDashboardView: View {
         VStack(alignment: .leading, spacing: 16) {
             OpenClawGatewayStatusCard(manager: manager)
 
+            if !manager.activeSessions.isEmpty {
+                sectionTitle("Active Sessions")
+                VStack(spacing: 10) {
+                    ForEach(manager.activeSessions) { session in
+                        OpenClawActiveSessionView(manager: manager, session: session)
+                    }
+                }
+            }
+
             if !manager.channels.isEmpty {
                 sectionTitle("Channels")
                 VStack(spacing: 10) {
