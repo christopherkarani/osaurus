@@ -80,10 +80,12 @@ public actor OpenClawGatewayConnection {
 
     private var channel: GatewayChannelActor?
     private var listeners: [UUID: @Sendable (GatewayPush) async -> Void] = [:]
+    private var recentEventFrames: [EventFrame] = []
     private var connected = false
     private let requestExecutor: RequestExecutor?
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
+    private static let maxBufferedEventFrames = 128
 
     public init(requestExecutor: RequestExecutor? = nil) {
         self.requestExecutor = requestExecutor
@@ -301,7 +303,12 @@ public actor OpenClawGatewayConnection {
     }
 
     public func subscribeToEvents(runId: String) -> AsyncStream<EventFrame> {
-        AsyncStream { continuation in
+        let bufferedFrames = recentEventFrames.filter { Self.runId(for: $0) == runId }
+        return AsyncStream { continuation in
+            for frame in bufferedFrames {
+                continuation.yield(frame)
+            }
+
             let listenerId = addEventListener { push in
                 guard case .event(let frame) = push else { return }
                 guard Self.runId(for: frame) == runId else { return }
@@ -491,6 +498,13 @@ public actor OpenClawGatewayConnection {
     }
 
     private func handlePush(_ push: GatewayPush) async {
+        if case let .event(frame) = push {
+            recentEventFrames.append(frame)
+            if recentEventFrames.count > Self.maxBufferedEventFrames {
+                recentEventFrames.removeFirst(recentEventFrames.count - Self.maxBufferedEventFrames)
+            }
+        }
+
         for listener in listeners.values {
             Task {
                 await listener(push)

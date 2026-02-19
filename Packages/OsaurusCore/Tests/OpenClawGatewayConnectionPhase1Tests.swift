@@ -182,6 +182,38 @@ struct OpenClawGatewayConnectionPhase1Tests {
     }
 
     @Test
+    func subscribeToEvents_replaysBufferedFramesForRunId() async throws {
+        let connection = OpenClawGatewayConnection()
+
+        let earlyFrame = makeEventFrame(
+            event: "chat",
+            payload: [
+                "runId": "buffered-run",
+                "seq": 1,
+                "state": "delta",
+                "message": ["role": "assistant", "content": [["type": "text", "text": "early"]]]
+            ],
+            seq: 1
+        )
+        await connection._testEmitPush(.event(earlyFrame))
+
+        let stream = await connection.subscribeToEvents(runId: "buffered-run")
+
+        var matched: EventFrame?
+        for await frame in stream {
+            matched = frame
+            break
+        }
+
+        #expect(matched?.seq == 1)
+        if let payload = matched?.payload?.value as? [String: OpenClawProtocol.AnyCodable] {
+            #expect(payload["runId"]?.value as? String == "buffered-run")
+        } else {
+            Issue.record("Expected payload dictionary on buffered event frame")
+        }
+    }
+
+    @Test
     func announcePresence_postsSystemEvent() async throws {
         let recorder = OpenClawGatewayCallRecorder()
         let connection = OpenClawGatewayConnection { method, params in
