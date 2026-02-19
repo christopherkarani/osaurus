@@ -15,6 +15,11 @@ struct ChatSessionSidebar: View {
     let onNewChat: () -> Void
     let onDelete: (UUID) -> Void
     let onRename: (UUID, String) -> Void
+    let showOpenClawSessions: Bool
+    let openClawSessions: [OpenClawSessionManager.GatewaySession]
+    let currentOpenClawSessionKey: String?
+    var onSelectOpenClawSession: ((OpenClawSessionManager.GatewaySession) -> Void)? = nil
+    var onNewOpenClawSession: (() -> Void)? = nil
     /// Optional callback for opening a session in a new window
     var onOpenInNewWindow: ((ChatSessionData) -> Void)? = nil
 
@@ -36,6 +41,18 @@ struct ChatSessionSidebar: View {
         }
     }
 
+    private var hasGatewaySessions: Bool {
+        showOpenClawSessions && !openClawSessions.isEmpty
+    }
+
+    private var shouldShowEmptyState: Bool {
+        sessions.isEmpty && !hasGatewaySessions
+    }
+
+    private var shouldShowNoResults: Bool {
+        !sessions.isEmpty && filteredSessions.isEmpty && !hasGatewaySessions
+    }
+
     var body: some View {
         SidebarContainer(attachedEdge: .leading, topPadding: 40) {
             // Header with New Chat button
@@ -54,9 +71,9 @@ struct ChatSessionSidebar: View {
                 .opacity(0.3)
 
             // Session list
-            if sessions.isEmpty {
+            if shouldShowEmptyState {
                 emptyState
-            } else if filteredSessions.isEmpty {
+            } else if shouldShowNoResults {
                 SidebarNoResultsView(searchQuery: searchQuery) {
                     withAnimation(theme.animationQuick()) {
                         searchQuery = ""
@@ -120,55 +137,101 @@ struct ChatSessionSidebar: View {
     private var sessionList: some View {
         ScrollView {
             LazyVStack(spacing: 2) {
-                ForEach(filteredSessions) { session in
-                    SessionRow(
-                        session: session,
-                        agent: agentManager.agent(for: session.agentId ?? Agent.defaultId),
-                        isSelected: session.id == currentSessionId,
-                        isEditing: editingSessionId == session.id,
-                        editingTitle: $editingTitle,
-                        onSelect: {
-                            // Dismiss any ongoing edit first
-                            if editingSessionId != nil && editingSessionId != session.id {
-                                dismissEditing()
-                            }
-                            onSelect(session)
-                        },
-                        onStartRename: {
-                            // Dismiss any other editing first
-                            if editingSessionId != nil && editingSessionId != session.id {
-                                dismissEditing()
-                            }
-                            editingSessionId = session.id
-                            editingTitle = session.title
-                        },
-                        onConfirmRename: {
-                            if !editingTitle.trimmingCharacters(in: .whitespaces).isEmpty {
-                                onRename(session.id, editingTitle)
-                            }
-                            editingSessionId = nil
-                        },
-                        onCancelRename: {
-                            editingSessionId = nil
-                        },
-                        onDelete: {
-                            // Dismiss editing first
-                            if editingSessionId != nil {
-                                dismissEditing()
-                            }
-                            onDelete(session.id)
-                        },
-                        onOpenInNewWindow: onOpenInNewWindow != nil
-                            ? {
-                                onOpenInNewWindow?(session)
-                            } : nil
-                    )
+                if !filteredSessions.isEmpty {
+                    ForEach(filteredSessions) { session in
+                        SessionRow(
+                            session: session,
+                            agent: agentManager.agent(for: session.agentId ?? Agent.defaultId),
+                            isSelected: session.id == currentSessionId,
+                            isEditing: editingSessionId == session.id,
+                            editingTitle: $editingTitle,
+                            onSelect: {
+                                // Dismiss any ongoing edit first
+                                if editingSessionId != nil && editingSessionId != session.id {
+                                    dismissEditing()
+                                }
+                                onSelect(session)
+                            },
+                            onStartRename: {
+                                // Dismiss any other editing first
+                                if editingSessionId != nil && editingSessionId != session.id {
+                                    dismissEditing()
+                                }
+                                editingSessionId = session.id
+                                editingTitle = session.title
+                            },
+                            onConfirmRename: {
+                                if !editingTitle.trimmingCharacters(in: .whitespaces).isEmpty {
+                                    onRename(session.id, editingTitle)
+                                }
+                                editingSessionId = nil
+                            },
+                            onCancelRename: {
+                                editingSessionId = nil
+                            },
+                            onDelete: {
+                                // Dismiss editing first
+                                if editingSessionId != nil {
+                                    dismissEditing()
+                                }
+                                onDelete(session.id)
+                            },
+                            onOpenInNewWindow: onOpenInNewWindow != nil
+                                ? {
+                                    onOpenInNewWindow?(session)
+                                } : nil
+                        )
+                    }
+                }
+
+                if showOpenClawSessions {
+                    openClawSessionsSection
                 }
             }
             .padding(.vertical, 8)
             .padding(.horizontal, 8)
         }
         .scrollIndicators(.hidden)
+    }
+
+    private var openClawSessionsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("OpenClaw Sessions")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.secondaryText.opacity(0.85))
+                Spacer()
+                if let onNewOpenClawSession {
+                    Button(action: onNewOpenClawSession) {
+                        Image(systemName: "plus.circle")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.secondaryText.opacity(0.8))
+                    }
+                    .buttonStyle(.plain)
+                    .help("New OpenClaw Session")
+                }
+            }
+            .padding(.horizontal, 4)
+            .padding(.top, filteredSessions.isEmpty ? 0 : 8)
+
+            if openClawSessions.isEmpty {
+                Text("No gateway sessions")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText.opacity(0.7))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+            } else {
+                ForEach(openClawSessions) { gatewaySession in
+                    OpenClawSessionRow(
+                        session: gatewaySession,
+                        isSelected: gatewaySession.key == currentOpenClawSessionKey,
+                        onSelect: {
+                            onSelectOpenClawSession?(gatewaySession)
+                        }
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -334,6 +397,60 @@ private struct SessionRow: View {
 
 }
 
+private struct OpenClawSessionRow: View {
+    let session: OpenClawSessionManager.GatewaySession
+    let isSelected: Bool
+    let onSelect: () -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                Circle()
+                    .fill(theme.secondaryText.opacity(theme.isDark ? 0.12 : 0.08))
+                    .frame(width: 24, height: 24)
+                Image(systemName: "antenna.radiowaves.left.and.right")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(theme.secondaryText.opacity(0.8))
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(session.title ?? session.key)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+
+                if let lastMessage = session.lastMessage,
+                    !lastMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                {
+                    Text(lastMessage)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.secondaryText.opacity(0.8))
+                        .lineLimit(1)
+                } else if let date = session.lastActiveAt {
+                    Text(formatRelativeDate(date))
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.secondaryText.opacity(0.85))
+                }
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(SidebarRowBackground(isSelected: isSelected, isHovered: isHovered))
+        .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+        .onTapGesture(perform: onSelect)
+        .onHover { hovering in
+            withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
+                isHovered = hovering
+            }
+        }
+    }
+}
+
 // MARK: - Preview
 
 #if DEBUG
@@ -345,7 +462,10 @@ private struct SessionRow: View {
                 onSelect: { _ in },
                 onNewChat: {},
                 onDelete: { _ in },
-                onRename: { _, _ in }
+                onRename: { _, _ in },
+                showOpenClawSessions: false,
+                openClawSessions: [],
+                currentOpenClawSessionKey: nil
             )
             .frame(height: 400)
         }

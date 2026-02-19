@@ -53,6 +53,8 @@ final class ChatWindowState: ObservableObject {
     // MARK: - Pre-computed View Values
 
     @Published private(set) var filteredSessions: [ChatSessionData] = []
+    @Published private(set) var isOpenClawConnected: Bool = OpenClawManager.shared.isConnected
+    @Published private(set) var openClawSessions: [OpenClawSessionManager.GatewaySession] = []
     @Published private(set) var cachedSystemPrompt: String = ""
     @Published private(set) var cachedActiveAgent: Agent = .default
     @Published private(set) var cachedAgentDisplayName: String = "Assistant"
@@ -92,6 +94,9 @@ final class ChatWindowState: ObservableObject {
         }
 
         setupNotificationObservers()
+        Task { [weak self] in
+            await self?.refreshOpenClawSessions()
+        }
     }
 
     /// Wrap an existing `ExecutionContext`, reusing its sessions without duplication.
@@ -122,6 +127,9 @@ final class ChatWindowState: ObservableObject {
         }
 
         setupNotificationObservers()
+        Task { [weak self] in
+            await self?.refreshOpenClawSessions()
+        }
     }
 
     deinit {
@@ -159,6 +167,58 @@ final class ChatWindowState: ObservableObject {
         if !session.turns.isEmpty { session.save() }
         session.reset(for: agentId)
         refreshSessions()
+    }
+
+    func refreshOpenClawSessions() async {
+        isOpenClawConnected = OpenClawManager.shared.isConnected
+        guard isOpenClawConnected else {
+            openClawSessions = []
+            return
+        }
+
+        do {
+            try await OpenClawSessionManager.shared.loadSessions()
+            syncOpenClawSessionsFromManager()
+        } catch {
+            print("[ChatWindowState] Failed to refresh OpenClaw sessions: \(error)")
+        }
+    }
+
+    func openOpenClawSession(_ gatewaySession: OpenClawSessionManager.GatewaySession) async {
+        if !session.turns.isEmpty, !session.isOpenClawSession {
+            session.save()
+        }
+
+        do {
+            let turns = try await OpenClawChatHistoryLoader.loadHistory(sessionKey: gatewaySession.key)
+            session.loadOpenClawSession(
+                sessionKey: gatewaySession.key,
+                title: gatewaySession.title,
+                turns: turns
+            )
+            OpenClawSessionManager.shared.setActiveSessionKey(gatewaySession.key)
+        } catch {
+            print("[ChatWindowState] Failed to open OpenClaw session \(gatewaySession.key): \(error)")
+        }
+    }
+
+    func createAndOpenOpenClawSession() async {
+        guard OpenClawManager.shared.isConnected else { return }
+
+        do {
+            let selectedGatewayModel = session.pendingOpenClawModelId()
+            let sessionKey = try await OpenClawSessionManager.shared.createSession(model: selectedGatewayModel)
+            let turns = try await OpenClawChatHistoryLoader.loadHistory(sessionKey: sessionKey)
+            // Convert pre-session openclaw-model:<modelId> selection into runtime openclaw:<sessionKey>.
+            session.loadOpenClawSession(
+                sessionKey: sessionKey,
+                title: "OpenClaw Session",
+                turns: turns
+            )
+            await refreshOpenClawSessions()
+        } catch {
+            print("[ChatWindowState] Failed to create OpenClaw session: \(error)")
+        }
     }
 
     // MARK: - Mode Switching
@@ -267,6 +327,7 @@ final class ChatWindowState: ObservableObject {
         refreshSessions()
         refreshTheme()
         refreshAgentConfig()
+        await refreshOpenClawSessions()
         await session.refreshModelOptions()
     }
 
@@ -347,5 +408,31 @@ final class ChatWindowState: ObservableObject {
                 }
             }
         )
+        notificationObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: .openClawConnectionChanged,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    await self?.refreshOpenClawSessions()
+                }
+            }
+        )
+        notificationObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: .openClawSessionsChanged,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.syncOpenClawSessionsFromManager()
+                }
+            }
+        )
+    }
+
+    private func syncOpenClawSessionsFromManager() {
+        openClawSessions = OpenClawSessionManager.shared.sessions
     }
 }

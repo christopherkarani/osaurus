@@ -6,6 +6,10 @@
 import Foundation
 import OpenClawProtocol
 
+extension Notification.Name {
+    static let openClawSessionsChanged = Notification.Name("openClawSessionsChanged")
+}
+
 @MainActor
 public final class OpenClawSessionManager: ObservableObject {
     public struct GatewaySession: Identifiable, Sendable, Equatable {
@@ -81,6 +85,7 @@ public final class OpenClawSessionManager: ObservableObject {
         {
             self.activeSessionKey = nil
         }
+        postSessionsChanged()
     }
 
     public func createSession(model: String?) async throws -> String {
@@ -96,6 +101,7 @@ public final class OpenClawSessionManager: ObservableObject {
         if activeSessionKey == key {
             activeSessionKey = nil
         }
+        postSessionsChanged()
     }
 
     public func resetSession(key: String) async throws {
@@ -123,6 +129,10 @@ public final class OpenClawSessionManager: ObservableObject {
 
     public func setActiveSessionKey(_ key: String?) {
         activeSessionKey = key
+    }
+
+    private func postSessionsChanged() {
+        NotificationCenter.default.post(name: .openClawSessionsChanged, object: nil)
     }
 
     private func preferredTitle(for item: OpenClawSessionListItem) -> String? {

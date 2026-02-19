@@ -17,6 +17,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
     public var turns: [ChatTurnData]
     /// The agent this session belongs to. nil = Default agent
     public var agentId: UUID?
+    public var openClawSessionKey: String?
 
     public init(
         id: UUID = UUID(),
@@ -25,7 +26,8 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         updatedAt: Date = Date(),
         selectedModel: String? = nil,
         turns: [ChatTurnData] = [],
-        agentId: UUID? = nil
+        agentId: UUID? = nil,
+        openClawSessionKey: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -34,6 +36,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         self.selectedModel = selectedModel
         self.turns = turns
         self.agentId = agentId
+        self.openClawSessionKey = openClawSessionKey
     }
 
     // Custom decoder for backward compatibility with old sessions
@@ -48,6 +51,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         agentId =
             try container.decodeIfPresent(UUID.self, forKey: .agentId)
             ?? container.decodeIfPresent(UUID.self, forKey: .personaId)
+        openClawSessionKey = try container.decodeIfPresent(String.self, forKey: .openClawSessionKey)
         // Note: enabledToolOverrides was removed - old values are ignored for backward compatibility
         _ = try? container.decodeIfPresent([String: Bool].self, forKey: .enabledToolOverrides)
     }
@@ -62,10 +66,12 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         try container.encodeIfPresent(selectedModel, forKey: .selectedModel)
         try container.encode(turns, forKey: .turns)
         try container.encodeIfPresent(agentId, forKey: .agentId)
+        try container.encodeIfPresent(openClawSessionKey, forKey: .openClawSessionKey)
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, title, createdAt, updatedAt, selectedModel, turns, enabledToolOverrides, agentId
+        case openClawSessionKey
         case personaId  // legacy key for migration
     }
 

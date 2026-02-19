@@ -19,6 +19,7 @@ final class ChatSession: ObservableObject {
     @Published var input: String = ""
     @Published var pendingImages: [Data] = []
     @Published var selectedModel: String? = nil
+    @Published var openClawSessionKey: String? = nil
     @Published var modelOptions: [ModelOption] = []
     @Published var hasAnyModel: Bool = false
     @Published var isDiscoveringModels: Bool = true
@@ -30,6 +31,9 @@ final class ChatSession: ObservableObject {
     @Published var showVoiceOverlay: Bool = false
     /// The agent this session belongs to
     @Published var agentId: UUID?
+    var isOpenClawSession: Bool {
+        openClawSessionKey?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
 
     // MARK: - Two-Phase Capability Selection (internal state, not @Published)
     var capabilitiesSelected: Bool = false
@@ -64,10 +68,13 @@ final class ChatSession: ObservableObject {
     private var isLoadingModel: Bool = false
 
     nonisolated(unsafe) private var localModelsObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var openClawModelsObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var openClawConnectionObserver: NSObjectProtocol?
 
     // MARK: - App-level Model Options Cache
     private static var cachedModelOptions: [ModelOption]?
     private static var cacheValid = false
+    private static let openClawProviderId = UUID(uuidString: "00000000-0000-0000-0000-00000000c1a0")!
 
     init() {
         if let cached = Self.cachedModelOptions, Self.cacheValid {
@@ -110,9 +117,34 @@ final class ChatSession: ObservableObject {
             .removeDuplicates()
             .sink { [weak self] newModel in
                 guard let self = self, !self.isLoadingModel, let model = newModel else { return }
+                if Self.isOpenClawRuntimeIdentifier(model) || Self.isOpenClawSelectionIdentifier(model) {
+                    return
+                }
                 let pid = self.agentId ?? Agent.defaultId
                 AgentManager.shared.updateDefaultModel(for: pid, model: model)
             }
+
+        openClawModelsObserver = NotificationCenter.default.addObserver(
+            forName: .openClawModelsChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                Self.cacheValid = false
+                await self?.refreshModelOptions()
+            }
+        }
+
+        openClawConnectionObserver = NotificationCenter.default.addObserver(
+            forName: .openClawConnectionChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                Self.cacheValid = false
+                await self?.refreshModelOptions()
+            }
+        }
 
         // Only load models if cache wasn't valid (first window or after invalidation)
         if !Self.cacheValid {
@@ -131,6 +163,12 @@ final class ChatSession: ObservableObject {
         if let observer = localModelsObserver {
             NotificationCenter.default.removeObserver(observer)
         }
+        if let observer = openClawModelsObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = openClawConnectionObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
         modelSelectionCancellable = nil
     }
 
@@ -145,6 +183,59 @@ final class ChatSession: ObservableObject {
             selectedModel = modelOptions.first?.id
         }
         isLoadingModel = false
+    }
+
+    // Runtime routing must use openclaw:<sessionKey>. openclaw-model:<modelId>
+    // is only a pre-session model selection token from the picker.
+    static func openClawRuntimeModelIdentifier(sessionKey: String) -> String {
+        "\(OpenClawModelService.sessionPrefix)\(sessionKey)"
+    }
+
+    static func openClawSelectionModelIdentifier(modelId: String) -> String {
+        "\(OpenClawModelService.modelPrefix)\(modelId)"
+    }
+
+    static func extractOpenClawSessionKey(from modelIdentifier: String?) -> String? {
+        guard let modelIdentifier,
+            modelIdentifier.hasPrefix(OpenClawModelService.sessionPrefix)
+        else {
+            return nil
+        }
+        let key = String(modelIdentifier.dropFirst(OpenClawModelService.sessionPrefix.count))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return key.isEmpty ? nil : key
+    }
+
+    static func extractOpenClawModelId(from modelIdentifier: String?) -> String? {
+        guard let modelIdentifier,
+            modelIdentifier.hasPrefix(OpenClawModelService.modelPrefix)
+        else {
+            return nil
+        }
+        let modelId = String(modelIdentifier.dropFirst(OpenClawModelService.modelPrefix.count))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return modelId.isEmpty ? nil : modelId
+    }
+
+    static func isOpenClawRuntimeIdentifier(_ modelIdentifier: String?) -> Bool {
+        extractOpenClawSessionKey(from: modelIdentifier) != nil
+    }
+
+    static func isOpenClawSelectionIdentifier(_ modelIdentifier: String?) -> Bool {
+        extractOpenClawModelId(from: modelIdentifier) != nil
+    }
+
+    func runtimeOpenClawModelIdentifier() -> String? {
+        guard let sessionKey = openClawSessionKey?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !sessionKey.isEmpty
+        else {
+            return nil
+        }
+        return Self.openClawRuntimeModelIdentifier(sessionKey: sessionKey)
+    }
+
+    func pendingOpenClawModelId() -> String? {
+        Self.extractOpenClawModelId(from: selectedModel)
     }
 
     /// Build rich model options from all sources
@@ -181,6 +272,20 @@ final class ChatSession: ObservableObject {
                     )
                 )
             }
+        }
+
+        let gatewayModels = await MainActor.run { () -> [String] in
+            guard OpenClawManager.shared.isConnected else { return [] }
+            return OpenClawManager.shared.availableModels
+        }
+        for modelId in gatewayModels {
+            options.append(
+                .fromRemoteModel(
+                    modelId: openClawSelectionModelIdentifier(modelId: modelId),
+                    providerName: "OpenClaw Gateway",
+                    providerId: openClawProviderId
+                )
+            )
         }
 
         // Cache the result for subsequent windows
@@ -244,7 +349,9 @@ final class ChatSession: ObservableObject {
         let effectiveModel = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId)
         let newSelected: String?
 
-        if let model = effectiveModel, newOptionIds.contains(model) {
+        if isOpenClawSession, let runtimeIdentifier = runtimeOpenClawModelIdentifier() {
+            newSelected = runtimeIdentifier
+        } else if let model = effectiveModel, newOptionIds.contains(model) {
             newSelected = model
         } else if let prev = selectedModel, newOptionIds.contains(prev) {
             newSelected = prev
@@ -432,6 +539,7 @@ final class ChatSession: ObservableObject {
         showVoiceOverlay = false
         // Clear session identity for new chat
         sessionId = nil
+        openClawSessionKey = nil
         title = "New Chat"
         createdAt = Date()
         updatedAt = Date()
@@ -482,12 +590,18 @@ final class ChatSession: ObservableObject {
             updatedAt: updatedAt,
             selectedModel: selectedModel,
             turns: turnData,
-            agentId: agentId
+            agentId: agentId,
+            openClawSessionKey: openClawSessionKey
         )
     }
 
     /// Save current session state
     func save() {
+        if isOpenClawSession {
+            onSessionChanged?()
+            return
+        }
+
         // Only save if there are turns
         guard !turns.isEmpty else { return }
 
@@ -523,11 +637,14 @@ final class ChatSession: ObservableObject {
         createdAt = data.createdAt
         updatedAt = data.updatedAt
         agentId = data.agentId
+        openClawSessionKey = data.openClawSessionKey
 
         // Restore saved model if available, otherwise use configured default
         // Don't auto-persist when loading - this is restoring existing state
         isLoadingModel = true
-        if let savedModel = data.selectedModel,
+        if let runtimeIdentifier = runtimeOpenClawModelIdentifier() {
+            selectedModel = runtimeIdentifier
+        } else if let savedModel = data.selectedModel,
             modelOptions.contains(where: { $0.id == savedModel })
         {
             selectedModel = savedModel
@@ -555,6 +672,31 @@ final class ChatSession: ObservableObject {
         resetCapabilitySelection()
 
         // Clear caches to force a clean block rebuild for the new session
+        blockMemoizer.clear()
+        _tokenCacheValid = false
+    }
+
+    func loadOpenClawSession(sessionKey: String, title: String?, turns: [ChatTurn]) {
+        stop()
+        sessionId = nil
+        openClawSessionKey = sessionKey
+        let trimmedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.title = trimmedTitle.isEmpty ? "OpenClaw Session" : trimmedTitle
+        createdAt = Date()
+        updatedAt = Date()
+        self.turns = turns
+        voiceInputState = .idle
+        showVoiceOverlay = false
+        input = ""
+        pendingImages = []
+        isDirty = false
+        resetCapabilitySelection()
+
+        // Runtime routing must use openclaw:<sessionKey> once a concrete session exists.
+        isLoadingModel = true
+        selectedModel = Self.openClawRuntimeModelIdentifier(sessionKey: sessionKey)
+        isLoadingModel = false
+
         blockMemoizer.clear()
         _tokenCacheValid = false
     }
@@ -780,7 +922,7 @@ final class ChatSession: ObservableObject {
             isDirty = true
 
             // Immediately save new session so it appears in sidebar
-            if sessionId == nil {
+            if !isOpenClawSession, pendingOpenClawModelId() == nil, sessionId == nil {
                 sessionId = UUID()
                 createdAt = Date()
                 updatedAt = Date()
@@ -820,6 +962,70 @@ final class ChatSession: ObservableObject {
             var assistantTurn = ChatTurn(role: .assistant, content: "")
             turns.append(assistantTurn)
             do {
+                if !isOpenClawSession, let selectedGatewayModel = pendingOpenClawModelId() {
+                    let createdSessionKey = try await OpenClawSessionManager.shared.createSession(
+                        model: selectedGatewayModel
+                    )
+                    openClawSessionKey = createdSessionKey
+                    // Runtime routing must switch to openclaw:<sessionKey> once created.
+                    isLoadingModel = true
+                    selectedModel = Self.openClawRuntimeModelIdentifier(sessionKey: createdSessionKey)
+                    isLoadingModel = false
+                }
+
+                if isOpenClawSession {
+                    guard let runtimeModel = runtimeOpenClawModelIdentifier() else {
+                        throw OpenClawModelServiceError.unsupportedModel(selectedModel)
+                    }
+
+                    // Runtime routing must always target the session identity.
+                    isLoadingModel = true
+                    selectedModel = runtimeModel
+                    isLoadingModel = false
+
+                    let requestMessages: [ChatMessage] = turns.enumerated().compactMap { index, turn in
+                        let isLastTurn = index == turns.count - 1
+                        switch turn.role {
+                        case .assistant:
+                            if isLastTurn && turn.contentIsEmpty && turn.toolCalls == nil {
+                                return nil
+                            }
+                            if turn.contentIsEmpty && (turn.toolCalls == nil || turn.toolCalls!.isEmpty) {
+                                return nil
+                            }
+                            return ChatMessage(
+                                role: "assistant",
+                                content: turn.contentIsEmpty ? nil : turn.content,
+                                tool_calls: turn.toolCalls,
+                                tool_call_id: nil
+                            )
+                        case .tool:
+                            return ChatMessage(
+                                role: "tool",
+                                content: turn.content,
+                                tool_calls: nil,
+                                tool_call_id: turn.toolCallId
+                            )
+                        case .user:
+                            if turn.hasImages {
+                                return ChatMessage(role: "user", text: turn.content, imageData: turn.attachedImages)
+                            }
+                            return ChatMessage(role: "user", content: turn.content)
+                        default:
+                            return ChatMessage(role: turn.role.rawValue, content: turn.content)
+                        }
+                    }
+
+                    try await OpenClawModelService.shared.streamRunIntoTurn(
+                        messages: requestMessages,
+                        requestedModel: runtimeModel,
+                        turn: assistantTurn
+                    ) { [weak self] in
+                        self?.objectWillChange.send()
+                    }
+                    return
+                }
+
                 let engine = ChatEngine(source: .chatUI)
                 let chatCfg = ChatConfigurationStore.load()
 
@@ -1186,6 +1392,21 @@ struct ChatView: View {
                             onRename: { id, title in
                                 ChatSessionsManager.shared.rename(id: id, title: title)
                                 windowState.refreshSessions()
+                            },
+                            showOpenClawSessions: windowState.isOpenClawConnected,
+                            openClawSessions: windowState.openClawSessions,
+                            currentOpenClawSessionKey: session.openClawSessionKey,
+                            onSelectOpenClawSession: { gatewaySession in
+                                Task { @MainActor in
+                                    await windowState.openOpenClawSession(gatewaySession)
+                                    isPinnedToBottom = true
+                                }
+                            },
+                            onNewOpenClawSession: {
+                                Task { @MainActor in
+                                    await windowState.createAndOpenOpenClawSession()
+                                    isPinnedToBottom = true
+                                }
                             },
                             onOpenInNewWindow: { sessionData in
                                 // Open session in a new window via ChatWindowManager
