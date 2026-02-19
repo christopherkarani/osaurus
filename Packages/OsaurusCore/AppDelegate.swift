@@ -146,6 +146,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await RemoteProviderManager.shared.connectEnabledProviders()
             // Update cache with remote models (local models already cached above)
             await ChatSession.prewarmModelCache()
+
+            if OpenClawManager.shared.configuration.isEnabled &&
+                OpenClawManager.shared.configuration.autoStartGateway
+            {
+                try? await OpenClawManager.shared.startGateway()
+            }
         }
 
         // Start plugin repository background refresh for update checking
@@ -392,6 +398,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             if serverController.isRunning {
                 await serverController.ensureShutdown()
             }
+            await OpenClawManager.shared.shutdown()
             await MCPServerManager.shared.stopAll()
             await ModelRuntime.shared.clearAll()
             NSApp.reply(toApplicationShouldTerminate: true)
@@ -561,6 +568,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
             // Advertise MCP HTTP endpoints on the same port
             tooltip += " — MCP: /mcp/*"
+
+            if OpenClawManager.shared.configuration.isEnabled {
+                let clawStatus: String
+                if OpenClawManager.shared.isConnected {
+                    clawStatus = "Connected (\(OpenClawManager.shared.channels.count) channels)"
+                } else {
+                    clawStatus = "Disconnected"
+                }
+                tooltip += "\nOpenClaw: \(clawStatus)"
+            }
             button.toolTip = tooltip
         }
     }

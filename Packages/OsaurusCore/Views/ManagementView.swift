@@ -16,6 +16,7 @@ import SwiftUI
 public enum ManagementTab: String, CaseIterable, Identifiable {
     case models
     case providers
+    case openclaw
     case agents
     case plugins
     case tools
@@ -35,6 +36,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         switch self {
         case .models: "cube.box.fill"
         case .providers: "cloud.fill"
+        case .openclaw: "antenna.radiowaves.left.and.right"
         case .agents: "person.2.fill"
         case .plugins: "puzzlepiece.extension.fill"
         case .tools: "wrench.and.screwdriver.fill"
@@ -54,6 +56,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         switch self {
         case .models: "Models"
         case .providers: "Providers"
+        case .openclaw: "OpenClaw"
         case .agents: "Agents"
         case .plugins: "Plugins"
         case .tools: "Tools"
@@ -90,6 +93,7 @@ struct ManagementView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var repoService = PluginRepositoryService.shared
     @ObservedObject private var remoteProviderManager = RemoteProviderManager.shared
+    @ObservedObject private var openClawManager = OpenClawManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var skillManager = SkillManager.shared
     @ObservedObject private var scheduleManager = ScheduleManager.shared
@@ -188,6 +192,8 @@ private extension ManagementView {
             )
         case .providers:
             RemoteProvidersView()
+        case .openclaw:
+            OpenClawDashboardView()
         case .agents:
             AgentsView()
         case .plugins:
@@ -238,6 +244,8 @@ private extension ManagementView {
             count = modelManager.availableModels.filter { $0.isDownloaded }.count
         case .providers:
             count = remoteProviderManager.providerStates.values.filter(\.isConnected).count
+        case .openclaw:
+            count = openClawManager.channels.count
         case .plugins:
             count = repoService.plugins.filter { $0.isInstalled }.count
         case .tools:
