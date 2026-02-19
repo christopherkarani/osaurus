@@ -26,10 +26,10 @@ public final class OpenClawActivityStore: ObservableObject {
 
     /// toolCallId → items array index for O(1) correlation
     private var toolCallIndex: [String: Int] = [:]
-    /// Current thinking block for delta accumulation
-    private var activeThinkingItemId: UUID?
-    /// Current assistant block for delta accumulation
-    private var activeAssistantItemId: UUID?
+    /// Current thinking block index for O(1) delta accumulation
+    private var activeThinkingIndex: Int?
+    /// Current assistant block index for O(1) delta accumulation
+    private var activeAssistantIndex: Int?
 
     // MARK: - Subscription
 
@@ -49,10 +49,14 @@ extension OpenClawActivityStore {
         unsubscribe()
         subscriptionTask = Task { [weak self] in
             let stream = await session.subscribeServerEvents(bufferingNewest: 200)
-            for await eventFrame in stream {
-                guard !Task.isCancelled else { break }
-                await self?.processEventFrame(eventFrame)
-            }
+            do {
+                for await eventFrame in stream {
+                    try Task.checkCancellation()
+                    await self?.processEventFrame(eventFrame)
+                }
+            } catch is CancellationError {
+                // Expected on unsubscribe — clean exit
+            } catch {}
         }
     }
 
@@ -66,14 +70,15 @@ extension OpenClawActivityStore {
     public func reset() {
         items.removeAll()
         toolCallIndex.removeAll()
-        activeThinkingItemId = nil
-        activeAssistantItemId = nil
+        activeThinkingIndex = nil
+        activeAssistantIndex = nil
         isRunActive = false
         activeRunId = nil
     }
 
     deinit {
-        subscriptionTask?.cancel()
+        let task = subscriptionTask
+        task?.cancel()
     }
 }
 
@@ -120,8 +125,8 @@ extension OpenClawActivityStore {
         case "start":
             activeRunId = runId
             isRunActive = true
-            activeThinkingItemId = nil
-            activeAssistantItemId = nil
+            activeThinkingIndex = nil
+            activeAssistantIndex = nil
             items.append(ActivityItem(
                 id: UUID(), timestamp: timestamp,
                 kind: .lifecycle(LifecycleActivity(phase: .started, runId: runId))
@@ -155,7 +160,7 @@ extension OpenClawActivityStore {
 
     private func processTool(runId: String, data: [String: AnyCodable], at timestamp: Date) {
         let phase = data["phase"]?.value as? String ?? ""
-        let toolCallId = data["toolCallId"]?.value as? String ?? UUID().uuidString
+        guard let toolCallId = data["toolCallId"]?.value as? String else { return }
 
         switch phase {
         case "start":
@@ -208,8 +213,8 @@ extension OpenClawActivityStore {
         let delta = data["delta"]?.value as? String ?? ""
         let fullText = data["text"]?.value as? String
 
-        if let itemId = activeThinkingItemId,
-           let index = items.firstIndex(where: { $0.id == itemId }),
+        if let index = activeThinkingIndex,
+           index < items.count,
            case .thinking(var activity) = items[index].kind {
             activity.text = fullText ?? (activity.text + delta)
             activity.isStreaming = true
@@ -219,7 +224,7 @@ extension OpenClawActivityStore {
                 text: fullText ?? delta, isStreaming: true, duration: nil, startedAt: timestamp
             )
             let item = ActivityItem(id: UUID(), timestamp: timestamp, kind: .thinking(activity))
-            activeThinkingItemId = item.id
+            activeThinkingIndex = items.count
             items.append(item)
         }
     }
@@ -234,8 +239,8 @@ extension OpenClawActivityStore {
         let fullText = data["text"]?.value as? String
         let mediaUrls = (data["mediaUrls"]?.value as? [AnyCodable])?.compactMap { $0.value as? String } ?? []
 
-        if let itemId = activeAssistantItemId,
-           let index = items.firstIndex(where: { $0.id == itemId }),
+        if let index = activeAssistantIndex,
+           index < items.count,
            case .assistant(var activity) = items[index].kind {
             activity.text = fullText ?? (activity.text + delta)
             activity.isStreaming = true
@@ -246,7 +251,7 @@ extension OpenClawActivityStore {
                 text: fullText ?? delta, isStreaming: true, mediaUrls: mediaUrls, startedAt: timestamp
             )
             let item = ActivityItem(id: UUID(), timestamp: timestamp, kind: .assistant(activity))
-            activeAssistantItemId = item.id
+            activeAssistantIndex = items.count
             items.append(item)
         }
     }
@@ -284,22 +289,22 @@ extension OpenClawActivityStore {
     }
 
     private func finalizeActiveThinking(at timestamp: Date) {
-        guard let itemId = activeThinkingItemId,
-              let index = items.firstIndex(where: { $0.id == itemId }),
+        guard let index = activeThinkingIndex,
+              index < items.count,
               case .thinking(var activity) = items[index].kind else { return }
         activity.isStreaming = false
         activity.duration = timestamp.timeIntervalSince(activity.startedAt)
         items[index].kind = .thinking(activity)
-        activeThinkingItemId = nil
+        activeThinkingIndex = nil
     }
 
     private func finalizeActiveAssistant(at timestamp: Date) {
-        guard let itemId = activeAssistantItemId,
-              let index = items.firstIndex(where: { $0.id == itemId }),
+        guard let index = activeAssistantIndex,
+              index < items.count,
               case .assistant(var activity) = items[index].kind else { return }
         activity.isStreaming = false
         items[index].kind = .assistant(activity)
-        activeAssistantItemId = nil
+        activeAssistantIndex = nil
     }
 }
 
@@ -310,15 +315,18 @@ extension OpenClawActivityStore {
     /// Convert heterogeneous tool result JSON into displayable text
     private func stringifyResult(_ value: Any) -> String {
         if let str = value as? String { return str }
-        if let dict = value as? [String: Any] {
-            // Common pattern: { content: [{ type: "text", text: "..." }] }
-            if let content = dict["content"] as? [[String: Any]] {
-                return content.compactMap { $0["text"] as? String }.joined(separator: "\n")
+        if let dict = value as? [String: AnyCodable] {
+            if let contentArray = dict["content"]?.value as? [AnyCodable] {
+                let texts = contentArray.compactMap { item -> String? in
+                    guard let itemDict = item.value as? [String: AnyCodable] else { return nil }
+                    return itemDict["text"]?.value as? String
+                }
+                if !texts.isEmpty { return texts.joined(separator: "\n") }
             }
-            return dict.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
+            return dict.map { "\($0.key): \($0.value.value)" }.joined(separator: ", ")
         }
-        if let arr = value as? [Any] {
-            return arr.map { String(describing: $0) }.joined(separator: "\n")
+        if let arr = value as? [AnyCodable] {
+            return arr.map { String(describing: $0.value) }.joined(separator: "\n")
         }
         return String(describing: value)
     }

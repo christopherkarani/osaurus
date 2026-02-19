@@ -17,6 +17,7 @@ let package = Package(
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),
         .package(url: "https://github.com/argmaxinc/WhisperKit", from: "0.15.0"),
         .package(path: "../OsaurusRepository"),
+        .package(path: "../../../openclaw/apps/shared/OpenClawKit"),
     ],
     targets: [
         .target(
@@ -35,6 +36,8 @@ let package = Package(
                 .product(name: "Hub", package: "swift-transformers"),
                 .product(name: "WhisperKit", package: "WhisperKit"),
                 .product(name: "OsaurusRepository", package: "OsaurusRepository"),
+                .product(name: "OpenClawKit", package: "OpenClawKit"),
+                .product(name: "OpenClawProtocol", package: "OpenClawKit"),
             ],
             path: ".",
             exclude: ["Tests"]
