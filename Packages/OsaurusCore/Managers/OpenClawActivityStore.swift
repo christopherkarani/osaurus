@@ -9,6 +9,7 @@
 import Combine
 import Foundation
 import OpenClawKit
+import OpenClawProtocol
 
 // MARK: - OpenClawActivityStore
 
@@ -38,6 +39,11 @@ public final class OpenClawActivityStore: ObservableObject {
     // MARK: - Init
 
     public init() {}
+
+    deinit {
+        let task = subscriptionTask
+        task?.cancel()
+    }
 }
 
 // MARK: - Subscription Lifecycle
@@ -52,7 +58,7 @@ extension OpenClawActivityStore {
             do {
                 for await eventFrame in stream {
                     try Task.checkCancellation()
-                    await self?.processEventFrame(eventFrame)
+                    self?.processEventFrame(eventFrame)
                 }
             } catch is CancellationError {
                 // Expected on unsubscribe — clean exit
@@ -75,11 +81,6 @@ extension OpenClawActivityStore {
         isRunActive = false
         activeRunId = nil
     }
-
-    deinit {
-        let task = subscriptionTask
-        task?.cancel()
-    }
 }
 
 // MARK: - Event Routing
@@ -90,7 +91,7 @@ extension OpenClawActivityStore {
         // IMPORTANT: AnyCodable decoder stores dicts as [String: AnyCodable], NOT [String: Any].
         // Casting to [String: Any] silently returns nil. Must cast to [String: AnyCodable]
         // and unwrap each field via .value.
-        guard let payload = frame.payload?.value as? [String: AnyCodable],
+        guard let payload = frame.payload?.value as? [String: OpenClawProtocol.AnyCodable],
               let stream = payload["stream"]?.value as? String,
               let runId = payload["runId"]?.value as? String else { return }
 
@@ -100,7 +101,7 @@ extension OpenClawActivityStore {
         else if let i = payload["ts"]?.value as? Int { ts = Double(i) }
         else { return }
 
-        let data = payload["data"]?.value as? [String: AnyCodable] ?? [:]
+        let data = payload["data"]?.value as? [String: OpenClawProtocol.AnyCodable] ?? [:]
         let timestamp = Date(timeIntervalSince1970: ts / 1000.0)
 
         switch stream {
@@ -118,15 +119,15 @@ extension OpenClawActivityStore {
 
 extension OpenClawActivityStore {
 
-    private func processLifecycle(runId: String, data: [String: AnyCodable], at timestamp: Date) {
+    private func processLifecycle(runId: String, data: [String: OpenClawProtocol.AnyCodable], at timestamp: Date) {
         let phase = data["phase"]?.value as? String ?? ""
 
         switch phase {
         case "start":
+            // Finalize any active streams from a previous run before starting a new one
+            finalizeStreaming(at: timestamp)
             activeRunId = runId
             isRunActive = true
-            activeThinkingIndex = nil
-            activeAssistantIndex = nil
             items.append(ActivityItem(
                 id: UUID(), timestamp: timestamp,
                 kind: .lifecycle(LifecycleActivity(phase: .started, runId: runId))
@@ -158,7 +159,7 @@ extension OpenClawActivityStore {
 
 extension OpenClawActivityStore {
 
-    private func processTool(runId: String, data: [String: AnyCodable], at timestamp: Date) {
+    private func processTool(runId: String, data: [String: OpenClawProtocol.AnyCodable], at timestamp: Date) {
         let phase = data["phase"]?.value as? String ?? ""
         guard let toolCallId = data["toolCallId"]?.value as? String else { return }
 
@@ -168,7 +169,7 @@ extension OpenClawActivityStore {
             finalizeStreaming(at: timestamp)
 
             let name = data["name"]?.value as? String ?? "unknown"
-            let args = data["args"]?.value as? [String: AnyCodable] ?? [:]
+            let args = data["args"]?.value as? [String: OpenClawProtocol.AnyCodable] ?? [:]
             let flatArgs = args.reduce(into: [String: Any]()) { $0[$1.key] = $1.value.value }
             let activity = ToolCallActivity(
                 toolCallId: toolCallId, name: name, args: flatArgs, startedAt: timestamp
@@ -209,7 +210,7 @@ extension OpenClawActivityStore {
 
 extension OpenClawActivityStore {
 
-    private func processThinking(data: [String: AnyCodable], at timestamp: Date) {
+    private func processThinking(data: [String: OpenClawProtocol.AnyCodable], at timestamp: Date) {
         let delta = data["delta"]?.value as? String ?? ""
         let fullText = data["text"]?.value as? String
 
@@ -234,10 +235,10 @@ extension OpenClawActivityStore {
 
 extension OpenClawActivityStore {
 
-    private func processAssistant(data: [String: AnyCodable], at timestamp: Date) {
+    private func processAssistant(data: [String: OpenClawProtocol.AnyCodable], at timestamp: Date) {
         let delta = data["delta"]?.value as? String ?? ""
         let fullText = data["text"]?.value as? String
-        let mediaUrls = (data["mediaUrls"]?.value as? [AnyCodable])?.compactMap { $0.value as? String } ?? []
+        let mediaUrls = (data["mediaUrls"]?.value as? [OpenClawProtocol.AnyCodable])?.compactMap { $0.value as? String } ?? []
 
         if let index = activeAssistantIndex,
            index < items.count,
@@ -261,7 +262,7 @@ extension OpenClawActivityStore {
 
 extension OpenClawActivityStore {
 
-    private func processCompaction(data: [String: AnyCodable], at timestamp: Date) {
+    private func processCompaction(data: [String: OpenClawProtocol.AnyCodable], at timestamp: Date) {
         let phase = data["phase"]?.value as? String ?? ""
         let willRetry = data["willRetry"]?.value as? Bool ?? false
 
@@ -315,17 +316,17 @@ extension OpenClawActivityStore {
     /// Convert heterogeneous tool result JSON into displayable text
     private func stringifyResult(_ value: Any) -> String {
         if let str = value as? String { return str }
-        if let dict = value as? [String: AnyCodable] {
-            if let contentArray = dict["content"]?.value as? [AnyCodable] {
+        if let dict = value as? [String: OpenClawProtocol.AnyCodable] {
+            if let contentArray = dict["content"]?.value as? [OpenClawProtocol.AnyCodable] {
                 let texts = contentArray.compactMap { item -> String? in
-                    guard let itemDict = item.value as? [String: AnyCodable] else { return nil }
+                    guard let itemDict = item.value as? [String: OpenClawProtocol.AnyCodable] else { return nil }
                     return itemDict["text"]?.value as? String
                 }
                 if !texts.isEmpty { return texts.joined(separator: "\n") }
             }
             return dict.map { "\($0.key): \($0.value.value)" }.joined(separator: ", ")
         }
-        if let arr = value as? [AnyCodable] {
+        if let arr = value as? [OpenClawProtocol.AnyCodable] {
             return arr.map { String(describing: $0.value) }.joined(separator: "\n")
         }
         return String(describing: value)

@@ -150,8 +150,8 @@ struct OpenClawActivityStoreEdgeCaseTests {
         let streams = ["random", "unknown", "not_a_stream", "foo.bar.baz"]
         for (index, stream) in streams.enumerated() {
             store.processEventFrame(makeAgentEventFrame(
-                seq: index + 1,
                 stream: stream,
+                seq: index + 1,
                 data: ["data": "value"]
             ))
         }
@@ -172,14 +172,14 @@ struct OpenClawActivityStoreEdgeCaseTests {
         ))
 
         store.processEventFrame(makeAgentEventFrame(
-            seq: 2,
             stream: "thinking",
+            seq: 2,
             data: ["text": "Thinking..."]
         ))
 
         store.processEventFrame(makeAgentEventFrame(
-            seq: 3,
             stream: "assistant",
+            seq: 3,
             data: ["text": "Response"]
         ))
 
@@ -239,9 +239,9 @@ struct OpenClawActivityStoreEdgeCaseTests {
 
         // Run 1: start
         store.processEventFrame(makeAgentEventFrame(
+            stream: "lifecycle",
             runId: "run-1",
             seq: 1,
-            stream: "lifecycle",
             data: ["phase": "start"]
         ))
 
@@ -250,9 +250,9 @@ struct OpenClawActivityStoreEdgeCaseTests {
 
         // Run 1: end
         store.processEventFrame(makeAgentEventFrame(
+            stream: "lifecycle",
             runId: "run-1",
             seq: 2,
-            stream: "lifecycle",
             data: ["phase": "end"]
         ))
 
@@ -261,9 +261,9 @@ struct OpenClawActivityStoreEdgeCaseTests {
 
         // Run 2: start
         store.processEventFrame(makeAgentEventFrame(
+            stream: "lifecycle",
             runId: "run-2",
             seq: 3,
-            stream: "lifecycle",
             data: ["phase": "start"]
         ))
 
@@ -272,9 +272,9 @@ struct OpenClawActivityStoreEdgeCaseTests {
 
         // Run 2: end
         store.processEventFrame(makeAgentEventFrame(
+            stream: "lifecycle",
             runId: "run-2",
             seq: 4,
-            stream: "lifecycle",
             data: ["phase": "end"]
         ))
 
@@ -291,20 +291,20 @@ struct OpenClawActivityStoreEdgeCaseTests {
 
         // Run 1
         store.processEventFrame(makeAgentEventFrame(
-            runId: "run-1",
             stream: "lifecycle",
+            runId: "run-1",
             data: ["phase": "start"]
         ))
         store.processEventFrame(makeAgentEventFrame(
+            stream: "thinking",
             runId: "run-1",
             seq: 2,
-            stream: "thinking",
             data: ["text": "Run 1 thought"]
         ))
         store.processEventFrame(makeAgentEventFrame(
+            stream: "lifecycle",
             runId: "run-1",
             seq: 3,
-            stream: "lifecycle",
             data: ["phase": "end"]
         ))
 
@@ -313,15 +313,15 @@ struct OpenClawActivityStoreEdgeCaseTests {
 
         // Run 2
         store.processEventFrame(makeAgentEventFrame(
+            stream: "lifecycle",
             runId: "run-2",
             seq: 4,
-            stream: "lifecycle",
             data: ["phase": "start"]
         ))
         store.processEventFrame(makeAgentEventFrame(
+            stream: "thinking",
             runId: "run-2",
             seq: 5,
-            stream: "thinking",
             data: ["text": "Run 2 thought"]
         ))
 
@@ -340,8 +340,8 @@ struct OpenClawActivityStoreEdgeCaseTests {
         #expect(store.isRunActive == true)
 
         store.processEventFrame(makeAgentEventFrame(
-            seq: 2,
             stream: "lifecycle",
+            seq: 2,
             data: ["phase": "error", "error": "Test error message"]
         ))
 
@@ -374,14 +374,14 @@ struct OpenClawActivityStoreEdgeCaseTests {
         ))
 
         store.processEventFrame(makeAgentEventFrame(
-            seq: 2,
             stream: "thinking",
+            seq: 2,
             data: ["text": "Thinking..."]
         ))
 
         store.processEventFrame(makeAgentEventFrame(
-            seq: 3,
             stream: "assistant",
+            seq: 3,
             data: ["text": "Response"]
         ))
 
@@ -420,16 +420,16 @@ struct OpenClawActivityStoreEdgeCaseTests {
         #expect(store.isRunActive == true)
 
         store.processEventFrame(makeAgentEventFrame(
-            seq: 2,
             stream: "compaction",
+            seq: 2,
             data: ["phase": "start"]
         ))
 
         #expect(store.isRunActive == true)
 
         store.processEventFrame(makeAgentEventFrame(
-            seq: 3,
             stream: "compaction",
+            seq: 3,
             data: ["phase": "end", "willRetry": false]
         ))
 
@@ -452,8 +452,8 @@ struct OpenClawActivityStoreEdgeCaseTests {
         ))
 
         store.processEventFrame(makeAgentEventFrame(
-            seq: 2,
             stream: "tool",
+            seq: 2,
             data: [
                 "phase": "update",
                 "toolCallId": "tool-1",
@@ -462,8 +462,8 @@ struct OpenClawActivityStoreEdgeCaseTests {
         ))
 
         store.processEventFrame(makeAgentEventFrame(
-            seq: 3,
             stream: "tool",
+            seq: 3,
             data: [
                 "phase": "result",
                 "toolCallId": "tool-1",

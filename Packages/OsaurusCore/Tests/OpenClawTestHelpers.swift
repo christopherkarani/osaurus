@@ -29,9 +29,9 @@ func makeEventFrame(
 
 /// Build an agent event payload envelope with the standard fields.
 func makeAgentPayload(
+    stream: String,
     runId: String = "test-run-1",
     seq: Int = 1,
-    stream: String,
     ts: Double = 1708345600000,
     data: [String: Any] = [:]
 ) -> [String: Any] {
@@ -46,14 +46,14 @@ func makeAgentPayload(
 
 /// Convenience: build a complete EventFrame for an agent event.
 func makeAgentEventFrame(
+    stream: String,
     runId: String = "test-run-1",
     seq: Int = 1,
-    stream: String,
     ts: Double = 1708345600000,
     data: [String: Any] = [:]
 ) -> EventFrame {
     let payload = makeAgentPayload(
-        runId: runId, seq: seq, stream: stream, ts: ts, data: data
+        stream: stream, runId: runId, seq: seq, ts: ts, data: data
     )
     return makeEventFrame(payload: payload, seq: seq)
 }

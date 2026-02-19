@@ -45,8 +45,8 @@ struct OpenClawActivityStoreLifecycleTests {
 
         let endFrame = makeAgentEventFrame(
             stream: "lifecycle",
-            data: ["phase": "end"],
-            ts: 1708345601000
+            ts: 1708345601000,
+            data: ["phase": "end"]
         )
         store.processEventFrame(endFrame)
 
@@ -75,8 +75,8 @@ struct OpenClawActivityStoreLifecycleTests {
 
         let errorFrame = makeAgentEventFrame(
             stream: "lifecycle",
-            data: ["phase": "error", "error": "LLM request failed."],
-            ts: 1708345601000
+            ts: 1708345601000,
+            data: ["phase": "error", "error": "LLM request failed."]
         )
         store.processEventFrame(errorFrame)
 
@@ -112,8 +112,8 @@ struct OpenClawActivityStoreLifecycleTests {
 
         let lifecycleFrame = makeAgentEventFrame(
             stream: "lifecycle",
-            data: ["phase": "start"],
-            ts: 1708345601000
+            ts: 1708345601000,
+            data: ["phase": "start"]
         )
         store.processEventFrame(lifecycleFrame)
 
