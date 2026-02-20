@@ -153,6 +153,10 @@ struct OpenClawPhase3ViewLogicTests {
         #expect(OpenClawCronViewLogic.finalToggleValue(previous: false, desired: true, succeeded: true) == true)
         #expect(OpenClawCronViewLogic.finalToggleValue(previous: false, desired: true, succeeded: false) == false)
         #expect(OpenClawCronViewLogic.finalToggleValue(previous: true, desired: false, succeeded: false) == true)
+        #expect(OpenClawCronViewLogic.displayedToggleValue(serverEnabled: false, overrideEnabled: true) == true)
+        #expect(OpenClawCronViewLogic.displayedToggleValue(serverEnabled: true, overrideEnabled: nil) == true)
+        #expect(OpenClawCronViewLogic.toggleAccessibilityValue(isBusy: true, isEnabled: true) == "Updating")
+        #expect(OpenClawCronViewLogic.toggleAccessibilityValue(isBusy: false, isEnabled: false) == "Disabled")
     }
 
     @Test
@@ -171,6 +175,12 @@ struct OpenClawPhase3ViewLogicTests {
 
         skill = makeSkill(disabled: false, eligible: true, blockedByAllowlist: false, hasMissingRequirements: true)
         #expect(OpenClawSkillsViewLogic.status(for: skill).label == "Needs Setup")
+
+        #expect(OpenClawSkillsViewLogic.displayedEnabled(serverEnabled: false, overrideEnabled: true) == true)
+        #expect(OpenClawSkillsViewLogic.displayedEnabled(serverEnabled: true, overrideEnabled: nil) == true)
+        #expect(OpenClawSkillsViewLogic.finalEnabled(previous: true, desired: false, succeeded: false) == true)
+        #expect(OpenClawSkillsViewLogic.toggleAccessibilityValue(isBusy: true, isEnabled: true) == "Updating")
+        #expect(OpenClawSkillsViewLogic.toggleAccessibilityValue(isBusy: false, isEnabled: true) == "Enabled")
     }
 
     @Test

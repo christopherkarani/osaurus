@@ -13,6 +13,7 @@ struct OpenClawCronView: View {
     @State private var busyJobID: String?
     @State private var actionError: String?
     @State private var hasLoaded = false
+    @State private var toggleOverrides: [String: Bool] = [:]
 
     private var selectedRuns: [OpenClawCronRunLogEntry] {
         guard let selectedJobID else { return [] }
@@ -130,15 +131,36 @@ struct OpenClawCronView: View {
                 Toggle(
                     "",
                     isOn: Binding(
-                        get: { job.enabled },
+                        get: {
+                            OpenClawCronViewLogic.displayedToggleValue(
+                                serverEnabled: job.enabled,
+                                overrideEnabled: toggleOverrides[job.id]
+                            )
+                        },
                         set: { enabled in
+                            let previous = OpenClawCronViewLogic.displayedToggleValue(
+                                serverEnabled: job.enabled,
+                                overrideEnabled: toggleOverrides[job.id]
+                            )
+                            toggleOverrides[job.id] = enabled
                             busyJobID = job.id
                             Task {
                                 do {
                                     try await manager.setCronJobEnabled(jobId: job.id, enabled: enabled)
-                                    await MainActor.run { actionError = nil }
+                                    await MainActor.run {
+                                        actionError = nil
+                                        toggleOverrides[job.id] = OpenClawCronViewLogic
+                                            .finalToggleValue(previous: previous, desired: enabled, succeeded: true)
+                                        toggleOverrides.removeValue(forKey: job.id)
+                                    }
                                 } catch {
-                                    await MainActor.run { actionError = error.localizedDescription }
+                                    await manager.refreshCron()
+                                    await MainActor.run {
+                                        actionError = error.localizedDescription
+                                        toggleOverrides[job.id] = OpenClawCronViewLogic
+                                            .finalToggleValue(previous: previous, desired: enabled, succeeded: false)
+                                        toggleOverrides.removeValue(forKey: job.id)
+                                    }
                                 }
                                 await MainActor.run { busyJobID = nil }
                             }
@@ -146,6 +168,17 @@ struct OpenClawCronView: View {
                     )
                 )
                 .labelsHidden()
+                .accessibilityLabel("\(job.displayName) enabled")
+                .accessibilityHint("Disabled while schedule update is in progress.")
+                .accessibilityValue(
+                    OpenClawCronViewLogic.toggleAccessibilityValue(
+                        isBusy: busyJobID == job.id,
+                        isEnabled: OpenClawCronViewLogic.displayedToggleValue(
+                            serverEnabled: job.enabled,
+                            overrideEnabled: toggleOverrides[job.id]
+                        )
+                    )
+                )
                 .disabled(busyJobID == job.id)
 
                 HeaderSecondaryButton("Run", icon: "play.fill") {
@@ -160,6 +193,9 @@ struct OpenClawCronView: View {
                         await MainActor.run { busyJobID = nil }
                     }
                 }
+                .accessibilityLabel("Run \(job.displayName) now")
+                .accessibilityHint("Disabled while the selected task is running.")
+                .accessibilityValue(busyJobID == job.id ? "Busy" : "Ready")
                 .disabled(busyJobID == job.id)
             }
         }
@@ -259,4 +295,21 @@ struct OpenClawCronView: View {
         formatter.unitsStyle = .short
         return formatter
     }()
+}
+
+enum OpenClawCronViewLogic {
+    static func displayedToggleValue(serverEnabled: Bool, overrideEnabled: Bool?) -> Bool {
+        overrideEnabled ?? serverEnabled
+    }
+
+    static func finalToggleValue(previous: Bool, desired: Bool, succeeded: Bool) -> Bool {
+        succeeded ? desired : previous
+    }
+
+    static func toggleAccessibilityValue(isBusy: Bool, isEnabled: Bool) -> String {
+        if isBusy {
+            return "Updating"
+        }
+        return isEnabled ? "Enabled" : "Disabled"
+    }
 }

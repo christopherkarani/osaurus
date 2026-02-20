@@ -12,6 +12,7 @@ struct OpenClawSkillsView: View {
     @State private var hasLoaded = false
     @State private var busySkillKey: String?
     @State private var actionError: String?
+    @State private var toggleOverrides: [String: Bool] = [:]
 
     private var skills: [OpenClawSkillStatus] {
         (manager.skillsReport?.skills ?? []).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -117,15 +118,37 @@ struct OpenClawSkillsView: View {
                 Toggle(
                     "",
                     isOn: Binding(
-                        get: { !skill.disabled },
+                        get: {
+                            OpenClawSkillsViewLogic.displayedEnabled(
+                                serverEnabled: !skill.disabled,
+                                overrideEnabled: toggleOverrides[skill.skillKey]
+                            )
+                        },
                         set: { enabled in
+                            let previous = OpenClawSkillsViewLogic.displayedEnabled(
+                                serverEnabled: !skill.disabled,
+                                overrideEnabled: toggleOverrides[skill.skillKey]
+                            )
+                            toggleOverrides[skill.skillKey] = enabled
                             busySkillKey = skill.skillKey
                             Task {
                                 do {
                                     try await manager.updateSkillEnabled(skillKey: skill.skillKey, enabled: enabled)
-                                    await MainActor.run { actionError = nil }
+                                    await MainActor.run {
+                                        actionError = nil
+                                        toggleOverrides.removeValue(forKey: skill.skillKey)
+                                    }
                                 } catch {
-                                    await MainActor.run { actionError = error.localizedDescription }
+                                    await manager.refreshSkills()
+                                    await MainActor.run {
+                                        actionError = error.localizedDescription
+                                        toggleOverrides[skill.skillKey] = OpenClawSkillsViewLogic.finalEnabled(
+                                            previous: previous,
+                                            desired: enabled,
+                                            succeeded: false
+                                        )
+                                        toggleOverrides.removeValue(forKey: skill.skillKey)
+                                    }
                                 }
                                 await MainActor.run { busySkillKey = nil }
                             }
@@ -133,6 +156,17 @@ struct OpenClawSkillsView: View {
                     )
                 )
                 .labelsHidden()
+                .accessibilityLabel("\(skill.name) enabled")
+                .accessibilityHint("Disabled while skill state is updating.")
+                .accessibilityValue(
+                    OpenClawSkillsViewLogic.toggleAccessibilityValue(
+                        isBusy: busySkillKey == skill.skillKey,
+                        isEnabled: OpenClawSkillsViewLogic.displayedEnabled(
+                            serverEnabled: !skill.disabled,
+                            overrideEnabled: toggleOverrides[skill.skillKey]
+                        )
+                    )
+                )
                 .disabled(skill.always || busySkillKey == skill.skillKey)
             }
 
@@ -150,6 +184,9 @@ struct OpenClawSkillsView: View {
                             await MainActor.run { busySkillKey = nil }
                         }
                     }
+                    .accessibilityLabel("Install \(skill.name)")
+                    .accessibilityHint("Disabled while an install action is running.")
+                    .accessibilityValue(busySkillKey == skill.skillKey ? "Busy" : "Ready")
                     .disabled(busySkillKey == skill.skillKey)
                 }
 
@@ -178,26 +215,13 @@ struct OpenClawSkillsView: View {
 
     @ViewBuilder
     private func statusChip(for skill: OpenClawSkillStatus) -> some View {
-        let status = skillStatusLabel(skill)
+        let status = OpenClawSkillsViewLogic.status(for: skill)
         Text(status.label)
             .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(status.color)
+            .foregroundColor(color(for: status.tone))
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
-            .background(Capsule().fill(status.color.opacity(0.12)))
-    }
-
-    private func skillStatusLabel(_ skill: OpenClawSkillStatus) -> (label: String, color: Color) {
-        if skill.disabled {
-            return ("Disabled", theme.warningColor)
-        }
-        if !skill.eligible || skill.blockedByAllowlist {
-            return ("Blocked", theme.errorColor)
-        }
-        if skill.hasMissingRequirements {
-            return ("Needs Setup", theme.warningColor)
-        }
-        return ("Active", theme.successColor)
+            .background(Capsule().fill(color(for: status.tone).opacity(0.12)))
     }
 
     private func normalized(_ value: String?) -> String? {
@@ -205,5 +229,57 @@ struct OpenClawSkillsView: View {
             return nil
         }
         return value
+    }
+
+    private func color(for tone: OpenClawSkillsViewLogic.StatusTone) -> Color {
+        switch tone {
+        case .success:
+            return theme.successColor
+        case .warning:
+            return theme.warningColor
+        case .error:
+            return theme.errorColor
+        }
+    }
+}
+
+enum OpenClawSkillsViewLogic {
+    enum StatusTone {
+        case success
+        case warning
+        case error
+    }
+
+    struct Status {
+        let label: String
+        let tone: StatusTone
+    }
+
+    static func status(for skill: OpenClawSkillStatus) -> Status {
+        if skill.disabled {
+            return Status(label: "Disabled", tone: .warning)
+        }
+        if !skill.eligible || skill.blockedByAllowlist {
+            return Status(label: "Blocked", tone: .error)
+        }
+        if skill.hasMissingRequirements {
+            return Status(label: "Needs Setup", tone: .warning)
+        }
+        return Status(label: "Active", tone: .success)
+    }
+
+    static func displayedEnabled(serverEnabled: Bool, overrideEnabled: Bool?) -> Bool {
+        overrideEnabled ?? serverEnabled
+    }
+
+    static func finalEnabled(previous: Bool, desired: Bool, succeeded: Bool) -> Bool {
+        succeeded ? desired : previous
+    }
+
+    static func toggleAccessibilityValue(isBusy: Bool, isEnabled: Bool) -> String {
+        if isBusy {
+            return "Updating"
+        }
+        return isEnabled ? "Enabled" : "Disabled"
     }
 }
