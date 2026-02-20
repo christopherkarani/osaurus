@@ -1,0 +1,53 @@
+{
+  "generatedAtUtc": "2026-02-20T23:01:46Z",
+  "metricsArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/ops/synthetic-20260220T230145Z/metrics-healthy.json",
+  "thresholds": {
+    "disconnectReconnect": {
+      "maxConsecutiveProbeFails": 3,
+      "detectionWindowMinutes": 15
+    },
+    "seqGapResync": {
+      "maxFailureCount": 0,
+      "detectionWindowHours": 24
+    },
+    "notificationIngestion": {
+      "maxInboundTimestampRegressions": 0,
+      "maxDuplicateInboundEventTransitions": 0,
+      "detectionWindowHours": 24
+    }
+  },
+  "alerts": [
+    {
+      "id": "disconnect_reconnect_failure",
+      "status": "ok",
+      "severity": "none",
+      "reason": "disconnect/reconnect health is within threshold",
+      "metrics": {
+        "currentProbeOk": true,
+        "maxConsecutiveProbeFails": 0
+      }
+    },
+    {
+      "id": "seq_gap_resync_frequency",
+      "status": "ok",
+      "severity": "none",
+      "reason": "seq-gap/resync checks are stable",
+      "metrics": {
+        "refreshLoopFailures": 0,
+        "endRaceLoopFailures": 0,
+        "missingAssistantIndexesCount": 0
+      }
+    },
+    {
+      "id": "notification_ingestion_anomaly",
+      "status": "ok",
+      "severity": "none",
+      "reason": "notification ingestion signals are stable",
+      "metrics": {
+        "inboundTimestampRegressions": 0,
+        "duplicateInboundEventTransitions": 0,
+        "latestChannelLastError": null
+      }
+    }
+  ]
+}

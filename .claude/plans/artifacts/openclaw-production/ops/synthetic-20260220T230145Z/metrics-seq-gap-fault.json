@@ -1,0 +1,26 @@
+{
+  "generatedAtUtc": "2026-02-20T23:01:46Z",
+  "disconnectReconnect": {
+    "currentProbeOk": true,
+    "currentPrimaryTargetId": "sshTunnel",
+    "currentWarnings": [],
+    "sourceSoakSummary": "synthetic",
+    "latestSoakMaxConsecutiveProbeFails": 0,
+    "latestSoakRestartCount": 0,
+    "latestSoakProbeFailSamples": 0
+  },
+  "seqGapResync": {
+    "sourceSeqGapSummary": "synthetic",
+    "refreshLoopFailures": 1,
+    "endRaceLoopFailures": 0,
+    "missingAssistantIndexesCount": 0
+  },
+  "notificationIngestion": {
+    "latestChannelLastError": null,
+    "latestLastInboundAt": null,
+    "latestLastOutboundAt": null,
+    "sourceSoakSummary": "synthetic",
+    "inboundTimestampRegressions": 0,
+    "duplicateInboundEventTransitions": 0
+  }
+}

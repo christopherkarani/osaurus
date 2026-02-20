@@ -1,0 +1,28 @@
+{
+  "generatedAtUtc": "2026-02-20T23:01:12Z",
+  "disconnectReconnect": {
+    "currentProbeOk": true,
+    "currentPrimaryTargetId": "sshTunnel",
+    "currentWarnings": [
+      "multiple_gateways"
+    ],
+    "sourceSoakSummary": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/soak/soak-20260220T223929Z/summary.json",
+    "latestSoakMaxConsecutiveProbeFails": 0,
+    "latestSoakRestartCount": 2,
+    "latestSoakProbeFailSamples": 0
+  },
+  "seqGapResync": {
+    "sourceSeqGapSummary": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/e2e-seq-gap-resync-summary-seq-gap-20260220T221419Z.json",
+    "refreshLoopFailures": 0,
+    "endRaceLoopFailures": 0,
+    "missingAssistantIndexesCount": 0
+  },
+  "notificationIngestion": {
+    "latestChannelLastError": null,
+    "latestLastInboundAt": null,
+    "latestLastOutboundAt": null,
+    "sourceSoakSummary": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/soak/soak-20260220T223929Z/summary.json",
+    "inboundTimestampRegressions": 0,
+    "duplicateInboundEventTransitions": 0
+  }
+}

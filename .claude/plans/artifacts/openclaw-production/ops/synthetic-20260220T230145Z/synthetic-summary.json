@@ -1,0 +1,12 @@
+{
+  "generatedAtUtc": "2026-02-20T23:01:46Z",
+  "status": "passed",
+  "healthyAllOk": true,
+  "disconnectAlertTriggered": true,
+  "seqGapAlertTriggered": true,
+  "notificationAlertTriggered": true,
+  "healthyAlertsArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/ops/synthetic-20260220T230145Z/ops-alerts-20260220T230146Z-AB9D5961.json",
+  "disconnectAlertsArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/ops/synthetic-20260220T230145Z/ops-alerts-20260220T230146Z-837C3E5E.json",
+  "seqGapAlertsArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/ops/synthetic-20260220T230145Z/ops-alerts-20260220T230146Z-59BBDDC5.json",
+  "notificationAlertsArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/ops/synthetic-20260220T230145Z/ops-alerts-20260220T230146Z-CB20FDDE.json"
+}
