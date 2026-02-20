@@ -1,0 +1,402 @@
+loop_start_utc=2026-02-20T22:14:51Z
+seq_gap_refresh_iteration=1
+[0/1] Planning build
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (14.42s)
+Test Suite 'Selected tests' started at 2026-02-21 01:15:07.372.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-21 01:15:07.384.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-21 01:15:07.384.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-21 01:15:07.384.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.012) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() started.
+􁁛  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() passed after 0.022 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.022 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.022 seconds.
+seq_gap_refresh_iteration=2
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.28s)
+Test Suite 'Selected tests' started at 2026-02-21 01:15:08.755.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-21 01:15:08.767.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-21 01:15:08.767.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-21 01:15:08.767.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.012) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() started.
+􁁛  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() passed after 0.021 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.021 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.021 seconds.
+seq_gap_refresh_iteration=3
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.32s)
+Test Suite 'Selected tests' started at 2026-02-21 01:15:10.281.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-21 01:15:10.294.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-21 01:15:10.295.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-21 01:15:10.295.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.013) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() started.
+􁁛  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() passed after 0.023 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.023 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.023 seconds.
+seq_gap_refresh_iteration=4
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.27s)
+Test Suite 'Selected tests' started at 2026-02-21 01:15:11.757.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-21 01:15:11.770.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-21 01:15:11.770.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-21 01:15:11.770.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.014) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() started.
+􁁛  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() passed after 0.024 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.024 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.024 seconds.
+seq_gap_refresh_iteration=5
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.33s)
+Test Suite 'Selected tests' started at 2026-02-21 01:15:13.312.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-21 01:15:13.319.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-21 01:15:13.319.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-21 01:15:13.319.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() started.
+􁁛  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() passed after 0.012 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.013 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.013 seconds.
+seq_gap_refresh_iteration=6
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.25s)
+Test Suite 'Selected tests' started at 2026-02-21 01:15:14.370.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-21 01:15:14.377.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-21 01:15:14.377.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-21 01:15:14.377.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() started.
+􁁛  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() passed after 0.014 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.014 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.014 seconds.
+seq_gap_refresh_iteration=7
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.22s)
+Test Suite 'Selected tests' started at 2026-02-21 01:15:15.398.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-21 01:15:15.405.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-21 01:15:15.405.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-21 01:15:15.405.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() started.
+􁁛  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() passed after 0.013 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.013 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.013 seconds.
+seq_gap_refresh_iteration=8
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.21s)
+Test Suite 'Selected tests' started at 2026-02-21 01:15:16.396.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-21 01:15:16.403.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-21 01:15:16.403.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-21 01:15:16.403.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() started.
+􁁛  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() passed after 0.011 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.012 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.012 seconds.
+seq_gap_refresh_iteration=9
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.22s)
+Test Suite 'Selected tests' started at 2026-02-21 01:15:17.371.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-21 01:15:17.378.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-21 01:15:17.378.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-21 01:15:17.378.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() started.
+􁁛  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() passed after 0.013 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.014 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.014 seconds.
+seq_gap_refresh_iteration=10
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.21s)
+Test Suite 'Selected tests' started at 2026-02-21 01:15:18.343.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-21 01:15:18.350.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-21 01:15:18.350.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-21 01:15:18.350.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() started.
+􁁛  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() passed after 0.011 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.012 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.012 seconds.
+seq_gap_end_race_iteration=1
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.21s)
+Test Suite 'Selected tests' started at 2026-02-21 01:15:19.287.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-21 01:15:19.293.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-21 01:15:19.293.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-21 01:15:19.294.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() started.
+􁁛  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() passed after 0.006 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.006 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.006 seconds.
+seq_gap_end_race_iteration=2
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.20s)
+Test Suite 'Selected tests' started at 2026-02-21 01:15:20.205.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-21 01:15:20.212.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-21 01:15:20.212.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-21 01:15:20.212.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() started.
+􁁛  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() passed after 0.005 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.005 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.005 seconds.
+seq_gap_end_race_iteration=3
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.19s)
+Test Suite 'Selected tests' started at 2026-02-21 01:15:21.119.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-21 01:15:21.126.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-21 01:15:21.126.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-21 01:15:21.126.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() started.
+􁁛  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() passed after 0.005 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.005 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.006 seconds.
+seq_gap_end_race_iteration=4
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.20s)
+Test Suite 'Selected tests' started at 2026-02-21 01:15:22.031.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-21 01:15:22.038.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-21 01:15:22.038.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-21 01:15:22.038.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() started.
+􁁛  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() passed after 0.005 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.006 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.006 seconds.
+seq_gap_end_race_iteration=5
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.20s)
+Test Suite 'Selected tests' started at 2026-02-21 01:15:22.961.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-21 01:15:22.968.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-21 01:15:22.968.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-21 01:15:22.968.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() started.
+􁁛  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() passed after 0.005 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.005 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.005 seconds.
+seq_gap_end_race_iteration=6
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.20s)
+Test Suite 'Selected tests' started at 2026-02-21 01:15:23.880.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-21 01:15:23.887.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-21 01:15:23.887.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-21 01:15:23.887.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() started.
+􁁛  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() passed after 0.005 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.005 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.005 seconds.
+seq_gap_end_race_iteration=7
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.20s)
+Test Suite 'Selected tests' started at 2026-02-21 01:15:24.795.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-21 01:15:24.802.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-21 01:15:24.802.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-21 01:15:24.802.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() started.
+􁁛  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() passed after 0.005 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.005 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.005 seconds.
+seq_gap_end_race_iteration=8
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.20s)
+Test Suite 'Selected tests' started at 2026-02-21 01:15:25.709.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-21 01:15:25.715.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-21 01:15:25.715.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-21 01:15:25.715.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() started.
+􁁛  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() passed after 0.005 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.005 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.005 seconds.
+seq_gap_end_race_iteration=9
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.20s)
+Test Suite 'Selected tests' started at 2026-02-21 01:15:26.632.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-21 01:15:26.639.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-21 01:15:26.639.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-21 01:15:26.639.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() started.
+􁁛  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() passed after 0.005 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.005 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.005 seconds.
+seq_gap_end_race_iteration=10
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.20s)
+Test Suite 'Selected tests' started at 2026-02-21 01:15:27.542.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-21 01:15:27.549.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-21 01:15:27.549.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-21 01:15:27.549.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() started.
+􁁛  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() passed after 0.005 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.005 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.005 seconds.

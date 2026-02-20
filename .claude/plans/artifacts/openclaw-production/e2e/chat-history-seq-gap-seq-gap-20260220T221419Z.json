@@ -1,0 +1,237 @@
+{
+  "sessionKey": "agent:main:main",
+  "sessionId": "60f1941e-925a-45ec-a4c0-e42e4b3ce92e",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Use one available tool, then return the final answer for 2+2."
+        }
+      ],
+      "timestamp": 1771616517814
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "The user wants me to use one available tool and then return the final answer for 2+2. Let me use a simple tool - I'll check session status since that's quick and non-intrusive."
+        },
+        {
+          "type": "toolCall",
+          "id": "toolu_013LpSDzyXNDk23ch5xcptK6",
+          "name": "session_status",
+          "arguments": {}
+        }
+      ],
+      "api": "anthropic-messages",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "stopReason": "toolUse",
+      "timestamp": 1771616517816
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "toolu_013LpSDzyXNDk23ch5xcptK6",
+      "toolName": "session_status",
+      "content": [
+        {
+          "type": "text",
+          "text": "🦞 OpenClaw 2026.2.17 (4134875)\n🕒 Time: Friday, February 20th, 2026 — 10:42 PM (Africa/Nairobi)\n🧠 Model: anthropic/claude-sonnet-4-6 · 🔑 token sk-ant…2KlgAA (anthropic:default)\n📚 Context: 0/200k (0%) · 🧹 Compactions: 0\n🧵 Session: agent:main:main • updated just now\n⚙️ Runtime: direct · Think: off · elevated\n🪢 Queue: collect (depth 0)"
+        }
+      ],
+      "isError": false,
+      "timestamp": 1771616520899
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "Done. Now I'll answer the math question."
+        },
+        {
+          "type": "text",
+          "text": "✅ Used `session_status` as the one tool. \n\n**2 + 2 = 4**"
+        }
+      ],
+      "api": "anthropic-messages",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "stopReason": "stop",
+      "timestamp": 1771616520904
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "PR-E2E-06 smoke ping"
+        }
+      ],
+      "timestamp": 1771625410965
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "The user sent \"PR-E2E-06 smoke ping\". This looks like a test/ping message, possibly for end-to-end testing purposes. I'll respond simply acknowledging it."
+        },
+        {
+          "type": "text",
+          "text": "[[reply_to_current]] 🟢 Pong — PR-E2E-06 smoke ping received. All good!"
+        }
+      ],
+      "api": "anthropic-messages",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "stopReason": "stop",
+      "timestamp": 1771625410968
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "PR-E2E-06 tag=seq-gap-20260220T221419Z idx=1. Reply with text that includes: ACK tag=seq-gap-20260220T221419Z idx=1."
+        }
+      ],
+      "timestamp": 1771625669646
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "The user wants me to reply with text that includes: ACK tag=seq-gap-20260220T221419Z idx=1."
+        },
+        {
+          "type": "text",
+          "text": "[[reply_to_current]] ACK tag=seq-gap-20260220T221419Z idx=1"
+        }
+      ],
+      "api": "anthropic-messages",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "stopReason": "stop",
+      "timestamp": 1771625669647
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "PR-E2E-06 tag=seq-gap-20260220T221419Z idx=2. Reply with text that includes: ACK tag=seq-gap-20260220T221419Z idx=2."
+        }
+      ],
+      "timestamp": 1771625673949
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "Simple acknowledgment needed."
+        },
+        {
+          "type": "text",
+          "text": "[[reply_to_current]] ACK tag=seq-gap-20260220T221419Z idx=2"
+        }
+      ],
+      "api": "anthropic-messages",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "stopReason": "stop",
+      "timestamp": 1771625673950
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "PR-E2E-06 tag=seq-gap-20260220T221419Z idx=3. Reply with text that includes: ACK tag=seq-gap-20260220T221419Z idx=3."
+        }
+      ],
+      "timestamp": 1771625677934
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "Simple acknowledgment needed."
+        },
+        {
+          "type": "text",
+          "text": "[[reply_to_current]] ACK tag=seq-gap-20260220T221419Z idx=3"
+        }
+      ],
+      "api": "anthropic-messages",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "stopReason": "stop",
+      "timestamp": 1771625677935
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "PR-E2E-06 tag=seq-gap-20260220T221419Z idx=4. Reply with text that includes: ACK tag=seq-gap-20260220T221419Z idx=4."
+        }
+      ],
+      "timestamp": 1771625681122
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "Simple acknowledgment."
+        },
+        {
+          "type": "text",
+          "text": "[[reply_to_current]] ACK tag=seq-gap-20260220T221419Z idx=4"
+        }
+      ],
+      "api": "anthropic-messages",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "stopReason": "stop",
+      "timestamp": 1771625681122
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "PR-E2E-06 tag=seq-gap-20260220T221419Z idx=5. Reply with text that includes: ACK tag=seq-gap-20260220T221419Z idx=5."
+        }
+      ],
+      "timestamp": 1771625685930
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "Simple acknowledgment."
+        },
+        {
+          "type": "text",
+          "text": "[[reply_to_current]] ACK tag=seq-gap-20260220T221419Z idx=5"
+        }
+      ],
+      "api": "anthropic-messages",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "stopReason": "stop",
+      "timestamp": 1771625685945
+    }
+  ],
+  "thinkingLevel": "high",
+  "verboseLevel": "on"
+}

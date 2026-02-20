@@ -13,7 +13,7 @@ Scope: `PR-E2E-01` through `PR-E2E-06`
 | `PR-E2E-03` | BLOCKED | `lastInboundAt` remained `null`; no inbound Telegram event observed in wait window. |
 | `PR-E2E-04` | BLOCKED | Gateway reconnect recovered after restart, but outbound traffic remained blocked by Telegram DM precondition. |
 | `PR-E2E-05` | PASS | Invalid token was explicitly rejected; valid token path and post-check probe recovered cleanly. |
-| `PR-E2E-06` | PENDING | Seq-gap/resync evidence under real event load. |
+| `PR-E2E-06` | PASS | Live traffic and seq-gap/resync race loops completed with no tagged-message loss or flake. |
 
 ## PR-E2E-01: Channel Discovery and Validation Matrix
 
@@ -229,3 +229,55 @@ From `health-valid-token-20260220T213213Z.json`:
 
 `PR-E2E-05` is complete.  
 Unauthorized state is explicit, and recovery after token correction is verified with health and probe evidence.
+
+## PR-E2E-06: Seq-Gap/Resync Under Real Event Load
+
+### Commands
+
+```bash
+cd /Users/chriskarani/CodingProjects/Jarvis/osaurus
+./scripts/openclaw/e2e_seq_gap_resync.sh 5 10
+```
+
+### Execution Evidence
+
+- Timestamp (UTC): `2026-02-20T22:14:19Z`
+- Script output:
+  - `status=passed`
+  - `summary_json=/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/e2e-seq-gap-resync-summary-seq-gap-20260220T221419Z.json`
+- Summary fields:
+  - `liveRunOkCount=5`
+  - `liveRunFailedCount=0`
+  - `userTaggedCount=5`
+  - `assistantTaggedCount=5`
+  - `missingAssistantIndexes=[]`
+  - `seqGapRefreshLoopPasses=10`
+  - `seqGapEndRaceLoopPasses=10`
+  - `seqGapRefreshLoopFailures=0`
+  - `seqGapEndRaceLoopFailures=0`
+
+### Before/After State
+
+From `probe-pre-seq-gap-seq-gap-20260220T221419Z.json` and `probe-post-seq-gap-seq-gap-20260220T221419Z.json`:
+
+- `ok: true` before load.
+- `ok: true` after load and looped seq-gap checks.
+
+From `seq-gap-live-runs-seq-gap-20260220T221419Z.log`:
+
+- Tagged live run entries `idx=1..5` all recorded with `status=ok`.
+
+From `chat-history-seq-gap-seq-gap-20260220T221419Z.json`:
+
+- Exactly 5 tagged user messages and 5 tagged assistant replies for this run tag.
+- No missing assistant indexes for tagged messages.
+
+From `seq-gap-test-loops-seq-gap-20260220T221419Z.log`:
+
+- `streamRunIntoTurn_sequenceGapTriggersConnectionRefresh` passed 10/10 iterations.
+- `streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations` passed 10/10 iterations.
+
+### Exit Criteria Verdict
+
+`PR-E2E-06` is complete.  
+Gap handling path is exercised via repeated deterministic seq-gap tests, and validated live event load showed no silent tagged-message loss.
