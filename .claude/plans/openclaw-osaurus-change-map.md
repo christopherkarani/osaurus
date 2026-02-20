@@ -52,3 +52,9 @@ Purpose: WS-A / A-01 classification of every modified file by intent and revert 
 - All files above are in-scope for WS-A release hygiene because they are currently dirty OpenClaw integration paths.
 - No file is classified as safe-to-revert without behavior/test impact.
 - The untracked file `OpenClawPhase3ViewLogicTests.swift` is treated as intentional candidate pending explicit WS-A / A-03 decision.
+
+## A-03 Decision (Intentional Test Tracking)
+
+- `Packages/OsaurusCore/Tests/OpenClawPhase3ViewLogicTests.swift` is intentional and required for deterministic Phase 3 UI logic coverage (wizard selection, cron toggles, skills status logic, presence ordering).
+- Test discovery is stable under SwiftPM/XCTest because the file is inside the `OsaurusCoreTests` target and does not require manual registration.
+- Action: track this file in git as part of release hygiene to prevent accidental omission.
