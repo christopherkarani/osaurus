@@ -9,7 +9,7 @@ Scope: `PR-E2E-01` through `PR-E2E-06`
 | Task ID | Status | Notes |
 |---|---|---|
 | `PR-E2E-01` | PASS | Enabled channels discovered and matrix generated with artifacts. |
-| `PR-E2E-02` | PENDING | Outbound delivery proof per enabled channel. |
+| `PR-E2E-02` | BLOCKED | Telegram outbound send failed: bot cannot initiate conversation with target user. |
 | `PR-E2E-03` | PENDING | Inbound delivery proof per enabled channel. |
 | `PR-E2E-04` | PENDING | Restart/reconnect under active traffic. |
 | `PR-E2E-05` | PENDING | Auth failure and recovery flow. |
@@ -54,3 +54,46 @@ From `gateway-probe-20260220T211300Z.json`:
 
 `PR-E2E-01` is complete.  
 Enabled channel matrix is generated and pinned to artifact paths for downstream E2E tasks.
+
+## PR-E2E-02: Outbound Delivery Validation (Current Blocker)
+
+### Commands
+
+```bash
+cd /Users/chriskarani/CodingProjects/Jarvis/osaurus
+./scripts/openclaw/e2e_outbound.sh 6749713257
+```
+
+### Execution Evidence
+
+- Timestamp (UTC): `2026-02-20T21:18:21Z`
+- Summary artifact:  
+  `/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/e2e-outbound-summary-20260220T211821Z.json`
+- Send stderr artifact:  
+  `/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/telegram-send-20260220T211821Z.err.log`
+
+Stderr excerpt:
+
+```text
+[telegram] message failed: Call to 'sendMessage' failed! (403: Forbidden: bot can't initiate conversation with a user)
+```
+
+### Before/After State
+
+From `channels-status-pre-outbound-20260220T211821Z.json`:
+
+- `channelAccounts.telegram[0].running=true`
+- `channelAccounts.telegram[0].mode=polling`
+- `channelAccounts.telegram[0].lastOutboundAt=null`
+- `channelAccounts.telegram[0].lastInboundAt=null`
+
+No outbound timestamp progression was possible because Telegram rejected the send.
+
+### Blocker and Smallest Unblocking Action
+
+- Blocker: target user has not initiated chat with the currently configured bot (`codanicia_bot`), so Telegram forbids bot-initiated DM.
+- Smallest unblocking action:
+  1. Open Telegram.
+  2. Start DM with `@codanicia_bot`.
+  3. Send any message (`/start` is sufficient).
+  4. Re-run `./scripts/openclaw/e2e_outbound.sh 6749713257`.
