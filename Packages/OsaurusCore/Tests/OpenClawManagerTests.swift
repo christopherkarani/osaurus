@@ -339,4 +339,42 @@ struct OpenClawManagerTests {
         #expect(skillKey == "my-skill")
         #expect(enabled == false)
     }
+
+    @Test
+    func refreshConnectedClients_populatesPresenceRowsFromHook() async {
+        let manager = OpenClawManager.shared
+        let entry = OpenClawPresenceEntry(
+            instanceId: "node-1",
+            host: "Node-Host",
+            ip: "10.0.0.2",
+            version: "1.0.0",
+            platform: "macos",
+            deviceFamily: "Mac",
+            modelIdentifier: "Mac15,6",
+            roles: ["chat-client"],
+            scopes: [],
+            mode: "chat",
+            lastInputSeconds: 3,
+            reason: "node-connected",
+            text: "Node: Node-Host",
+            timestampMs: 1_708_345_600_000
+        )
+
+        OpenClawManager._testSetGatewayHooks(
+            .init(
+                channelsStatus: { [] },
+                modelsList: { [] },
+                health: { [:] },
+                systemPresence: { [entry] }
+            )
+        )
+        defer { OpenClawManager._testSetGatewayHooks(nil) }
+
+        manager._testSetConnectionState(.connected, gatewayStatus: .running)
+        await manager.refreshConnectedClients()
+
+        #expect(manager.connectedClients.count == 1)
+        #expect(manager.connectedClients.first?.id == "node-1")
+        #expect(manager.connectedClients.first?.roles == ["chat-client"])
+    }
 }

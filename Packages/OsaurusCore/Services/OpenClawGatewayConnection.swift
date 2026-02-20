@@ -368,6 +368,11 @@ public actor OpenClawGatewayConnection {
         return try decodePayload(method: "skills.update", data: data, as: OpenClawSkillUpdateResult.self)
     }
 
+    public func systemPresence() async throws -> [OpenClawPresenceEntry] {
+        let data = try await requestRaw(method: "system-presence", params: [:])
+        return try decodePayload(method: "system-presence", data: data, as: [OpenClawPresenceEntry].self)
+    }
+
     public func configGet() async throws -> [String: OpenClawProtocol.AnyCodable] {
         let data = try await requestRaw(method: "config.get", params: nil)
         if let raw = try? decodeJSONDictionary(method: "config.get", data: data) {

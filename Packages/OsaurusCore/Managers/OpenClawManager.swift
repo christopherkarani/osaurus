@@ -76,6 +76,7 @@ public final class OpenClawManager: ObservableObject {
         var skillsBins: (@Sendable () async throws -> [String])? = nil
         var skillsInstall: (@Sendable (_ name: String, _ installId: String, _ timeoutMs: Int?) async throws -> OpenClawSkillInstallResult)? = nil
         var skillsUpdate: (@Sendable (_ skillKey: String, _ enabled: Bool?) async throws -> OpenClawSkillUpdateResult)? = nil
+        var systemPresence: (@Sendable () async throws -> [OpenClawPresenceEntry])? = nil
     }
 
     nonisolated(unsafe) static var gatewayHooks: GatewayHooks?
@@ -183,6 +184,7 @@ public final class OpenClawManager: ObservableObject {
     @Published public private(set) var cronRunsByJobID: [String: [OpenClawCronRunLogEntry]] = [:]
     @Published public private(set) var skillsReport: OpenClawSkillStatusReport?
     @Published public private(set) var skillsBins: [String] = []
+    @Published public private(set) var connectedClients: [OpenClawPresenceEntry] = []
     @Published public private(set) var activeSessions: [ActiveSessionInfo] = []
     @Published public private(set) var lastHealth: OpenClawGatewayHealth?
     @Published public private(set) var lastError: String?
@@ -485,6 +487,15 @@ public final class OpenClawManager: ObservableObject {
         await refreshSkills()
     }
 
+    public func refreshConnectedClients() async {
+        guard isConnected else { return }
+        do {
+            connectedClients = try await gatewaySystemPresence()
+        } catch {
+            lastError = "Connected clients refresh failed: \(error.localizedDescription)"
+        }
+    }
+
     public func setHeartbeat(enabled: Bool) async throws {
         do {
             try await gatewaySetHeartbeats(enabled: enabled)
@@ -561,6 +572,7 @@ public final class OpenClawManager: ObservableObject {
         cronRunsByJobID = [:]
         skillsReport = nil
         skillsBins = []
+        connectedClients = []
         activeSessions = []
         lastHealth = nil
         trackedPID = nil
@@ -1134,6 +1146,13 @@ public final class OpenClawManager: ObservableObject {
             return try await skillsUpdate(skillKey, enabled)
         }
         return try await OpenClawGatewayConnection.shared.skillsUpdate(skillKey: skillKey, enabled: enabled)
+    }
+
+    private func gatewaySystemPresence() async throws -> [OpenClawPresenceEntry] {
+        if let hooks = Self.gatewayHooks, let systemPresence = hooks.systemPresence {
+            return try await systemPresence()
+        }
+        return try await OpenClawGatewayConnection.shared.systemPresence()
     }
 
     private func gatewayChannelsLogout(channelId: String, accountId: String?) async throws {
