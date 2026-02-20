@@ -245,7 +245,8 @@ private extension ManagementView {
         case .providers:
             count = remoteProviderManager.providerStates.values.filter(\.isConnected).count
         case .openclaw:
-            count = openClawManager.channels.count
+            let errorCount = openClawManager.channels.filter { !$0.isConnected && $0.isLinked }.count
+            count = errorCount > 0 ? errorCount : openClawManager.channels.count
         case .plugins:
             count = repoService.plugins.filter { $0.isInstalled }.count
         case .tools:
