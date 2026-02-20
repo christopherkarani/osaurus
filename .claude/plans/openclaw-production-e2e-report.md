@@ -11,7 +11,7 @@ Scope: `PR-E2E-01` through `PR-E2E-06`
 | `PR-E2E-01` | PASS | Enabled channels discovered and matrix generated with artifacts. |
 | `PR-E2E-02` | BLOCKED | Telegram outbound send failed: bot cannot initiate conversation with target user. |
 | `PR-E2E-03` | BLOCKED | `lastInboundAt` remained `null`; no inbound Telegram event observed in wait window. |
-| `PR-E2E-04` | PENDING | Restart/reconnect under active traffic. |
+| `PR-E2E-04` | BLOCKED | Gateway reconnect recovered after restart, but outbound traffic remained blocked by Telegram DM precondition. |
 | `PR-E2E-05` | PENDING | Auth failure and recovery flow. |
 | `PR-E2E-06` | PENDING | Seq-gap/resync evidence under real event load. |
 
@@ -137,3 +137,52 @@ From `channels-status-post-inbound-20260220T212021Z.json`:
   1. Open Telegram.
   2. Send a message to `@codanicia_bot` from the user associated with target `6749713257`.
   3. Re-run `./scripts/openclaw/e2e_inbound.sh 6749713257 120`.
+
+## PR-E2E-04: Restart/Reconnect While Traffic Is Active (Current Blocker)
+
+### Commands
+
+```bash
+cd /Users/chriskarani/CodingProjects/Jarvis/osaurus
+./scripts/openclaw/e2e_restart_reconnect.sh 6749713257
+```
+
+### Execution Evidence
+
+- Timestamp (UTC): `2026-02-20T21:25:18Z`
+- Script output:
+  - `status=failed`
+  - `summary_json=/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/e2e-restart-reconnect-summary-20260220T212518Z.json`
+- Summary fields:
+  - `probePostOk=true`
+  - `outboundPreStatus=failed`
+  - `outboundPostStatus=failed`
+
+### Before/After State
+
+From `probe-pre-restart-20260220T212518Z.json` and `probe-post-restart-20260220T212518Z.json`:
+
+- Before restart probe:
+  - `ok: true`
+  - `primaryTargetId: sshTunnel`
+  - `sshTunnel.connectOk=true`
+- After restart probe:
+  - `ok: true`
+  - `primaryTargetId: sshTunnel`
+  - `sshTunnel.connectOk=true`
+
+Outbound pre/post summaries both captured Telegram send rejection:
+
+```text
+[telegram] message failed: Call to 'sendMessage' failed! (403: Forbidden: bot can't initiate conversation with a user)
+```
+
+### Blocker and Smallest Unblocking Action
+
+- What is validated: restart/reconnect recovers to healthy gateway probe (no stuck disconnected state in backend connectivity signal).
+- What remains blocked: traffic-resume proof fails because Telegram still rejects bot-initiated messages.
+- Smallest unblocking action:
+  1. Open Telegram.
+  2. Start DM with `@codanicia_bot`.
+  3. Send `/start` (or any text).
+  4. Re-run `./scripts/openclaw/e2e_restart_reconnect.sh 6749713257`.

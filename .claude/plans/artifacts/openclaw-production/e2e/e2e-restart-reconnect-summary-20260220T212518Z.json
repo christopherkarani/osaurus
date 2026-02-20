@@ -1,0 +1,19 @@
+{
+  "generatedAtUtc": "2026-02-20T21:25:18Z",
+  "target": "6749713257",
+  "status": "failed",
+  "reason": "restart/reconnect validation did not satisfy healthy probe + resumed outbound traffic",
+  "probePostOk": true,
+  "outboundPreStatus": "failed",
+  "outboundPostStatus": "failed",
+  "probePostAttempts": 12,
+  "probePostSleepSeconds": 2,
+  "probePreArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/probe-pre-restart-20260220T212518Z.json",
+  "restartArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/gateway-restart-20260220T212518Z.json",
+  "probePostArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/probe-post-restart-20260220T212518Z.json",
+  "probePostStderrArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/probe-post-restart-20260220T212518Z.err.log",
+  "outboundPreArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/outbound-pre-restart-20260220T212518Z.json",
+  "outboundPostArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/outbound-post-restart-20260220T212518Z.json",
+  "outboundPreLogArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/outbound-pre-restart-20260220T212518Z.log",
+  "outboundPostLogArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/outbound-post-restart-20260220T212518Z.log"
+}

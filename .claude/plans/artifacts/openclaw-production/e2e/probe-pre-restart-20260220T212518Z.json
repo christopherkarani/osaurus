@@ -1,0 +1,1280 @@
+{
+  "ok": true,
+  "ts": 1771622725975,
+  "durationMs": 5281,
+  "timeoutMs": 3000,
+  "primaryTargetId": "sshTunnel",
+  "warnings": [
+    {
+      "code": "multiple_gateways",
+      "message": "Unconventional setup: multiple reachable gateways detected. Usually one gateway per network is recommended unless you intentionally run isolated profiles, like a rescue bot (see docs: /gateway#multiple-gateways-same-host).",
+      "targetIds": [
+        "sshTunnel",
+        "configRemote"
+      ]
+    }
+  ],
+  "network": {
+    "localLoopbackUrl": "ws://127.0.0.1:18789",
+    "localTailnetUrl": null,
+    "tailnetIPv4": null
+  },
+  "discovery": {
+    "timeoutMs": 1200,
+    "count": 2,
+    "beacons": [
+      {
+        "instanceName": "Chris’s MacBook Pro (OpenClaw) (2)",
+        "displayName": "Chris’s MacBook Pro (OpenClaw) (2)",
+        "domain": "local.",
+        "host": "openclaw-(2).local",
+        "lanHost": null,
+        "tailnetDns": null,
+        "gatewayPort": null,
+        "sshPort": null,
+        "wsUrl": "ws://openclaw-(2).local:18789"
+      },
+      {
+        "instanceName": "Chris’s M3 Max (OpenClaw)",
+        "displayName": "Chris’s M3 Max (OpenClaw)",
+        "domain": "local.",
+        "host": "openclaw.local",
+        "lanHost": null,
+        "tailnetDns": null,
+        "gatewayPort": null,
+        "sshPort": null,
+        "wsUrl": "ws://openclaw.local:18789"
+      }
+    ]
+  },
+  "targets": [
+    {
+      "id": "sshTunnel",
+      "kind": "sshTunnel",
+      "url": "ws://127.0.0.1:18789",
+      "active": true,
+      "tunnel": {
+        "kind": "ssh",
+        "target": "chriskarani@openclaw.local",
+        "localPort": 18789,
+        "remotePort": 18789,
+        "pid": 61834
+      },
+      "connect": {
+        "ok": true,
+        "latencyMs": 60,
+        "error": null,
+        "close": null
+      },
+      "self": {
+        "host": "chriskarani.local",
+        "ip": "192.168.100.63",
+        "version": "2026.2.17",
+        "platform": "macos 26.0"
+      },
+      "config": {
+        "path": "/Users/chriskarani/.openclaw/openclaw.json",
+        "exists": true,
+        "valid": true,
+        "issues": [],
+        "legacyIssues": [],
+        "gateway": {
+          "mode": "local",
+          "bind": "loopback",
+          "port": 18789,
+          "controlUiEnabled": null,
+          "controlUiBasePath": null,
+          "authMode": null,
+          "authTokenConfigured": false,
+          "authPasswordConfigured": false,
+          "remoteUrl": "ws://openclaw.local:18789",
+          "remoteTokenConfigured": true,
+          "remotePasswordConfigured": false,
+          "tailscaleMode": "off"
+        },
+        "discovery": {
+          "wideAreaEnabled": null
+        }
+      },
+      "health": {
+        "ok": true,
+        "ts": 1771622709461,
+        "durationMs": 923,
+        "channels": {
+          "telegram": {
+            "configured": true,
+            "tokenSource": "none",
+            "running": false,
+            "mode": null,
+            "lastStartAt": null,
+            "lastStopAt": null,
+            "lastError": null,
+            "probe": {
+              "ok": true,
+              "status": null,
+              "error": null,
+              "elapsedMs": 923,
+              "bot": {
+                "id": 8579100452,
+                "username": "codanicia_bot",
+                "canJoinGroups": true,
+                "canReadAllGroupMessages": false,
+                "supportsInlineQueries": false
+              }
+            },
+            "lastProbeAt": 1771622709461,
+            "accountId": "default",
+            "accounts": {
+              "default": {
+                "configured": true,
+                "tokenSource": "none",
+                "running": false,
+                "mode": null,
+                "lastStartAt": null,
+                "lastStopAt": null,
+                "lastError": null,
+                "probe": {
+                  "ok": true,
+                  "status": null,
+                  "error": null,
+                  "elapsedMs": 923,
+                  "bot": {
+                    "id": 8579100452,
+                    "username": "codanicia_bot",
+                    "canJoinGroups": true,
+                    "canReadAllGroupMessages": false,
+                    "supportsInlineQueries": false
+                  }
+                },
+                "lastProbeAt": 1771622709461,
+                "accountId": "default"
+              }
+            }
+          }
+        },
+        "channelOrder": [
+          "telegram"
+        ],
+        "channelLabels": {
+          "telegram": "Telegram"
+        },
+        "heartbeatSeconds": 3600,
+        "defaultAgentId": "main",
+        "agents": [
+          {
+            "agentId": "main",
+            "isDefault": true,
+            "heartbeat": {
+              "enabled": true,
+              "every": "1h",
+              "everyMs": 3600000,
+              "prompt": "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.",
+              "target": "last",
+              "ackMaxChars": 300
+            },
+            "sessions": {
+              "path": "/Users/chriskarani/.openclaw/agents/main/sessions/sessions.json",
+              "count": 24,
+              "recent": [
+                {
+                  "key": "agent:main:main",
+                  "updatedAt": 1771616523396,
+                  "age": 6185142
+                },
+                {
+                  "key": "agent:main:openresponses:a20ba70b-2b6c-4d88-b149-89a7def1b013",
+                  "updatedAt": 1770876518973,
+                  "age": 746189565
+                },
+                {
+                  "key": "agent:main:openresponses:a2ee11db-11c8-48a5-ba29-9ea4597dd799",
+                  "updatedAt": 1770875389648,
+                  "age": 747318890
+                },
+                {
+                  "key": "agent:main:openresponses:1332da62-b285-4432-8e18-3f7e75547621",
+                  "updatedAt": 1770875389570,
+                  "age": 747318968
+                },
+                {
+                  "key": "agent:main:openresponses:120eccd9-7b4c-412e-b643-a40eb07b61d5",
+                  "updatedAt": 1770875371387,
+                  "age": 747337151
+                }
+              ]
+            }
+          }
+        ],
+        "sessions": {
+          "path": "/Users/chriskarani/.openclaw/agents/main/sessions/sessions.json",
+          "count": 24,
+          "recent": [
+            {
+              "key": "agent:main:main",
+              "updatedAt": 1771616523396,
+              "age": 6185142
+            },
+            {
+              "key": "agent:main:openresponses:a20ba70b-2b6c-4d88-b149-89a7def1b013",
+              "updatedAt": 1770876518973,
+              "age": 746189565
+            },
+            {
+              "key": "agent:main:openresponses:a2ee11db-11c8-48a5-ba29-9ea4597dd799",
+              "updatedAt": 1770875389648,
+              "age": 747318890
+            },
+            {
+              "key": "agent:main:openresponses:1332da62-b285-4432-8e18-3f7e75547621",
+              "updatedAt": 1770875389570,
+              "age": 747318968
+            },
+            {
+              "key": "agent:main:openresponses:120eccd9-7b4c-412e-b643-a40eb07b61d5",
+              "updatedAt": 1770875371387,
+              "age": 747337151
+            }
+          ]
+        }
+      },
+      "summary": {
+        "heartbeat": {
+          "defaultAgentId": "main",
+          "agents": [
+            {
+              "agentId": "main",
+              "enabled": true,
+              "every": "1h",
+              "everyMs": 3600000
+            }
+          ]
+        },
+        "channelSummary": [
+          "Telegram: configured",
+          "  - default (token:config)"
+        ],
+        "queuedSystemEvents": [],
+        "sessions": {
+          "paths": [
+            "/Users/chriskarani/.openclaw/agents/main/sessions/sessions.json"
+          ],
+          "count": 24,
+          "defaults": {
+            "model": "claude-sonnet-4-6",
+            "contextTokens": 200000
+          },
+          "recent": [
+            {
+              "agentId": "main",
+              "key": "agent:main:main",
+              "kind": "direct",
+              "sessionId": "60f1941e-925a-45ec-a4c0-e42e4b3ce92e",
+              "updatedAt": 1771616523396,
+              "age": 6200977,
+              "thinkingLevel": "high",
+              "verboseLevel": "on",
+              "systemSent": true,
+              "abortedLastRun": false,
+              "inputTokens": 18,
+              "outputTokens": 135,
+              "totalTokens": 15739,
+              "totalTokensFresh": true,
+              "remainingTokens": 184261,
+              "percentUsed": 8,
+              "model": "claude-sonnet-4-6",
+              "contextTokens": 200000,
+              "flags": [
+                "think:high",
+                "verbose:on",
+                "system",
+                "id:60f1941e-925a-45ec-a4c0-e42e4b3ce92e"
+              ]
+            },
+            {
+              "agentId": "main",
+              "key": "agent:main:openresponses:a20ba70b-2b6c-4d88-b149-89a7def1b013",
+              "kind": "direct",
+              "sessionId": "76e41eab-410b-4c26-bbcc-7bc794612561",
+              "updatedAt": 1770876518973,
+              "age": 746205400,
+              "totalTokens": null,
+              "totalTokensFresh": false,
+              "remainingTokens": null,
+              "percentUsed": null,
+              "model": "claude-sonnet-4-6",
+              "contextTokens": 200000,
+              "flags": [
+                "id:76e41eab-410b-4c26-bbcc-7bc794612561"
+              ]
+            },
+            {
+              "agentId": "main",
+              "key": "agent:main:openresponses:a2ee11db-11c8-48a5-ba29-9ea4597dd799",
+              "kind": "direct",
+              "sessionId": "014069ab-9ac3-452e-96b3-890639e752ef",
+              "updatedAt": 1770875389648,
+              "age": 747334725,
+              "totalTokens": null,
+              "totalTokensFresh": false,
+              "remainingTokens": null,
+              "percentUsed": null,
+              "model": "claude-sonnet-4-6",
+              "contextTokens": 200000,
+              "flags": [
+                "id:014069ab-9ac3-452e-96b3-890639e752ef"
+              ]
+            },
+            {
+              "agentId": "main",
+              "key": "agent:main:openresponses:1332da62-b285-4432-8e18-3f7e75547621",
+              "kind": "direct",
+              "sessionId": "c22f914b-6214-475f-b8bd-c2e7eaea6e92",
+              "updatedAt": 1770875389570,
+              "age": 747334803,
+              "totalTokens": null,
+              "totalTokensFresh": false,
+              "remainingTokens": null,
+              "percentUsed": null,
+              "model": "claude-sonnet-4-6",
+              "contextTokens": 200000,
+              "flags": [
+                "id:c22f914b-6214-475f-b8bd-c2e7eaea6e92"
+              ]
+            },
+            {
+              "agentId": "main",
+              "key": "agent:main:openresponses:120eccd9-7b4c-412e-b643-a40eb07b61d5",
+              "kind": "direct",
+              "sessionId": "aa42b4a6-a97a-49f1-9a0a-02799ffec2c6",
+              "updatedAt": 1770875371387,
+              "age": 747352986,
+              "totalTokens": null,
+              "totalTokensFresh": false,
+              "remainingTokens": null,
+              "percentUsed": null,
+              "model": "claude-sonnet-4-6",
+              "contextTokens": 200000,
+              "flags": [
+                "id:aa42b4a6-a97a-49f1-9a0a-02799ffec2c6"
+              ]
+            },
+            {
+              "agentId": "main",
+              "key": "agent:main:openresponses:edae3b3a-e1c2-4310-8187-1c413359ceae",
+              "kind": "direct",
+              "sessionId": "b3865c9a-c3c1-4799-bed3-3655f3b696e7",
+              "updatedAt": 1770874031267,
+              "age": 748693106,
+              "totalTokens": null,
+              "totalTokensFresh": false,
+              "remainingTokens": null,
+              "percentUsed": null,
+              "model": "claude-sonnet-4-6",
+              "contextTokens": 200000,
+              "flags": [
+                "id:b3865c9a-c3c1-4799-bed3-3655f3b696e7"
+              ]
+            },
+            {
+              "agentId": "main",
+              "key": "agent:main:openresponses:0a34b27a-af2e-47e1-a063-e27d5a5c5230",
+              "kind": "direct",
+              "sessionId": "c73b80b9-4ecc-49db-8a6a-857eb4bf1ca7",
+              "updatedAt": 1770873696806,
+              "age": 749027567,
+              "totalTokens": null,
+              "totalTokensFresh": false,
+              "remainingTokens": null,
+              "percentUsed": null,
+              "model": "claude-sonnet-4-6",
+              "contextTokens": 200000,
+              "flags": [
+                "id:c73b80b9-4ecc-49db-8a6a-857eb4bf1ca7"
+              ]
+            },
+            {
+              "agentId": "main",
+              "key": "agent:main:openresponses:5a2768a5-5eba-4853-8721-71c16df53c00",
+              "kind": "direct",
+              "sessionId": "e744a70a-f1a7-45fe-b44b-1e01f2e3fa01",
+              "updatedAt": 1770873621883,
+              "age": 749102490,
+              "totalTokens": null,
+              "totalTokensFresh": false,
+              "remainingTokens": null,
+              "percentUsed": null,
+              "model": "claude-sonnet-4-6",
+              "contextTokens": 200000,
+              "flags": [
+                "id:e744a70a-f1a7-45fe-b44b-1e01f2e3fa01"
+              ]
+            },
+            {
+              "agentId": "main",
+              "key": "agent:main:openresponses:fd970e3a-3efc-4b33-8b58-6f2bf5fb612f",
+              "kind": "direct",
+              "sessionId": "80746d9a-9313-4f9a-8abf-058e131f97c5",
+              "updatedAt": 1770873064391,
+              "age": 749659982,
+              "totalTokens": null,
+              "totalTokensFresh": false,
+              "remainingTokens": null,
+              "percentUsed": null,
+              "model": "claude-sonnet-4-6",
+              "contextTokens": 200000,
+              "flags": [
+                "id:80746d9a-9313-4f9a-8abf-058e131f97c5"
+              ]
+            },
+            {
+              "agentId": "main",
+              "key": "agent:main:openresponses:43016783-dd22-41ee-aa2b-7f16cd6b2f9a",
+              "kind": "direct",
+              "sessionId": "4c8dbd0e-8aad-4ba9-b949-ec715c572dd6",
+              "updatedAt": 1770873012778,
+              "age": 749711595,
+              "totalTokens": null,
+              "totalTokensFresh": false,
+              "remainingTokens": null,
+              "percentUsed": null,
+              "model": "claude-sonnet-4-6",
+              "contextTokens": 200000,
+              "flags": [
+                "id:4c8dbd0e-8aad-4ba9-b949-ec715c572dd6"
+              ]
+            }
+          ],
+          "byAgent": [
+            {
+              "agentId": "main",
+              "path": "/Users/chriskarani/.openclaw/agents/main/sessions/sessions.json",
+              "count": 24,
+              "recent": [
+                {
+                  "agentId": "main",
+                  "key": "agent:main:main",
+                  "kind": "direct",
+                  "sessionId": "60f1941e-925a-45ec-a4c0-e42e4b3ce92e",
+                  "updatedAt": 1771616523396,
+                  "age": 6200977,
+                  "thinkingLevel": "high",
+                  "verboseLevel": "on",
+                  "systemSent": true,
+                  "abortedLastRun": false,
+                  "inputTokens": 18,
+                  "outputTokens": 135,
+                  "totalTokens": 15739,
+                  "totalTokensFresh": true,
+                  "remainingTokens": 184261,
+                  "percentUsed": 8,
+                  "model": "claude-sonnet-4-6",
+                  "contextTokens": 200000,
+                  "flags": [
+                    "think:high",
+                    "verbose:on",
+                    "system",
+                    "id:60f1941e-925a-45ec-a4c0-e42e4b3ce92e"
+                  ]
+                },
+                {
+                  "agentId": "main",
+                  "key": "agent:main:openresponses:a20ba70b-2b6c-4d88-b149-89a7def1b013",
+                  "kind": "direct",
+                  "sessionId": "76e41eab-410b-4c26-bbcc-7bc794612561",
+                  "updatedAt": 1770876518973,
+                  "age": 746205400,
+                  "totalTokens": null,
+                  "totalTokensFresh": false,
+                  "remainingTokens": null,
+                  "percentUsed": null,
+                  "model": "claude-sonnet-4-6",
+                  "contextTokens": 200000,
+                  "flags": [
+                    "id:76e41eab-410b-4c26-bbcc-7bc794612561"
+                  ]
+                },
+                {
+                  "agentId": "main",
+                  "key": "agent:main:openresponses:a2ee11db-11c8-48a5-ba29-9ea4597dd799",
+                  "kind": "direct",
+                  "sessionId": "014069ab-9ac3-452e-96b3-890639e752ef",
+                  "updatedAt": 1770875389648,
+                  "age": 747334725,
+                  "totalTokens": null,
+                  "totalTokensFresh": false,
+                  "remainingTokens": null,
+                  "percentUsed": null,
+                  "model": "claude-sonnet-4-6",
+                  "contextTokens": 200000,
+                  "flags": [
+                    "id:014069ab-9ac3-452e-96b3-890639e752ef"
+                  ]
+                },
+                {
+                  "agentId": "main",
+                  "key": "agent:main:openresponses:1332da62-b285-4432-8e18-3f7e75547621",
+                  "kind": "direct",
+                  "sessionId": "c22f914b-6214-475f-b8bd-c2e7eaea6e92",
+                  "updatedAt": 1770875389570,
+                  "age": 747334803,
+                  "totalTokens": null,
+                  "totalTokensFresh": false,
+                  "remainingTokens": null,
+                  "percentUsed": null,
+                  "model": "claude-sonnet-4-6",
+                  "contextTokens": 200000,
+                  "flags": [
+                    "id:c22f914b-6214-475f-b8bd-c2e7eaea6e92"
+                  ]
+                },
+                {
+                  "agentId": "main",
+                  "key": "agent:main:openresponses:120eccd9-7b4c-412e-b643-a40eb07b61d5",
+                  "kind": "direct",
+                  "sessionId": "aa42b4a6-a97a-49f1-9a0a-02799ffec2c6",
+                  "updatedAt": 1770875371387,
+                  "age": 747352986,
+                  "totalTokens": null,
+                  "totalTokensFresh": false,
+                  "remainingTokens": null,
+                  "percentUsed": null,
+                  "model": "claude-sonnet-4-6",
+                  "contextTokens": 200000,
+                  "flags": [
+                    "id:aa42b4a6-a97a-49f1-9a0a-02799ffec2c6"
+                  ]
+                },
+                {
+                  "agentId": "main",
+                  "key": "agent:main:openresponses:edae3b3a-e1c2-4310-8187-1c413359ceae",
+                  "kind": "direct",
+                  "sessionId": "b3865c9a-c3c1-4799-bed3-3655f3b696e7",
+                  "updatedAt": 1770874031267,
+                  "age": 748693106,
+                  "totalTokens": null,
+                  "totalTokensFresh": false,
+                  "remainingTokens": null,
+                  "percentUsed": null,
+                  "model": "claude-sonnet-4-6",
+                  "contextTokens": 200000,
+                  "flags": [
+                    "id:b3865c9a-c3c1-4799-bed3-3655f3b696e7"
+                  ]
+                },
+                {
+                  "agentId": "main",
+                  "key": "agent:main:openresponses:0a34b27a-af2e-47e1-a063-e27d5a5c5230",
+                  "kind": "direct",
+                  "sessionId": "c73b80b9-4ecc-49db-8a6a-857eb4bf1ca7",
+                  "updatedAt": 1770873696806,
+                  "age": 749027567,
+                  "totalTokens": null,
+                  "totalTokensFresh": false,
+                  "remainingTokens": null,
+                  "percentUsed": null,
+                  "model": "claude-sonnet-4-6",
+                  "contextTokens": 200000,
+                  "flags": [
+                    "id:c73b80b9-4ecc-49db-8a6a-857eb4bf1ca7"
+                  ]
+                },
+                {
+                  "agentId": "main",
+                  "key": "agent:main:openresponses:5a2768a5-5eba-4853-8721-71c16df53c00",
+                  "kind": "direct",
+                  "sessionId": "e744a70a-f1a7-45fe-b44b-1e01f2e3fa01",
+                  "updatedAt": 1770873621883,
+                  "age": 749102490,
+                  "totalTokens": null,
+                  "totalTokensFresh": false,
+                  "remainingTokens": null,
+                  "percentUsed": null,
+                  "model": "claude-sonnet-4-6",
+                  "contextTokens": 200000,
+                  "flags": [
+                    "id:e744a70a-f1a7-45fe-b44b-1e01f2e3fa01"
+                  ]
+                },
+                {
+                  "agentId": "main",
+                  "key": "agent:main:openresponses:fd970e3a-3efc-4b33-8b58-6f2bf5fb612f",
+                  "kind": "direct",
+                  "sessionId": "80746d9a-9313-4f9a-8abf-058e131f97c5",
+                  "updatedAt": 1770873064391,
+                  "age": 749659982,
+                  "totalTokens": null,
+                  "totalTokensFresh": false,
+                  "remainingTokens": null,
+                  "percentUsed": null,
+                  "model": "claude-sonnet-4-6",
+                  "contextTokens": 200000,
+                  "flags": [
+                    "id:80746d9a-9313-4f9a-8abf-058e131f97c5"
+                  ]
+                },
+                {
+                  "agentId": "main",
+                  "key": "agent:main:openresponses:43016783-dd22-41ee-aa2b-7f16cd6b2f9a",
+                  "kind": "direct",
+                  "sessionId": "4c8dbd0e-8aad-4ba9-b949-ec715c572dd6",
+                  "updatedAt": 1770873012778,
+                  "age": 749711595,
+                  "totalTokens": null,
+                  "totalTokensFresh": false,
+                  "remainingTokens": null,
+                  "percentUsed": null,
+                  "model": "claude-sonnet-4-6",
+                  "contextTokens": 200000,
+                  "flags": [
+                    "id:4c8dbd0e-8aad-4ba9-b949-ec715c572dd6"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "presence": [
+        {
+          "host": "chriskarani.local",
+          "ip": "192.168.100.63",
+          "version": "2026.2.17",
+          "platform": "macos 26.0",
+          "deviceFamily": "Mac",
+          "mode": "gateway",
+          "reason": "self",
+          "text": "Gateway: chriskarani.local (192.168.100.63) · app 2026.2.17 · mode gateway · reason self",
+          "ts": 1771622724373
+        },
+        {
+          "host": "cli",
+          "version": "dev",
+          "platform": "darwin",
+          "mode": "probe",
+          "deviceId": "7f4fcb81f56b5ebf65fde4d176797fbf5be48b64be684d68885f26acbac19d3e",
+          "roles": [
+            "operator"
+          ],
+          "scopes": [
+            "operator.admin"
+          ],
+          "instanceId": "7f4fcb81f56b5ebf65fde4d176797fbf5be48b64be684d68885f26acbac19d3e",
+          "reason": "connect",
+          "ts": 1771622724367,
+          "text": "Node: cli · mode probe"
+        }
+      ]
+    },
+    {
+      "id": "configRemote",
+      "kind": "configRemote",
+      "url": "ws://openclaw.local:18789",
+      "active": false,
+      "tunnel": null,
+      "connect": {
+        "ok": true,
+        "latencyMs": 55,
+        "error": null,
+        "close": null
+      },
+      "self": {
+        "host": "chriskarani.local",
+        "ip": "192.168.100.63",
+        "version": "2026.2.17",
+        "platform": "macos 26.0"
+      },
+      "config": {
+        "path": "/Users/chriskarani/.openclaw/openclaw.json",
+        "exists": true,
+        "valid": true,
+        "issues": [],
+        "legacyIssues": [],
+        "gateway": {
+          "mode": "local",
+          "bind": "loopback",
+          "port": 18789,
+          "controlUiEnabled": null,
+          "controlUiBasePath": null,
+          "authMode": null,
+          "authTokenConfigured": false,
+          "authPasswordConfigured": false,
+          "remoteUrl": "ws://openclaw.local:18789",
+          "remoteTokenConfigured": true,
+          "remotePasswordConfigured": false,
+          "tailscaleMode": "off"
+        },
+        "discovery": {
+          "wideAreaEnabled": null
+        }
+      },
+      "health": {
+        "ok": true,
+        "ts": 1771622709461,
+        "durationMs": 923,
+        "channels": {
+          "telegram": {
+            "configured": true,
+            "tokenSource": "none",
+            "running": false,
+            "mode": null,
+            "lastStartAt": null,
+            "lastStopAt": null,
+            "lastError": null,
+            "probe": {
+              "ok": true,
+              "status": null,
+              "error": null,
+              "elapsedMs": 923,
+              "bot": {
+                "id": 8579100452,
+                "username": "codanicia_bot",
+                "canJoinGroups": true,
+                "canReadAllGroupMessages": false,
+                "supportsInlineQueries": false
+              }
+            },
+            "lastProbeAt": 1771622709461,
+            "accountId": "default",
+            "accounts": {
+              "default": {
+                "configured": true,
+                "tokenSource": "none",
+                "running": false,
+                "mode": null,
+                "lastStartAt": null,
+                "lastStopAt": null,
+                "lastError": null,
+                "probe": {
+                  "ok": true,
+                  "status": null,
+                  "error": null,
+                  "elapsedMs": 923,
+                  "bot": {
+                    "id": 8579100452,
+                    "username": "codanicia_bot",
+                    "canJoinGroups": true,
+                    "canReadAllGroupMessages": false,
+                    "supportsInlineQueries": false
+                  }
+                },
+                "lastProbeAt": 1771622709461,
+                "accountId": "default"
+              }
+            }
+          }
+        },
+        "channelOrder": [
+          "telegram"
+        ],
+        "channelLabels": {
+          "telegram": "Telegram"
+        },
+        "heartbeatSeconds": 3600,
+        "defaultAgentId": "main",
+        "agents": [
+          {
+            "agentId": "main",
+            "isDefault": true,
+            "heartbeat": {
+              "enabled": true,
+              "every": "1h",
+              "everyMs": 3600000,
+              "prompt": "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.",
+              "target": "last",
+              "ackMaxChars": 300
+            },
+            "sessions": {
+              "path": "/Users/chriskarani/.openclaw/agents/main/sessions/sessions.json",
+              "count": 24,
+              "recent": [
+                {
+                  "key": "agent:main:main",
+                  "updatedAt": 1771616523396,
+                  "age": 6185142
+                },
+                {
+                  "key": "agent:main:openresponses:a20ba70b-2b6c-4d88-b149-89a7def1b013",
+                  "updatedAt": 1770876518973,
+                  "age": 746189565
+                },
+                {
+                  "key": "agent:main:openresponses:a2ee11db-11c8-48a5-ba29-9ea4597dd799",
+                  "updatedAt": 1770875389648,
+                  "age": 747318890
+                },
+                {
+                  "key": "agent:main:openresponses:1332da62-b285-4432-8e18-3f7e75547621",
+                  "updatedAt": 1770875389570,
+                  "age": 747318968
+                },
+                {
+                  "key": "agent:main:openresponses:120eccd9-7b4c-412e-b643-a40eb07b61d5",
+                  "updatedAt": 1770875371387,
+                  "age": 747337151
+                }
+              ]
+            }
+          }
+        ],
+        "sessions": {
+          "path": "/Users/chriskarani/.openclaw/agents/main/sessions/sessions.json",
+          "count": 24,
+          "recent": [
+            {
+              "key": "agent:main:main",
+              "updatedAt": 1771616523396,
+              "age": 6185142
+            },
+            {
+              "key": "agent:main:openresponses:a20ba70b-2b6c-4d88-b149-89a7def1b013",
+              "updatedAt": 1770876518973,
+              "age": 746189565
+            },
+            {
+              "key": "agent:main:openresponses:a2ee11db-11c8-48a5-ba29-9ea4597dd799",
+              "updatedAt": 1770875389648,
+              "age": 747318890
+            },
+            {
+              "key": "agent:main:openresponses:1332da62-b285-4432-8e18-3f7e75547621",
+              "updatedAt": 1770875389570,
+              "age": 747318968
+            },
+            {
+              "key": "agent:main:openresponses:120eccd9-7b4c-412e-b643-a40eb07b61d5",
+              "updatedAt": 1770875371387,
+              "age": 747337151
+            }
+          ]
+        }
+      },
+      "summary": {
+        "heartbeat": {
+          "defaultAgentId": "main",
+          "agents": [
+            {
+              "agentId": "main",
+              "enabled": true,
+              "every": "1h",
+              "everyMs": 3600000
+            }
+          ]
+        },
+        "channelSummary": [
+          "Telegram: configured",
+          "  - default (token:config)"
+        ],
+        "queuedSystemEvents": [],
+        "sessions": {
+          "paths": [
+            "/Users/chriskarani/.openclaw/agents/main/sessions/sessions.json"
+          ],
+          "count": 24,
+          "defaults": {
+            "model": "claude-sonnet-4-6",
+            "contextTokens": 200000
+          },
+          "recent": [
+            {
+              "agentId": "main",
+              "key": "agent:main:main",
+              "kind": "direct",
+              "sessionId": "60f1941e-925a-45ec-a4c0-e42e4b3ce92e",
+              "updatedAt": 1771616523396,
+              "age": 6201077,
+              "thinkingLevel": "high",
+              "verboseLevel": "on",
+              "systemSent": true,
+              "abortedLastRun": false,
+              "inputTokens": 18,
+              "outputTokens": 135,
+              "totalTokens": 15739,
+              "totalTokensFresh": true,
+              "remainingTokens": 184261,
+              "percentUsed": 8,
+              "model": "claude-sonnet-4-6",
+              "contextTokens": 200000,
+              "flags": [
+                "think:high",
+                "verbose:on",
+                "system",
+                "id:60f1941e-925a-45ec-a4c0-e42e4b3ce92e"
+              ]
+            },
+            {
+              "agentId": "main",
+              "key": "agent:main:openresponses:a20ba70b-2b6c-4d88-b149-89a7def1b013",
+              "kind": "direct",
+              "sessionId": "76e41eab-410b-4c26-bbcc-7bc794612561",
+              "updatedAt": 1770876518973,
+              "age": 746205500,
+              "totalTokens": null,
+              "totalTokensFresh": false,
+              "remainingTokens": null,
+              "percentUsed": null,
+              "model": "claude-sonnet-4-6",
+              "contextTokens": 200000,
+              "flags": [
+                "id:76e41eab-410b-4c26-bbcc-7bc794612561"
+              ]
+            },
+            {
+              "agentId": "main",
+              "key": "agent:main:openresponses:a2ee11db-11c8-48a5-ba29-9ea4597dd799",
+              "kind": "direct",
+              "sessionId": "014069ab-9ac3-452e-96b3-890639e752ef",
+              "updatedAt": 1770875389648,
+              "age": 747334825,
+              "totalTokens": null,
+              "totalTokensFresh": false,
+              "remainingTokens": null,
+              "percentUsed": null,
+              "model": "claude-sonnet-4-6",
+              "contextTokens": 200000,
+              "flags": [
+                "id:014069ab-9ac3-452e-96b3-890639e752ef"
+              ]
+            },
+            {
+              "agentId": "main",
+              "key": "agent:main:openresponses:1332da62-b285-4432-8e18-3f7e75547621",
+              "kind": "direct",
+              "sessionId": "c22f914b-6214-475f-b8bd-c2e7eaea6e92",
+              "updatedAt": 1770875389570,
+              "age": 747334903,
+              "totalTokens": null,
+              "totalTokensFresh": false,
+              "remainingTokens": null,
+              "percentUsed": null,
+              "model": "claude-sonnet-4-6",
+              "contextTokens": 200000,
+              "flags": [
+                "id:c22f914b-6214-475f-b8bd-c2e7eaea6e92"
+              ]
+            },
+            {
+              "agentId": "main",
+              "key": "agent:main:openresponses:120eccd9-7b4c-412e-b643-a40eb07b61d5",
+              "kind": "direct",
+              "sessionId": "aa42b4a6-a97a-49f1-9a0a-02799ffec2c6",
+              "updatedAt": 1770875371387,
+              "age": 747353086,
+              "totalTokens": null,
+              "totalTokensFresh": false,
+              "remainingTokens": null,
+              "percentUsed": null,
+              "model": "claude-sonnet-4-6",
+              "contextTokens": 200000,
+              "flags": [
+                "id:aa42b4a6-a97a-49f1-9a0a-02799ffec2c6"
+              ]
+            },
+            {
+              "agentId": "main",
+              "key": "agent:main:openresponses:edae3b3a-e1c2-4310-8187-1c413359ceae",
+              "kind": "direct",
+              "sessionId": "b3865c9a-c3c1-4799-bed3-3655f3b696e7",
+              "updatedAt": 1770874031267,
+              "age": 748693206,
+              "totalTokens": null,
+              "totalTokensFresh": false,
+              "remainingTokens": null,
+              "percentUsed": null,
+              "model": "claude-sonnet-4-6",
+              "contextTokens": 200000,
+              "flags": [
+                "id:b3865c9a-c3c1-4799-bed3-3655f3b696e7"
+              ]
+            },
+            {
+              "agentId": "main",
+              "key": "agent:main:openresponses:0a34b27a-af2e-47e1-a063-e27d5a5c5230",
+              "kind": "direct",
+              "sessionId": "c73b80b9-4ecc-49db-8a6a-857eb4bf1ca7",
+              "updatedAt": 1770873696806,
+              "age": 749027667,
+              "totalTokens": null,
+              "totalTokensFresh": false,
+              "remainingTokens": null,
+              "percentUsed": null,
+              "model": "claude-sonnet-4-6",
+              "contextTokens": 200000,
+              "flags": [
+                "id:c73b80b9-4ecc-49db-8a6a-857eb4bf1ca7"
+              ]
+            },
+            {
+              "agentId": "main",
+              "key": "agent:main:openresponses:5a2768a5-5eba-4853-8721-71c16df53c00",
+              "kind": "direct",
+              "sessionId": "e744a70a-f1a7-45fe-b44b-1e01f2e3fa01",
+              "updatedAt": 1770873621883,
+              "age": 749102590,
+              "totalTokens": null,
+              "totalTokensFresh": false,
+              "remainingTokens": null,
+              "percentUsed": null,
+              "model": "claude-sonnet-4-6",
+              "contextTokens": 200000,
+              "flags": [
+                "id:e744a70a-f1a7-45fe-b44b-1e01f2e3fa01"
+              ]
+            },
+            {
+              "agentId": "main",
+              "key": "agent:main:openresponses:fd970e3a-3efc-4b33-8b58-6f2bf5fb612f",
+              "kind": "direct",
+              "sessionId": "80746d9a-9313-4f9a-8abf-058e131f97c5",
+              "updatedAt": 1770873064391,
+              "age": 749660082,
+              "totalTokens": null,
+              "totalTokensFresh": false,
+              "remainingTokens": null,
+              "percentUsed": null,
+              "model": "claude-sonnet-4-6",
+              "contextTokens": 200000,
+              "flags": [
+                "id:80746d9a-9313-4f9a-8abf-058e131f97c5"
+              ]
+            },
+            {
+              "agentId": "main",
+              "key": "agent:main:openresponses:43016783-dd22-41ee-aa2b-7f16cd6b2f9a",
+              "kind": "direct",
+              "sessionId": "4c8dbd0e-8aad-4ba9-b949-ec715c572dd6",
+              "updatedAt": 1770873012778,
+              "age": 749711695,
+              "totalTokens": null,
+              "totalTokensFresh": false,
+              "remainingTokens": null,
+              "percentUsed": null,
+              "model": "claude-sonnet-4-6",
+              "contextTokens": 200000,
+              "flags": [
+                "id:4c8dbd0e-8aad-4ba9-b949-ec715c572dd6"
+              ]
+            }
+          ],
+          "byAgent": [
+            {
+              "agentId": "main",
+              "path": "/Users/chriskarani/.openclaw/agents/main/sessions/sessions.json",
+              "count": 24,
+              "recent": [
+                {
+                  "agentId": "main",
+                  "key": "agent:main:main",
+                  "kind": "direct",
+                  "sessionId": "60f1941e-925a-45ec-a4c0-e42e4b3ce92e",
+                  "updatedAt": 1771616523396,
+                  "age": 6201077,
+                  "thinkingLevel": "high",
+                  "verboseLevel": "on",
+                  "systemSent": true,
+                  "abortedLastRun": false,
+                  "inputTokens": 18,
+                  "outputTokens": 135,
+                  "totalTokens": 15739,
+                  "totalTokensFresh": true,
+                  "remainingTokens": 184261,
+                  "percentUsed": 8,
+                  "model": "claude-sonnet-4-6",
+                  "contextTokens": 200000,
+                  "flags": [
+                    "think:high",
+                    "verbose:on",
+                    "system",
+                    "id:60f1941e-925a-45ec-a4c0-e42e4b3ce92e"
+                  ]
+                },
+                {
+                  "agentId": "main",
+                  "key": "agent:main:openresponses:a20ba70b-2b6c-4d88-b149-89a7def1b013",
+                  "kind": "direct",
+                  "sessionId": "76e41eab-410b-4c26-bbcc-7bc794612561",
+                  "updatedAt": 1770876518973,
+                  "age": 746205500,
+                  "totalTokens": null,
+                  "totalTokensFresh": false,
+                  "remainingTokens": null,
+                  "percentUsed": null,
+                  "model": "claude-sonnet-4-6",
+                  "contextTokens": 200000,
+                  "flags": [
+                    "id:76e41eab-410b-4c26-bbcc-7bc794612561"
+                  ]
+                },
+                {
+                  "agentId": "main",
+                  "key": "agent:main:openresponses:a2ee11db-11c8-48a5-ba29-9ea4597dd799",
+                  "kind": "direct",
+                  "sessionId": "014069ab-9ac3-452e-96b3-890639e752ef",
+                  "updatedAt": 1770875389648,
+                  "age": 747334825,
+                  "totalTokens": null,
+                  "totalTokensFresh": false,
+                  "remainingTokens": null,
+                  "percentUsed": null,
+                  "model": "claude-sonnet-4-6",
+                  "contextTokens": 200000,
+                  "flags": [
+                    "id:014069ab-9ac3-452e-96b3-890639e752ef"
+                  ]
+                },
+                {
+                  "agentId": "main",
+                  "key": "agent:main:openresponses:1332da62-b285-4432-8e18-3f7e75547621",
+                  "kind": "direct",
+                  "sessionId": "c22f914b-6214-475f-b8bd-c2e7eaea6e92",
+                  "updatedAt": 1770875389570,
+                  "age": 747334903,
+                  "totalTokens": null,
+                  "totalTokensFresh": false,
+                  "remainingTokens": null,
+                  "percentUsed": null,
+                  "model": "claude-sonnet-4-6",
+                  "contextTokens": 200000,
+                  "flags": [
+                    "id:c22f914b-6214-475f-b8bd-c2e7eaea6e92"
+                  ]
+                },
+                {
+                  "agentId": "main",
+                  "key": "agent:main:openresponses:120eccd9-7b4c-412e-b643-a40eb07b61d5",
+                  "kind": "direct",
+                  "sessionId": "aa42b4a6-a97a-49f1-9a0a-02799ffec2c6",
+                  "updatedAt": 1770875371387,
+                  "age": 747353086,
+                  "totalTokens": null,
+                  "totalTokensFresh": false,
+                  "remainingTokens": null,
+                  "percentUsed": null,
+                  "model": "claude-sonnet-4-6",
+                  "contextTokens": 200000,
+                  "flags": [
+                    "id:aa42b4a6-a97a-49f1-9a0a-02799ffec2c6"
+                  ]
+                },
+                {
+                  "agentId": "main",
+                  "key": "agent:main:openresponses:edae3b3a-e1c2-4310-8187-1c413359ceae",
+                  "kind": "direct",
+                  "sessionId": "b3865c9a-c3c1-4799-bed3-3655f3b696e7",
+                  "updatedAt": 1770874031267,
+                  "age": 748693206,
+                  "totalTokens": null,
+                  "totalTokensFresh": false,
+                  "remainingTokens": null,
+                  "percentUsed": null,
+                  "model": "claude-sonnet-4-6",
+                  "contextTokens": 200000,
+                  "flags": [
+                    "id:b3865c9a-c3c1-4799-bed3-3655f3b696e7"
+                  ]
+                },
+                {
+                  "agentId": "main",
+                  "key": "agent:main:openresponses:0a34b27a-af2e-47e1-a063-e27d5a5c5230",
+                  "kind": "direct",
+                  "sessionId": "c73b80b9-4ecc-49db-8a6a-857eb4bf1ca7",
+                  "updatedAt": 1770873696806,
+                  "age": 749027667,
+                  "totalTokens": null,
+                  "totalTokensFresh": false,
+                  "remainingTokens": null,
+                  "percentUsed": null,
+                  "model": "claude-sonnet-4-6",
+                  "contextTokens": 200000,
+                  "flags": [
+                    "id:c73b80b9-4ecc-49db-8a6a-857eb4bf1ca7"
+                  ]
+                },
+                {
+                  "agentId": "main",
+                  "key": "agent:main:openresponses:5a2768a5-5eba-4853-8721-71c16df53c00",
+                  "kind": "direct",
+                  "sessionId": "e744a70a-f1a7-45fe-b44b-1e01f2e3fa01",
+                  "updatedAt": 1770873621883,
+                  "age": 749102590,
+                  "totalTokens": null,
+                  "totalTokensFresh": false,
+                  "remainingTokens": null,
+                  "percentUsed": null,
+                  "model": "claude-sonnet-4-6",
+                  "contextTokens": 200000,
+                  "flags": [
+                    "id:e744a70a-f1a7-45fe-b44b-1e01f2e3fa01"
+                  ]
+                },
+                {
+                  "agentId": "main",
+                  "key": "agent:main:openresponses:fd970e3a-3efc-4b33-8b58-6f2bf5fb612f",
+                  "kind": "direct",
+                  "sessionId": "80746d9a-9313-4f9a-8abf-058e131f97c5",
+                  "updatedAt": 1770873064391,
+                  "age": 749660082,
+                  "totalTokens": null,
+                  "totalTokensFresh": false,
+                  "remainingTokens": null,
+                  "percentUsed": null,
+                  "model": "claude-sonnet-4-6",
+                  "contextTokens": 200000,
+                  "flags": [
+                    "id:80746d9a-9313-4f9a-8abf-058e131f97c5"
+                  ]
+                },
+                {
+                  "agentId": "main",
+                  "key": "agent:main:openresponses:43016783-dd22-41ee-aa2b-7f16cd6b2f9a",
+                  "kind": "direct",
+                  "sessionId": "4c8dbd0e-8aad-4ba9-b949-ec715c572dd6",
+                  "updatedAt": 1770873012778,
+                  "age": 749711695,
+                  "totalTokens": null,
+                  "totalTokensFresh": false,
+                  "remainingTokens": null,
+                  "percentUsed": null,
+                  "model": "claude-sonnet-4-6",
+                  "contextTokens": 200000,
+                  "flags": [
+                    "id:4c8dbd0e-8aad-4ba9-b949-ec715c572dd6"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "presence": [
+        {
+          "host": "chriskarani.local",
+          "ip": "192.168.100.63",
+          "version": "2026.2.17",
+          "platform": "macos 26.0",
+          "deviceFamily": "Mac",
+          "mode": "gateway",
+          "reason": "self",
+          "text": "Gateway: chriskarani.local (192.168.100.63) · app 2026.2.17 · mode gateway · reason self",
+          "ts": 1771622724467
+        },
+        {
+          "host": "cli",
+          "version": "dev",
+          "platform": "darwin",
+          "mode": "probe",
+          "deviceId": "7f4fcb81f56b5ebf65fde4d176797fbf5be48b64be684d68885f26acbac19d3e",
+          "roles": [
+            "operator"
+          ],
+          "scopes": [
+            "operator.admin"
+          ],
+          "instanceId": "7f4fcb81f56b5ebf65fde4d176797fbf5be48b64be684d68885f26acbac19d3e",
+          "reason": "connect",
+          "ts": 1771622724367,
+          "text": "Node: cli · mode probe"
+        }
+      ]
+    }
+  ]
+}

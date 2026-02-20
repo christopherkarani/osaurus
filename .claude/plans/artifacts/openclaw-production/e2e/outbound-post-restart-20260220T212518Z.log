@@ -1,0 +1,3 @@
+status=failed
+summary_json=/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/e2e-outbound-summary-20260220T212536Z.json
+send_err=/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/telegram-send-20260220T212536Z.err.log
