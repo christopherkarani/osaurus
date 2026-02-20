@@ -496,6 +496,11 @@ public final class OpenClawManager: ObservableObject {
         }
     }
 
+    public func markAllChannelNotificationsRead() {
+        // Product policy: unread is only cleared by explicit user action.
+        notificationService.markAllAsRead()
+    }
+
     public func setHeartbeat(enabled: Bool) async throws {
         do {
             try await gatewaySetHeartbeats(enabled: enabled)

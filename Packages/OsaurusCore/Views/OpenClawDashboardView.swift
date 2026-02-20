@@ -78,6 +78,9 @@ struct OpenClawDashboardView: View {
                     }
                 }
             }
+            HeaderSecondaryButton("Clear Unread", icon: "checkmark.circle") {
+                manager.markAllChannelNotificationsRead()
+            }
             HeaderPrimaryButton(
                 manager.configuration.isEnabled ? "Setup" : "Get Started",
                 icon: manager.configuration.isEnabled ? "slider.horizontal.3" : "wand.and.stars"

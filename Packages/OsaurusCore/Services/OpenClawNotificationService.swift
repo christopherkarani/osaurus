@@ -24,6 +24,7 @@ public final class OpenClawNotificationService {
     private var pollTask: Task<Void, Never>?
     private var lastInboundByAccount: [String: Date] = [:]
     private var unreadCount = 0
+    private var listeningStartedAt: Date?
 
     private init() {}
 
@@ -31,6 +32,7 @@ public final class OpenClawNotificationService {
         guard NSApp != nil else { return }
         guard pollTask == nil else { return }
 
+        listeningStartedAt = Date()
         registerCategory()
         pollTask = Task { [weak self] in
             guard let self else { return }
@@ -44,6 +46,13 @@ public final class OpenClawNotificationService {
     public func stopListening() {
         pollTask?.cancel()
         pollTask = nil
+        listeningStartedAt = nil
+        unreadCount = 0
+        setDockBadge(nil)
+    }
+
+    public func markAllAsRead() {
+        // Product policy: unread changes only through explicit clear actions.
         unreadCount = 0
         setDockBadge(nil)
     }
@@ -69,11 +78,11 @@ public final class OpenClawNotificationService {
                 guard let inbound = account.lastInboundAt else { continue }
 
                 let key = "\(channelId)::\(account.accountId)"
-                if let existing = lastInboundByAccount[key], existing >= inbound {
+                if let previous = lastInboundByAccount[key], previous >= inbound {
                     continue
                 }
 
-                if let previous = lastInboundByAccount[key], inbound > previous {
+                if shouldNotifyForInboundEvent(previous: lastInboundByAccount[key], inbound: inbound) {
                     unreadCount += 1
                     let sender = normalized(account.name) ?? account.accountId
                     let title = "\(channelLabel) - \(sender)"
@@ -85,6 +94,19 @@ public final class OpenClawNotificationService {
                 lastInboundByAccount[key] = inbound
             }
         }
+    }
+
+    private func shouldNotifyForInboundEvent(previous: Date?, inbound: Date) -> Bool {
+        if let previous {
+            return inbound > previous
+        }
+
+        guard let listeningStartedAt else {
+            return true
+        }
+
+        let startupGraceWindow: TimeInterval = 3
+        return inbound >= listeningStartedAt.addingTimeInterval(-startupGraceWindow)
     }
 
     private func fetchStatus() async throws -> ChannelsStatusResult {
@@ -156,6 +178,11 @@ public final class OpenClawNotificationService {
     func _testReset() {
         stopListening()
         lastInboundByAccount = [:]
+        listeningStartedAt = nil
+    }
+
+    func _testSetListeningStartedAt(_ value: Date?) {
+        listeningStartedAt = value
     }
 
     static func _testSetHooks(_ hooks: Hooks?) {
