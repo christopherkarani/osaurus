@@ -10,6 +10,8 @@ struct OpenClawActiveSessionView: View {
 
     @ObservedObject var manager: OpenClawManager
     let session: OpenClawManager.ActiveSessionInfo
+    @State private var hasAppeared = false
+    @State private var isHovered = false
 
     @State private var isStopping = false
     @State private var stopErrorMessage: String?
@@ -67,6 +69,10 @@ struct OpenClawActiveSessionView: View {
             }
         }
         .padding(12)
+        .scaleEffect(isHovered ? 1.02 : 1)
+        .opacity(hasAppeared ? 1 : 0)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isHovered)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(theme.secondaryBackground)
@@ -76,6 +82,12 @@ struct OpenClawActiveSessionView: View {
                 )
         )
         .accessibilityElement(children: .contain)
+        .onHover { isHovered = $0 }
+        .onAppear {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                hasAppeared = true
+            }
+        }
     }
 
     private var statusColor: Color {
