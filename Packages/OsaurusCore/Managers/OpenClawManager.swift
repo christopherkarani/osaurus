@@ -63,6 +63,8 @@ public final class OpenClawManager: ObservableObject {
         var channelsStatus: @Sendable () async throws -> [GatewayPayload]
         var modelsList: @Sendable () async throws -> [String]
         var health: @Sendable () async throws -> GatewayPayload
+        var heartbeatStatus: (@Sendable () async throws -> OpenClawHeartbeatStatus)?
+        var setHeartbeats: (@Sendable (Bool) async throws -> Void)?
     }
 
     nonisolated(unsafe) static var gatewayHooks: GatewayHooks?
@@ -159,6 +161,8 @@ public final class OpenClawManager: ObservableObject {
     @Published public private(set) var phase: OpenClawPhase
     @Published public private(set) var gatewayStatus: GatewayStatus = .stopped
     @Published public private(set) var connectionState: ConnectionState = .disconnected
+    @Published public private(set) var heartbeatEnabled: Bool = true
+    @Published public private(set) var heartbeatLastTimestamp: Date?
     @Published public private(set) var environmentStatus: OpenClawEnvironmentStatus = .checking
     @Published public private(set) var channels: [ChannelInfo] = []
     @Published public private(set) var availableModels: [String] = []
@@ -375,6 +379,11 @@ public final class OpenClawManager: ObservableObject {
             let health = try await gatewayHealth()
             updateHealth(from: health)
             postGatewayStatusChanged()
+
+            if let heartbeatInfo = try? await gatewayHeartbeatStatus() {
+                heartbeatEnabled = heartbeatInfo.enabled ?? heartbeatEnabled
+                heartbeatLastTimestamp = heartbeatInfo.lastHeartbeatAt
+            }
         } catch {
             let message = "Status refresh failed: \(error.localizedDescription)"
             lastError = message
@@ -394,6 +403,20 @@ public final class OpenClawManager: ObservableObject {
         try await OpenClawSessionManager.shared.patchSession(key: key, sendPolicy: "deny")
         activeSessions.removeAll { $0.key == key }
         runToSessionKey = runToSessionKey.filter { $0.value != key }
+    }
+
+    public func setHeartbeat(enabled: Bool) async throws {
+        do {
+            try await gatewaySetHeartbeats(enabled: enabled)
+            heartbeatEnabled = enabled
+            if let heartbeatInfo = try? await gatewayHeartbeatStatus() {
+                heartbeatEnabled = heartbeatInfo.enabled ?? enabled
+                heartbeatLastTimestamp = heartbeatInfo.lastHeartbeatAt
+            }
+        } catch {
+            lastError = error.localizedDescription
+            throw error
+        }
     }
 
     public func updateConfiguration(_ config: OpenClawConfiguration) {
@@ -431,6 +454,8 @@ public final class OpenClawManager: ObservableObject {
             eventListenerID = nil
         }
         await OpenClawGatewayConnection.shared.disconnect()
+        heartbeatEnabled = true
+        heartbeatLastTimestamp = nil
         connectionState = .disconnected
         channels = []
         availableModels = []
@@ -486,6 +511,8 @@ public final class OpenClawManager: ObservableObject {
             connectionState = .disconnected
             phase = gatewayStatus == .running ? .gatewayRunning : .configured
             stopHealthMonitoring()
+            heartbeatEnabled = true
+            heartbeatLastTimestamp = nil
 
         case .connecting:
             if connectionState != .connecting {
@@ -873,6 +900,21 @@ public final class OpenClawManager: ObservableObject {
             return try await hooks.health()
         }
         return try await OpenClawGatewayConnection.shared.health()
+    }
+
+    private func gatewayHeartbeatStatus() async throws -> OpenClawHeartbeatStatus {
+        if let hooks = Self.gatewayHooks, let heartbeatStatus = hooks.heartbeatStatus {
+            return try await heartbeatStatus()
+        }
+        return try await OpenClawGatewayConnection.shared.heartbeatStatus()
+    }
+
+    private func gatewaySetHeartbeats(enabled: Bool) async throws {
+        if let hooks = Self.gatewayHooks, let setHeartbeats = hooks.setHeartbeats {
+            try await setHeartbeats(enabled)
+            return
+        }
+        try await OpenClawGatewayConnection.shared.setHeartbeats(enabled: enabled)
     }
 
 #if DEBUG

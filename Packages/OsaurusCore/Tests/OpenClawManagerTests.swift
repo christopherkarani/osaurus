@@ -46,6 +46,47 @@ struct OpenClawManagerTests {
     }
 
     @Test
+    func setHeartbeat_updatesHeartbeatStateFromRPCHooks() async {
+        let manager = OpenClawManager.shared
+        let expectedDate = Date(timeIntervalSince1970: 1_700_000_000)
+        actor RequestedHeartbeatEnabledState {
+            var value: Bool?
+            init(_ value: Bool? = nil) {
+                self.value = value
+            }
+            func set(_ value: Bool?) {
+                self.value = value
+            }
+            func get() -> Bool? {
+                value
+            }
+        }
+        let requestedHeartbeatEnabled = RequestedHeartbeatEnabledState()
+
+        OpenClawManager._testSetGatewayHooks(
+            .init(
+                channelsStatus: { [] },
+                modelsList: { [] },
+                health: { [:] },
+                heartbeatStatus: {
+                    OpenClawHeartbeatStatus(enabled: false, lastHeartbeatAt: expectedDate)
+                },
+                setHeartbeats: { enabled in
+                    await requestedHeartbeatEnabled.set(enabled)
+                }
+            )
+        )
+        defer { OpenClawManager._testSetGatewayHooks(nil) }
+
+        try? await manager.setHeartbeat(enabled: false)
+        let actualRequestedHeartbeatEnabled = await requestedHeartbeatEnabled.get()
+
+        #expect(actualRequestedHeartbeatEnabled == false)
+        #expect(manager.heartbeatEnabled == false)
+        #expect(manager.heartbeatLastTimestamp == expectedDate)
+    }
+
+    @Test
     func refreshStatus_failureTransitionsToConnectionFailed() async {
         let manager = OpenClawManager.shared
         let expected = "simulated channels failure"

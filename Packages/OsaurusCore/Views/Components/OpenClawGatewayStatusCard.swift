@@ -10,6 +10,11 @@ struct OpenClawGatewayStatusCard: View {
     @ObservedObject var manager: OpenClawManager
 
     @State private var isBusy = false
+    @State private var isHeartbeatBusy = false
+    @State private var isHovered = false
+    @State private var hasAppeared = false
+    @State private var showStopConfirmation = false
+    @State private var showDisconnectConfirmation = false
 
     var body: some View {
         GlassListRow {
@@ -33,14 +38,16 @@ struct OpenClawGatewayStatusCard: View {
                         }
                         Text("Port \(manager.configuration.gatewayPort)")
                             .font(.system(size: 12, design: .monospaced))
-                            .foregroundColor(theme.secondaryText)
+                        .foregroundColor(theme.secondaryText)
                     }
 
                     Spacer()
 
                     controls
                 }
-
+                if manager.gatewayStatus == .running {
+                    heartbeatControls
+                }
                 if let message = errorMessage, !message.isEmpty {
                     HStack(spacing: 8) {
                         Image(systemName: "exclamationmark.triangle.fill")
@@ -57,6 +64,7 @@ struct OpenClawGatewayStatusCard: View {
                             .fill(theme.errorColor.opacity(0.08))
                     )
                 }
+
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Gateway status: \(statusText)")
@@ -66,19 +74,49 @@ struct OpenClawGatewayStatusCard: View {
                     : "Stopped"
             )
         }
+        .scaleEffect(isHovered ? 1.02 : 1)
+        .opacity(hasAppeared ? 1 : 0)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isHovered)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+        .onHover { isHovered = $0 }
+        .onAppear {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                hasAppeared = true
+            }
+        }
+        .themedAlert(
+            "Stop OpenClaw Gateway",
+            isPresented: $showStopConfirmation,
+            message: "This will stop the OpenClaw process and disconnect active runs.",
+            primaryButton: .destructive("Stop Gateway") {
+                Task { await performStop() }
+            },
+            secondaryButton: .cancel("Cancel"),
+            presentationStyle: .contained
+        )
+        .themedAlert(
+            "Disconnect OpenClaw",
+            isPresented: $showDisconnectConfirmation,
+            message: "Disconnecting will pause the live OpenClaw event stream. You can reconnect when needed.",
+            primaryButton: .destructive("Disconnect") {
+                manager.disconnect()
+            },
+            secondaryButton: .cancel("Cancel"),
+            presentationStyle: .contained
+        )
     }
 
     private var controls: some View {
         HStack(spacing: 8) {
             if manager.gatewayStatus == .running {
                 HeaderSecondaryButton("Stop", icon: "stop.fill") {
-                    Task { await performStop() }
+                    showStopConfirmation = true
                 }
                 .disabled(disableControls)
 
                 if manager.isConnected {
                     HeaderSecondaryButton("Disconnect", icon: "bolt.slash.fill") {
-                        manager.disconnect()
+                        showDisconnectConfirmation = true
                     }
                     .disabled(disableControls)
                 } else {
@@ -94,6 +132,56 @@ struct OpenClawGatewayStatusCard: View {
                 .disabled(disableControls)
             }
         }
+    }
+
+    @ViewBuilder
+    private var heartbeatControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Toggle(
+                    isOn: Binding(
+                        get: { !manager.heartbeatEnabled },
+                        set: { isPaused in
+                            Task {
+                                await toggleHeartbeat(isPaused: isPaused)
+                            }
+                        }
+                    )
+                ) {
+                    Text("Pause scheduled runs")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                .disabled(disableControls || isHeartbeatBusy)
+
+                Spacer()
+
+                if isHeartbeatBusy {
+                    ProgressView().scaleEffect(0.65)
+                }
+            }
+
+            Text("Last heartbeat: \(heartbeatTimeTextFallback)")
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+        }
+        .padding(10)
+        .background(theme.tertiaryBackground.opacity(0.12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(theme.primaryBorder, lineWidth: 1)
+        )
+    }
+
+    private var heartbeatLastTimestampText: String? {
+        guard let timestamp = manager.heartbeatLastTimestamp else {
+            return nil
+        }
+        return OpenClawGatewayStatusCard.heartbeatFormatter.string(from: timestamp)
+    }
+
+    private var heartbeatTimeTextFallback: String {
+        heartbeatLastTimestampText ?? "No heartbeat yet"
     }
 
     @ViewBuilder
@@ -173,4 +261,22 @@ struct OpenClawGatewayStatusCard: View {
         defer { isBusy = false }
         try? await manager.connect()
     }
+
+    private func toggleHeartbeat(isPaused: Bool) async {
+        isHeartbeatBusy = true
+        defer { isHeartbeatBusy = false }
+        do {
+            try await manager.setHeartbeat(enabled: !isPaused)
+        } catch {
+            // Last error is surfaced on the card in the error panel.
+        }
+    }
+
+    private static let heartbeatFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .medium
+        return formatter
+    }()
+
 }
