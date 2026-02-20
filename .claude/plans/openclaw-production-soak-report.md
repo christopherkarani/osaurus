@@ -9,7 +9,7 @@ Scope: `PR-SOAK-01` and `PR-SOAK-02`
 | Task ID | Status | Notes |
 |---|---|---|
 | `PR-SOAK-01` | PASS | Soak harness and stats scripts are implemented, executable, and validated with a live shakedown run. |
-| `PR-SOAK-02` | PENDING | 24h minimum soak execution and anomaly analysis report pending. |
+| `PR-SOAK-02` | BLOCKED | Minimum 24h runtime requirement is unmet in-session; only 240s shakedown evidence is currently available. |
 
 ## PR-SOAK-01: Harness + Evidence Pipeline
 
@@ -57,7 +57,7 @@ Summary fields:
 - Two traffic sends failed during the accelerated run window; these are retained as anomaly examples for PR-SOAK-02 analysis.
 - Both simulated blips recorded as failed PID kills (stale tunnel PID), but probe health remained stable and no stuck-state proxy condition triggered.
 
-## PR-SOAK-02: Required Full-Duration Run (Pending)
+## PR-SOAK-02: Required Full-Duration Run (Blocked)
 
 Required acceptance gates remain:
 
@@ -74,3 +74,24 @@ Planned execution command template:
 cd /Users/chriskarani/CodingProjects/Jarvis/osaurus
 ./scripts/openclaw/soak_harness.sh 172800 3600 2700 30 120
 ```
+
+### Blocker Evidence
+
+- Hard requirement: minimum continuous soak duration is 24h; target is 48h.
+- Latest completed soak run duration:
+  - `run_id=soak-20260220T223929Z`
+  - `durationSeconds=240` (from `meta.json`)
+- Gap to minimum requirement:
+  - `86400 - 240 = 86160` seconds still required.
+
+### Smallest Unblocking Action
+
+1. Execute minimum-duration run:
+   ```bash
+   cd /Users/chriskarani/CodingProjects/Jarvis/osaurus
+   ./scripts/openclaw/soak_harness.sh 86400 3600 2700 30 120
+   ```
+2. After completion, attach:
+   - run directory path
+   - generated `summary.json`
+   - anomaly analysis for traffic failures/blip failures and any probe degradation windows.
