@@ -33,13 +33,11 @@ struct OpenClawChannelLinkSheet: View {
     }
 
     private var isQRCodeChannel: Bool {
-        let id = channel.id.lowercased()
-        return id.contains("whatsapp") || id.contains("signal") || id == "web"
+        OpenClawChannelLinkSheetLogic.mode(for: channel.id) == .qr
     }
 
     private var isTokenChannel: Bool {
-        let id = channel.id.lowercased()
-        return id.contains("telegram") || id.contains("discord") || id.contains("slack")
+        OpenClawChannelLinkSheetLogic.mode(for: channel.id) == .token
     }
 
     var body: some View {
@@ -347,7 +345,20 @@ struct OpenClawChannelLinkSheet: View {
             confirmValue = boolValue(step.initialValue?.value)
 
         case .select:
-            selectedIndex = indexForInitialValue(step)
+            if
+                let options = step.options,
+                let preferred = OpenClawChannelLinkSheetLogic.preferredOptionIndex(
+                    stepID: step.id,
+                    stepTitle: step.title,
+                    options: options,
+                    channelID: channel.id,
+                    channelName: channel.name
+                )
+            {
+                selectedIndex = preferred
+            } else {
+                selectedIndex = indexForInitialValue(step)
+            }
 
         case .multiselect:
             selectedIndices = indicesForInitialValues(step)
@@ -454,5 +465,127 @@ struct OpenClawChannelLinkSheet: View {
         let payload = String(value[markerRange.upperBound...])
         guard let data = Data(base64Encoded: payload) else { return nil }
         return NSImage(data: data)
+    }
+}
+
+enum OpenClawChannelLinkMode: Equatable {
+    case qr
+    case token
+    case generic
+}
+
+enum OpenClawChannelLinkSheetLogic {
+    static func mode(for channelId: String) -> OpenClawChannelLinkMode {
+        let id = channelId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if id.contains("whatsapp") || id.contains("signal") || id == "web" || id.contains("webchat") {
+            return .qr
+        }
+        if id.contains("telegram") || id.contains("discord") || id.contains("slack") {
+            return .token
+        }
+        return .generic
+    }
+
+    static func preferredOptionIndex(
+        stepID: String,
+        stepTitle: String?,
+        options: [OpenClawWizardStepOption],
+        channelID: String,
+        channelName: String
+    ) -> Int? {
+        guard isChannelSelectionStep(stepID: stepID, stepTitle: stepTitle) else { return nil }
+        let targets = normalizedTargets(channelID: channelID, channelName: channelName)
+        guard !targets.isEmpty else { return nil }
+
+        for (index, option) in options.enumerated() {
+            if optionMatchesChannel(option, targets: targets) {
+                return index
+            }
+        }
+        return nil
+    }
+
+    private static func isChannelSelectionStep(stepID: String, stepTitle: String?) -> Bool {
+        let id = normalizeToken(stepID)
+        if id.contains("channel") || id.contains("provider") {
+            return true
+        }
+        if let stepTitle {
+            let title = normalizeToken(stepTitle)
+            if title.contains("channel") || title.contains("provider") {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func normalizedTargets(channelID: String, channelName: String) -> Set<String> {
+        let values = [channelID, channelName]
+        return Set(values.map(normalizeToken).filter { !$0.isEmpty })
+    }
+
+    private static func optionMatchesChannel(
+        _ option: OpenClawWizardStepOption,
+        targets: Set<String>
+    ) -> Bool {
+        if containsTarget(normalizeToken(option.label), targets: targets) {
+            return true
+        }
+        if let hint = option.hint, containsTarget(normalizeToken(hint), targets: targets) {
+            return true
+        }
+        return anyValueContainsTarget(option.value.value, targets: targets)
+    }
+
+    private static func anyValueContainsTarget(_ value: Any, targets: Set<String>) -> Bool {
+        switch value {
+        case let string as String:
+            return containsTarget(normalizeToken(string), targets: targets)
+        case let dictionary as [String: OpenClawProtocol.AnyCodable]:
+            for (_, value) in dictionary {
+                if anyValueContainsTarget(value.value, targets: targets) {
+                    return true
+                }
+            }
+            return false
+        case let array as [OpenClawProtocol.AnyCodable]:
+            return array.contains { anyValueContainsTarget($0.value, targets: targets) }
+        case let dictionary as [String: Any]:
+            for (_, value) in dictionary {
+                if anyValueContainsTarget(value, targets: targets) {
+                    return true
+                }
+            }
+            return false
+        case let array as [Any]:
+            return array.contains { anyValueContainsTarget($0, targets: targets) }
+        default:
+            return false
+        }
+    }
+
+    private static func containsTarget(_ candidate: String, targets: Set<String>) -> Bool {
+        guard !candidate.isEmpty else { return false }
+        for target in targets {
+            if candidate == target {
+                return true
+            }
+            // Avoid broad fuzzy matches for very short ids (e.g. "web").
+            if target.count >= 4, candidate.contains(target) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func normalizeToken(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty else { return "" }
+        let condensed = trimmed.replacingOccurrences(
+            of: "[^a-z0-9]+",
+            with: "",
+            options: .regularExpression
+        )
+        return condensed
     }
 }

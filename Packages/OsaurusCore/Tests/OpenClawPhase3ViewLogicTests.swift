@@ -43,6 +43,112 @@ struct OpenClawPhase3ViewLogicTests {
     }
 
     @Test
+    func channelLinkPreferredOption_matchesNestedPayloadShape() {
+        let options = [
+            OpenClawWizardStepOption(
+                value: AnyCodable([
+                    "provider": OpenClawProtocol.AnyCodable([
+                        "id": OpenClawProtocol.AnyCodable("telegram")
+                    ])
+                ]),
+                label: "Telegram",
+                hint: nil
+            ),
+            OpenClawWizardStepOption(
+                value: AnyCodable([
+                    "provider": OpenClawProtocol.AnyCodable([
+                        "id": OpenClawProtocol.AnyCodable("discord")
+                    ])
+                ]),
+                label: "Discord",
+                hint: nil
+            ),
+        ]
+
+        let preferred = OpenClawChannelLinkSheetLogic.preferredOptionIndex(
+            stepID: "provider-select",
+            stepTitle: nil,
+            options: options,
+            channelID: "discord",
+            channelName: "Discord"
+        )
+
+        #expect(preferred == 1)
+    }
+
+    @Test
+    func channelLinkPreferredOption_usesStepTitleWhenStepIDIsGeneric() {
+        let options = [
+            OpenClawWizardStepOption(value: AnyCodable("whatsapp"), label: "WhatsApp", hint: nil),
+            OpenClawWizardStepOption(value: AnyCodable("signal"), label: "Signal", hint: nil),
+        ]
+
+        let preferred = OpenClawChannelLinkSheetLogic.preferredOptionIndex(
+            stepID: "select",
+            stepTitle: "Choose provider",
+            options: options,
+            channelID: "signal",
+            channelName: "Signal"
+        )
+
+        #expect(preferred == 1)
+    }
+
+    @Test
+    func channelLinkPreferredOption_returnsNilForUnrelatedSelectStep() {
+        let options = [
+            OpenClawWizardStepOption(value: AnyCodable("discord"), label: "Discord", hint: nil),
+            OpenClawWizardStepOption(value: AnyCodable("telegram"), label: "Telegram", hint: nil),
+        ]
+
+        let preferred = OpenClawChannelLinkSheetLogic.preferredOptionIndex(
+            stepID: "timezone",
+            stepTitle: "Choose timezone",
+            options: options,
+            channelID: "discord",
+            channelName: "Discord"
+        )
+
+        #expect(preferred == nil)
+    }
+
+    @Test
+    func channelLinkPreferredOption_returnsNilWhenNoOptionMatches() {
+        let options = [
+            OpenClawWizardStepOption(value: AnyCodable("telegram"), label: "Telegram", hint: nil),
+            OpenClawWizardStepOption(value: AnyCodable("slack"), label: "Slack", hint: nil),
+        ]
+
+        let preferred = OpenClawChannelLinkSheetLogic.preferredOptionIndex(
+            stepID: "provider",
+            stepTitle: "Select channel",
+            options: options,
+            channelID: "discord",
+            channelName: "Discord"
+        )
+
+        #expect(preferred == nil)
+    }
+
+    @Test
+    func channelLinkPreferredOption_shortChannelID_requiresExactMatch() {
+        let options = [
+            OpenClawWizardStepOption(value: AnyCodable("webhook"), label: "Webhook", hint: nil),
+            OpenClawWizardStepOption(value: AnyCodable("web"), label: "Web", hint: nil),
+        ]
+
+        let preferred = OpenClawChannelLinkSheetLogic.preferredOptionIndex(
+            stepID: "channel",
+            stepTitle: "Choose channel",
+            options: options,
+            channelID: "web",
+            channelName: "Web"
+        )
+
+        #expect(preferred == 1)
+    }
+
+    @Test
     func cronToggleLogic_rollsBackOnFailure() {
         #expect(OpenClawCronViewLogic.finalToggleValue(previous: false, desired: true, succeeded: true) == true)
         #expect(OpenClawCronViewLogic.finalToggleValue(previous: false, desired: true, succeeded: false) == false)
