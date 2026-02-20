@@ -12,7 +12,7 @@ Scope: `PR-E2E-01` through `PR-E2E-06`
 | `PR-E2E-02` | BLOCKED | Telegram outbound send failed: bot cannot initiate conversation with target user. |
 | `PR-E2E-03` | BLOCKED | `lastInboundAt` remained `null`; no inbound Telegram event observed in wait window. |
 | `PR-E2E-04` | BLOCKED | Gateway reconnect recovered after restart, but outbound traffic remained blocked by Telegram DM precondition. |
-| `PR-E2E-05` | PENDING | Auth failure and recovery flow. |
+| `PR-E2E-05` | PASS | Invalid token was explicitly rejected; valid token path and post-check probe recovered cleanly. |
 | `PR-E2E-06` | PENDING | Seq-gap/resync evidence under real event load. |
 
 ## PR-E2E-01: Channel Discovery and Validation Matrix
@@ -186,3 +186,46 @@ Outbound pre/post summaries both captured Telegram send rejection:
   2. Start DM with `@codanicia_bot`.
   3. Send `/start` (or any text).
   4. Re-run `./scripts/openclaw/e2e_restart_reconnect.sh 6749713257`.
+
+## PR-E2E-05: Auth/Token Failure + Recovery Flow
+
+### Commands
+
+```bash
+cd /Users/chriskarani/CodingProjects/Jarvis/osaurus
+./scripts/openclaw/e2e_auth_recovery.sh
+```
+
+### Execution Evidence
+
+- Timestamp (UTC): `2026-02-20T21:32:13Z`
+- Script output:
+  - `status=passed`
+  - `summary_json=/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/e2e-auth-recovery-summary-20260220T213213Z.json`
+- Summary fields:
+  - `invalidTokenExitCode=1`
+  - `unauthorizedVisible=true`
+  - `validTokenHealthOk=true`
+  - `postProbeOk=true`
+
+Unauthorized stderr excerpt from `health-invalid-token-20260220T213213Z.stderr.log`:
+
+```text
+gateway connect failed: Error: unauthorized: device token mismatch (rotate/reissue device token)
+```
+
+### Before/After State
+
+From `probe-pre-auth-recovery-20260220T213213Z.json` and `probe-post-auth-recovery-20260220T213213Z.json`:
+
+- `ok: true` before failure injection.
+- `ok: true` after valid-token recovery call.
+
+From `health-valid-token-20260220T213213Z.json`:
+
+- `ok: true` on corrected auth path (`--url` + configured remote token).
+
+### Exit Criteria Verdict
+
+`PR-E2E-05` is complete.  
+Unauthorized state is explicit, and recovery after token correction is verified with health and probe evidence.

@@ -1,0 +1,149 @@
+{
+  "ok": true,
+  "ts": 1771623138556,
+  "durationMs": 856,
+  "channels": {
+    "telegram": {
+      "configured": true,
+      "tokenSource": "none",
+      "running": false,
+      "mode": null,
+      "lastStartAt": null,
+      "lastStopAt": null,
+      "lastError": null,
+      "probe": {
+        "ok": true,
+        "status": null,
+        "error": null,
+        "elapsedMs": 856,
+        "bot": {
+          "id": 8579100452,
+          "username": "codanicia_bot",
+          "canJoinGroups": true,
+          "canReadAllGroupMessages": false,
+          "supportsInlineQueries": false
+        },
+        "webhook": {
+          "url": "",
+          "hasCustomCert": false
+        }
+      },
+      "lastProbeAt": 1771623138556,
+      "accountId": "default",
+      "accounts": {
+        "default": {
+          "configured": true,
+          "tokenSource": "none",
+          "running": false,
+          "mode": null,
+          "lastStartAt": null,
+          "lastStopAt": null,
+          "lastError": null,
+          "probe": {
+            "ok": true,
+            "status": null,
+            "error": null,
+            "elapsedMs": 856,
+            "bot": {
+              "id": 8579100452,
+              "username": "codanicia_bot",
+              "canJoinGroups": true,
+              "canReadAllGroupMessages": false,
+              "supportsInlineQueries": false
+            },
+            "webhook": {
+              "url": "",
+              "hasCustomCert": false
+            }
+          },
+          "lastProbeAt": 1771623138556,
+          "accountId": "default"
+        }
+      }
+    }
+  },
+  "channelOrder": [
+    "telegram"
+  ],
+  "channelLabels": {
+    "telegram": "Telegram"
+  },
+  "heartbeatSeconds": 3600,
+  "defaultAgentId": "main",
+  "agents": [
+    {
+      "agentId": "main",
+      "isDefault": true,
+      "heartbeat": {
+        "enabled": true,
+        "every": "1h",
+        "everyMs": 3600000,
+        "prompt": "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.",
+        "target": "last",
+        "ackMaxChars": 300
+      },
+      "sessions": {
+        "path": "/Users/chriskarani/.openclaw/agents/main/sessions/sessions.json",
+        "count": 24,
+        "recent": [
+          {
+            "key": "agent:main:main",
+            "updatedAt": 1771616523396,
+            "age": 6614304
+          },
+          {
+            "key": "agent:main:openresponses:a20ba70b-2b6c-4d88-b149-89a7def1b013",
+            "updatedAt": 1770876518973,
+            "age": 746618727
+          },
+          {
+            "key": "agent:main:openresponses:a2ee11db-11c8-48a5-ba29-9ea4597dd799",
+            "updatedAt": 1770875389648,
+            "age": 747748052
+          },
+          {
+            "key": "agent:main:openresponses:1332da62-b285-4432-8e18-3f7e75547621",
+            "updatedAt": 1770875389570,
+            "age": 747748130
+          },
+          {
+            "key": "agent:main:openresponses:120eccd9-7b4c-412e-b643-a40eb07b61d5",
+            "updatedAt": 1770875371387,
+            "age": 747766313
+          }
+        ]
+      }
+    }
+  ],
+  "sessions": {
+    "path": "/Users/chriskarani/.openclaw/agents/main/sessions/sessions.json",
+    "count": 24,
+    "recent": [
+      {
+        "key": "agent:main:main",
+        "updatedAt": 1771616523396,
+        "age": 6614304
+      },
+      {
+        "key": "agent:main:openresponses:a20ba70b-2b6c-4d88-b149-89a7def1b013",
+        "updatedAt": 1770876518973,
+        "age": 746618727
+      },
+      {
+        "key": "agent:main:openresponses:a2ee11db-11c8-48a5-ba29-9ea4597dd799",
+        "updatedAt": 1770875389648,
+        "age": 747748052
+      },
+      {
+        "key": "agent:main:openresponses:1332da62-b285-4432-8e18-3f7e75547621",
+        "updatedAt": 1770875389570,
+        "age": 747748130
+      },
+      {
+        "key": "agent:main:openresponses:120eccd9-7b4c-412e-b643-a40eb07b61d5",
+        "updatedAt": 1770875371387,
+        "age": 747766313
+      }
+    ]
+  }
+}

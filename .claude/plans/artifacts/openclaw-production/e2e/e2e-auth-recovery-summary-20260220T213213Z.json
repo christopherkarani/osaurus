@@ -1,0 +1,13 @@
+{
+  "generatedAtUtc": "2026-02-20T21:32:13Z",
+  "status": "passed",
+  "invalidTokenExitCode": 1,
+  "unauthorizedVisible": true,
+  "validTokenHealthOk": true,
+  "postProbeOk": true,
+  "preProbeArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/probe-pre-auth-recovery-20260220T213213Z.json",
+  "invalidTokenStdoutArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/health-invalid-token-20260220T213213Z.stdout.log",
+  "invalidTokenStderrArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/health-invalid-token-20260220T213213Z.stderr.log",
+  "validTokenHealthArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/health-valid-token-20260220T213213Z.json",
+  "postProbeArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/probe-post-auth-recovery-20260220T213213Z.json"
+}
