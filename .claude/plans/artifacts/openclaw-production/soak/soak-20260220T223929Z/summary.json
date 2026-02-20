@@ -1,0 +1,14 @@
+{
+  "runDir": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/soak/soak-20260220T223929Z",
+  "probeSamples": 9,
+  "probeOkSamples": 9,
+  "probeFailSamples": 0,
+  "maxConsecutiveProbeFails": 0,
+  "restartCount": 2,
+  "networkBlipCount": 2,
+  "trafficOkCount": 3,
+  "trafficFailCount": 2,
+  "inboundTimestampRegressions": 0,
+  "duplicateInboundEventTransitions": 0,
+  "potentialStuckState": false
+}

@@ -1,0 +1,6 @@
+{"tsUtc":"2026-02-20T22:39:29Z","type":"run_start","status":"ok","details":"started soak run soak-20260220T223929Z"}
+{"tsUtc":"2026-02-20T22:40:51Z","type":"network_blip","status":"failed","details":"failed to kill sshTunnel pid=21043"}
+{"tsUtc":"2026-02-20T22:41:16Z","type":"gateway_restart","status":"ok","details":"/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/soak/soak-20260220T223929Z/restart-20260220T224113Z.json"}
+{"tsUtc":"2026-02-20T22:42:22Z","type":"network_blip","status":"failed","details":"failed to kill sshTunnel pid=24261"}
+{"tsUtc":"2026-02-20T22:42:49Z","type":"gateway_restart","status":"ok","details":"/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/soak/soak-20260220T223929Z/restart-20260220T224248Z.json"}
+{"tsUtc":"2026-02-20T22:43:40Z","type":"run_end","status":"ok","details":"completed soak run soak-20260220T223929Z"}

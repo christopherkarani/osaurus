@@ -1,0 +1,9 @@
+{
+  "runId": "soak-20260220T223929Z",
+  "startedAtUtc": "2026-02-20T22:39:29Z",
+  "durationSeconds": 240,
+  "restartIntervalSeconds": 90,
+  "blipIntervalSeconds": 70,
+  "sampleIntervalSeconds": 15,
+  "trafficIntervalSeconds": 30
+}
