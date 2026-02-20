@@ -58,3 +58,22 @@ Purpose: WS-A / A-01 classification of every modified file by intent and revert 
 - `Packages/OsaurusCore/Tests/OpenClawPhase3ViewLogicTests.swift` is intentional and required for deterministic Phase 3 UI logic coverage (wizard selection, cron toggles, skills status logic, presence ordering).
 - Test discovery is stable under SwiftPM/XCTest because the file is inside the `OsaurusCoreTests` target and does not require manual registration.
 - Action: track this file in git as part of release hygiene to prevent accidental omission.
+
+## A-02 Atomic Commit Plan
+
+Each remaining task ID maps to one atomic commit with scoped files only:
+
+- `B-01`: `OpenClawEventProcessor.swift`, `OpenClawModelService.swift`, `OpenClawGatewayConnection.swift`
+- `B-02`: `OpenClawModelServiceTests.swift`, `OpenClawGatewayConnectionPhase1Tests.swift`
+- `C-01`: `OpenClawDashboardView.swift`, `OpenClawManager.swift`, `OpenClawNotificationService.swift`, `OpenClawNotificationServiceTests.swift`
+- `C-02`: `OpenClawNotificationService.swift`, `OpenClawManager.swift`, `OpenClawNotificationServiceTests.swift`
+- `C-03`: `OpenClawNotificationServiceTests.swift`
+- `D-01`: `OpenClawPresenceModels.swift`, `OpenClawConnectedClientsView.swift`, `OpenClawGatewayConnectionPhase3PresenceTests.swift`, `OpenClawPhase3ViewLogicTests.swift`
+- `D-02`: `OpenClawChannelLinkSheet.swift`, `OpenClawPhase3ViewLogicTests.swift`
+- `D-03`: `OpenClawCronView.swift`, `OpenClawSkillsView.swift`, `OpenClawPhase3ViewLogicTests.swift`
+- `E-01`: `.claude/plans/openclaw-osaurus-local-smoke-report.md`
+- `E-02`: `.claude/plans/openclaw-osaurus-local-smoke-report.md`
+- `F-01`: `.claude/plans/openclaw-osaurus-integration.md`
+- `F-02`: `.claude/plans/openclaw-osaurus-remaining-work-plan.md`
+
+Commit message pattern: `OpenClawHardening <task-id>: <what> (<why>)`.
