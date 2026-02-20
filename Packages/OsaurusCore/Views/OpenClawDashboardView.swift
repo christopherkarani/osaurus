@@ -13,6 +13,9 @@ struct OpenClawDashboardView: View {
     @State private var hasAppeared = false
     @State private var selectedChannelID: String?
     @State private var linkingChannel: OpenClawManager.ChannelInfo?
+    @State private var showScheduledTasks = false
+    @State private var showSkills = false
+    @State private var showConnectedClients = false
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -64,6 +67,15 @@ struct OpenClawDashboardView: View {
                 Task {
                     await manager.checkEnvironment()
                     await manager.refreshStatus()
+                    if showScheduledTasks {
+                        await manager.refreshCron()
+                    }
+                    if showSkills {
+                        await manager.refreshSkills()
+                    }
+                    if showConnectedClients {
+                        await manager.refreshConnectedClients()
+                    }
                 }
             }
             HeaderPrimaryButton(
@@ -174,6 +186,39 @@ struct OpenClawDashboardView: View {
                         OpenClawDashboardModelChip(model: model)
                     }
                 }
+            }
+
+            DisclosureGroup(isExpanded: $showScheduledTasks) {
+                OpenClawCronView(manager: manager)
+                    .padding(.top, 6)
+            } label: {
+                sectionTitle("Scheduled Tasks")
+            }
+            .onChange(of: showScheduledTasks) { expanded in
+                guard expanded else { return }
+                Task { await manager.refreshCron() }
+            }
+
+            DisclosureGroup(isExpanded: $showSkills) {
+                OpenClawSkillsView(manager: manager)
+                    .padding(.top, 6)
+            } label: {
+                sectionTitle("Skills")
+            }
+            .onChange(of: showSkills) { expanded in
+                guard expanded else { return }
+                Task { await manager.refreshSkills() }
+            }
+
+            DisclosureGroup(isExpanded: $showConnectedClients) {
+                OpenClawConnectedClientsView(manager: manager)
+                    .padding(.top, 6)
+            } label: {
+                sectionTitle("Connected Clients")
+            }
+            .onChange(of: showConnectedClients) { expanded in
+                guard expanded else { return }
+                Task { await manager.refreshConnectedClients() }
             }
 
             sectionTitle("Gateway Logs")
