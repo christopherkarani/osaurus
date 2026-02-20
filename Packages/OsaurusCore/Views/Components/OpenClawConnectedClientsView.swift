@@ -12,7 +12,7 @@ struct OpenClawConnectedClientsView: View {
     @State private var hasLoaded = false
 
     private var clients: [OpenClawPresenceEntry] {
-        manager.connectedClients.sorted { $0.timestampMs > $1.timestampMs }
+        OpenClawConnectedClientsViewLogic.sortedClients(manager.connectedClients)
     }
 
     var body: some View {
@@ -47,11 +47,14 @@ struct OpenClawConnectedClientsView: View {
             HeaderSecondaryButton("Refresh", icon: "arrow.clockwise") {
                 Task { await manager.refreshConnectedClients() }
             }
+            .accessibilityLabel("Refresh connected clients")
         }
     }
 
     @ViewBuilder
     private func clientRow(_ client: OpenClawPresenceEntry) -> some View {
+        let connectedText = Self.relativeDateFormatter.localizedString(for: client.connectedAt, relativeTo: Date())
+
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 8) {
                 Text(client.displayName)
@@ -59,12 +62,18 @@ struct OpenClawConnectedClientsView: View {
                     .foregroundColor(theme.primaryText)
                     .lineLimit(1)
                 Spacer()
-                Text(Self.relativeDateFormatter.localizedString(for: client.connectedAt, relativeTo: Date()))
+                Text(connectedText)
                     .font(.system(size: 10))
                     .foregroundColor(theme.tertiaryText)
             }
 
             HStack(spacing: 8) {
+                if let deviceId = normalized(client.deviceId) {
+                    Text(deviceId)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(theme.tertiaryText)
+                        .lineLimit(1)
+                }
                 if let platform = normalized(client.platform) {
                     Text(platform)
                         .font(.system(size: 10, design: .monospaced))
@@ -99,6 +108,34 @@ struct OpenClawConnectedClientsView: View {
                     Spacer()
                 }
             }
+
+            if !client.scopes.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(client.scopes, id: \.self) { scope in
+                        Text(scope)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(theme.secondaryBackground))
+                    }
+                    Spacer()
+                }
+            }
+
+            if !client.tags.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(client.tags, id: \.self) { tag in
+                        Text(tag)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(theme.tertiaryText)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(theme.tertiaryBackground))
+                    }
+                    Spacer()
+                }
+            }
         }
         .padding(10)
         .background(
@@ -109,6 +146,11 @@ struct OpenClawConnectedClientsView: View {
                         .stroke(theme.primaryBorder, lineWidth: 1)
                 )
         )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            OpenClawConnectedClientsViewLogic.accessibilityLabel(for: client, connectedText: connectedText)
+        )
+        .accessibilityValue(OpenClawConnectedClientsViewLogic.accessibilityValue(for: client))
     }
 
     private func normalized(_ value: String?) -> String? {
@@ -123,4 +165,42 @@ struct OpenClawConnectedClientsView: View {
         formatter.unitsStyle = .short
         return formatter
     }()
+
+}
+
+enum OpenClawConnectedClientsViewLogic {
+    static func sortedClients(_ entries: [OpenClawPresenceEntry]) -> [OpenClawPresenceEntry] {
+        entries.sorted { lhs, rhs in
+            if lhs.timestampMs != rhs.timestampMs {
+                return lhs.timestampMs > rhs.timestampMs
+            }
+            return lhs.primaryIdentity.localizedCaseInsensitiveCompare(rhs.primaryIdentity) == .orderedAscending
+        }
+    }
+
+    static func accessibilityLabel(for client: OpenClawPresenceEntry, connectedText: String) -> String {
+        let mode = normalized(client.mode)?.lowercased() ?? "unknown"
+        return "\(client.displayName), identity \(client.primaryIdentity), status \(mode), connected \(connectedText)"
+    }
+
+    static func accessibilityValue(for client: OpenClawPresenceEntry) -> String {
+        let roles = joinedOrNone(client.roles)
+        let scopes = joinedOrNone(client.scopes)
+        let tags = joinedOrNone(client.tags)
+        return "Roles: \(roles). Scopes: \(scopes). Tags: \(tags)."
+    }
+
+    private static func joinedOrNone(_ values: [String]) -> String {
+        let normalizedValues = values
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return normalizedValues.isEmpty ? "none" : normalizedValues.joined(separator: ", ")
+    }
+
+    private static func normalized(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return nil
+        }
+        return value
+    }
 }

@@ -6,6 +6,7 @@
 import Foundation
 
 public struct OpenClawPresenceEntry: Codable, Sendable, Identifiable {
+    public let deviceId: String?
     public let instanceId: String?
     public let host: String?
     public let ip: String?
@@ -19,17 +20,24 @@ public struct OpenClawPresenceEntry: Codable, Sendable, Identifiable {
     public let lastInputSeconds: Int?
     public let reason: String?
     public let text: String?
+    public let tags: [String]
     public let timestampMs: Double
 
     public var id: String {
-        if let instanceId, !instanceId.isEmpty { return instanceId }
-        if let host, !host.isEmpty { return host }
-        if let ip, !ip.isEmpty { return ip }
-        if let text, !text.isEmpty { return text }
+        primaryIdentity
+    }
+
+    public var primaryIdentity: String {
+        if let deviceId = Self.normalized(deviceId) { return deviceId }
+        if let instanceId = Self.normalized(instanceId) { return instanceId }
+        if let host = Self.normalized(host) { return host }
+        if let ip = Self.normalized(ip) { return ip }
+        if let text = Self.normalized(text) { return text }
         return "presence-\(Int(timestampMs))"
     }
 
     public init(
+        deviceId: String? = nil,
         instanceId: String?,
         host: String?,
         ip: String?,
@@ -43,8 +51,10 @@ public struct OpenClawPresenceEntry: Codable, Sendable, Identifiable {
         lastInputSeconds: Int?,
         reason: String?,
         text: String?,
+        tags: [String] = [],
         timestampMs: Double
     ) {
+        self.deviceId = deviceId
         self.instanceId = instanceId
         self.host = host
         self.ip = ip
@@ -58,10 +68,12 @@ public struct OpenClawPresenceEntry: Codable, Sendable, Identifiable {
         self.lastInputSeconds = lastInputSeconds
         self.reason = reason
         self.text = text
+        self.tags = tags
         self.timestampMs = timestampMs
     }
 
     enum CodingKeys: String, CodingKey {
+        case deviceId
         case instanceId
         case host
         case ip
@@ -75,11 +87,13 @@ public struct OpenClawPresenceEntry: Codable, Sendable, Identifiable {
         case lastInputSeconds
         case reason
         case text
+        case tags
         case ts
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        deviceId = try container.decodeIfPresent(String.self, forKey: .deviceId)
         instanceId = try container.decodeIfPresent(String.self, forKey: .instanceId)
         host = try container.decodeIfPresent(String.self, forKey: .host)
         ip = try container.decodeIfPresent(String.self, forKey: .ip)
@@ -93,22 +107,34 @@ public struct OpenClawPresenceEntry: Codable, Sendable, Identifiable {
         lastInputSeconds = try container.decodeIfPresent(Int.self, forKey: .lastInputSeconds)
         reason = try container.decodeIfPresent(String.self, forKey: .reason)
         text = try container.decodeIfPresent(String.self, forKey: .text)
+        tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
 
-        if let rawTs = try container.decodeIfPresent(Double.self, forKey: .ts) {
-            timestampMs = rawTs
-        } else if let rawTs = try container.decodeIfPresent(Int.self, forKey: .ts) {
-            timestampMs = Double(rawTs)
-        } else if let rawTs = try container.decodeIfPresent(String.self, forKey: .ts),
-            let numeric = Double(rawTs.trimmingCharacters(in: .whitespacesAndNewlines))
-        {
-            timestampMs = numeric
+        if let numeric = Self.decodeTimestamp(from: container) {
+            timestampMs = Self.normalizeTimestampMs(numeric)
         } else {
             timestampMs = Date().timeIntervalSince1970 * 1000
         }
     }
 
+    private static func decodeTimestamp(from container: KeyedDecodingContainer<CodingKeys>) -> Double? {
+        if let raw = try? container.decode(Double.self, forKey: .ts) {
+            return raw
+        }
+        if let raw = try? container.decode(Int.self, forKey: .ts) {
+            return Double(raw)
+        }
+        if
+            let raw = try? container.decode(String.self, forKey: .ts),
+            let numeric = Double(raw.trimmingCharacters(in: .whitespacesAndNewlines))
+        {
+            return numeric
+        }
+        return nil
+    }
+
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(deviceId, forKey: .deviceId)
         try container.encodeIfPresent(instanceId, forKey: .instanceId)
         try container.encodeIfPresent(host, forKey: .host)
         try container.encodeIfPresent(ip, forKey: .ip)
@@ -122,6 +148,9 @@ public struct OpenClawPresenceEntry: Codable, Sendable, Identifiable {
         try container.encodeIfPresent(lastInputSeconds, forKey: .lastInputSeconds)
         try container.encodeIfPresent(reason, forKey: .reason)
         try container.encodeIfPresent(text, forKey: .text)
+        if !tags.isEmpty {
+            try container.encode(tags, forKey: .tags)
+        }
         try container.encode(timestampMs, forKey: .ts)
     }
 
@@ -130,9 +159,28 @@ public struct OpenClawPresenceEntry: Codable, Sendable, Identifiable {
     }
 
     public var displayName: String {
-        if let host, !host.isEmpty { return host }
-        if let instanceId, !instanceId.isEmpty { return instanceId }
-        if let text, !text.isEmpty { return text }
-        return "Unknown client"
+        if let host = Self.normalized(host) { return host }
+        if let instanceId = Self.normalized(instanceId) { return instanceId }
+        if let deviceId = Self.normalized(deviceId) { return deviceId }
+        if let ip = Self.normalized(ip) { return ip }
+        if let text = Self.normalized(text) { return text }
+        return primaryIdentity
+    }
+
+    private static func normalizeTimestampMs(_ raw: Double) -> Double {
+        guard raw > 0 else {
+            return Date().timeIntervalSince1970 * 1000
+        }
+        if raw < 10_000_000_000 {
+            return raw * 1000
+        }
+        return raw
+    }
+
+    private static func normalized(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return nil
+        }
+        return value
     }
 }

@@ -69,12 +69,78 @@ struct OpenClawPhase3ViewLogicTests {
 
     @Test
     func connectedClientsLogic_sortsNewestFirst() {
-        let oldest = makePresence(id: "old", timestampMs: 1_700_000_000_000)
-        let newest = makePresence(id: "new", timestampMs: 1_800_000_000_000)
-        let middle = makePresence(id: "middle", timestampMs: 1_750_000_000_000)
+        let oldest = makePresence(instanceId: "old", timestampMs: 1_700_000_000_000)
+        let newest = makePresence(instanceId: "new", timestampMs: 1_800_000_000_000)
+        let middle = makePresence(instanceId: "middle", timestampMs: 1_750_000_000_000)
 
         let sorted = OpenClawConnectedClientsViewLogic.sortedClients([oldest, newest, middle])
         #expect(sorted.map(\.id) == ["new", "middle", "old"])
+    }
+
+    @Test
+    func connectedClientsLogic_sortsByIdentityWhenTimestampsMatch() {
+        let beta = makePresence(deviceId: "device-beta", host: "beta-host", timestampMs: 1_800_000_000_000)
+        let alpha = makePresence(deviceId: "device-alpha", host: "alpha-host", timestampMs: 1_800_000_000_000)
+
+        let sorted = OpenClawConnectedClientsViewLogic.sortedClients([beta, alpha])
+        #expect(sorted.map(\.primaryIdentity) == ["device-alpha", "device-beta"])
+    }
+
+    @Test
+    func connectedClientsAccessibility_includesIdentityStatusAndMetadata() {
+        let client = makePresence(
+            deviceId: "device-123",
+            instanceId: "instance-1",
+            host: "Chris-MacBook-Pro",
+            roles: ["chat-client"],
+            scopes: ["operator.read"],
+            tags: ["desktop"],
+            mode: "chat",
+            timestampMs: 1_800_000_000_000
+        )
+
+        let label = OpenClawConnectedClientsViewLogic.accessibilityLabel(for: client, connectedText: "1m ago")
+        let value = OpenClawConnectedClientsViewLogic.accessibilityValue(for: client)
+
+        #expect(label.contains("identity device-123"))
+        #expect(label.contains("status chat"))
+        #expect(value.contains("Roles: chat-client"))
+        #expect(value.contains("Scopes: operator.read"))
+        #expect(value.contains("Tags: desktop"))
+    }
+
+    @Test
+    func presenceIdentity_fallbackUsesExpectedOrder() {
+        let deviceFirst = makePresence(
+            deviceId: "device-id",
+            instanceId: "instance-id",
+            host: "host-id",
+            ip: "10.0.0.10",
+            timestampMs: 1_800_000_000_000
+        )
+        #expect(deviceFirst.primaryIdentity == "device-id")
+
+        let instanceFallback = makePresence(
+            instanceId: "instance-id",
+            host: "host-id",
+            ip: "10.0.0.11",
+            timestampMs: 1_800_000_001_000
+        )
+        #expect(instanceFallback.primaryIdentity == "instance-id")
+
+        let hostFallback = makePresence(
+            host: "host-id",
+            ip: "10.0.0.12",
+            timestampMs: 1_800_000_002_000
+        )
+        #expect(hostFallback.primaryIdentity == "host-id")
+
+        let ipFallback = makePresence(
+            ip: "10.0.0.13",
+            timestampMs: 1_800_000_003_000
+        )
+        #expect(ipFallback.primaryIdentity == "10.0.0.13")
+        #expect(ipFallback.displayName == "10.0.0.13")
     }
 
     private func makeSkill(
@@ -105,21 +171,33 @@ struct OpenClawPhase3ViewLogicTests {
         )
     }
 
-    private func makePresence(id: String, timestampMs: Double) -> OpenClawPresenceEntry {
+    private func makePresence(
+        deviceId: String? = nil,
+        instanceId: String? = nil,
+        host: String? = nil,
+        ip: String = "10.0.0.1",
+        roles: [String] = ["chat-client"],
+        scopes: [String] = [],
+        tags: [String] = [],
+        mode: String? = "chat",
+        timestampMs: Double
+    ) -> OpenClawPresenceEntry {
         OpenClawPresenceEntry(
-            instanceId: id,
-            host: "node-\(id)",
-            ip: "10.0.0.1",
+            deviceId: deviceId,
+            instanceId: instanceId,
+            host: host,
+            ip: ip,
             version: "1.0.0",
             platform: "macos",
             deviceFamily: "Mac",
             modelIdentifier: "Mac15,6",
-            roles: ["chat-client"],
-            scopes: [],
-            mode: "chat",
+            roles: roles,
+            scopes: scopes,
+            mode: mode,
             lastInputSeconds: 0,
             reason: "node-connected",
             text: "Node connected",
+            tags: tags,
             timestampMs: timestampMs
         )
     }
