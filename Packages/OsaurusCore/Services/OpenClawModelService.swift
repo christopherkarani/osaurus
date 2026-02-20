@@ -140,7 +140,17 @@ actor OpenClawModelService: ModelService {
             requestedModel: requestedModel
         )
 
-        let processor = OpenClawEventProcessor()
+        let processor = OpenClawEventProcessor(
+            onSequenceGap: { [connection, runId] expectedSeq, receivedSeq in
+                Task {
+                    await connection.registerSequenceGap(
+                        runId: runId,
+                        expectedSeq: expectedSeq,
+                        receivedSeq: receivedSeq
+                    )
+                }
+            }
+        )
         processor.startRun(runId: runId, turn: turn)
 
         for await frame in eventStream {

@@ -125,6 +125,7 @@ public actor OpenClawGatewayConnection {
     private var connectionStateListeners: [UUID: @Sendable (OpenClawGatewayConnectionState) async -> Void] = [:]
     private var recentEventFrames: [EventFrame] = []
     private var activeRunSessionKeys: [String: String] = [:]
+    private var pendingResyncRunIDs: Set<String> = []
     private var connected = false
     private var intentionalDisconnect = false
     private var reconnectTask: Task<Void, Never>?
@@ -386,9 +387,11 @@ public actor OpenClawGatewayConnection {
         let version =
             (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)
             ?? "dev"
+        let operatorScopes = ["operator.admin", "operator.approvals", "operator.pairing"]
         let params: [String: OpenClawProtocol.AnyCodable] = [
             "text": OpenClawProtocol.AnyCodable("Node: Osaurus"),
             "roles": OpenClawProtocol.AnyCodable(["chat-client"]),
+            "scopes": OpenClawProtocol.AnyCodable(operatorScopes),
             "platform": OpenClawProtocol.AnyCodable("macos"),
             "version": OpenClawProtocol.AnyCodable(version),
             "mode": OpenClawProtocol.AnyCodable("chat")
@@ -552,9 +555,21 @@ public actor OpenClawGatewayConnection {
         _ = try await requestRaw(method: "cron.update", params: params)
     }
 
-    public func refresh() async {
-        let runIds = Array(activeRunSessionKeys.keys)
-        for runId in runIds {
+    /// Refreshes known run snapshots using `agent.wait` to catch up on missed events.
+    ///
+    /// Semantics:
+    /// - Always inspects active runs.
+    /// - Also inspects run IDs marked by sequence-gap callbacks.
+    /// - Accepts an explicit run hint to close the race where lifecycle end removes
+    ///   active-run state before refresh executes.
+    public func refresh(runIdHint: String? = nil) async {
+        var runIds = Set(activeRunSessionKeys.keys)
+        runIds.formUnion(pendingResyncRunIDs)
+        if let runIdHint, !runIdHint.isEmpty {
+            runIds.insert(runIdHint)
+        }
+
+        for runId in runIds.sorted() {
             let params: [String: OpenClawProtocol.AnyCodable] = [
                 "runId": OpenClawProtocol.AnyCodable(runId),
                 "timeoutMs": OpenClawProtocol.AnyCodable(0)
@@ -566,10 +581,24 @@ public actor OpenClawGatewayConnection {
                 continue
             }
 
+            pendingResyncRunIDs.remove(runId)
             if snapshot.status.lowercased() != "timeout" {
                 activeRunSessionKeys.removeValue(forKey: runId)
             }
         }
+    }
+
+    /// Registers a sequence gap and immediately attempts run-scoped resync.
+    /// This is used by the event processor callback path to guarantee at least
+    /// one refresh pass for the affected run, even if lifecycle events race.
+    public func registerSequenceGap(
+        runId: String,
+        expectedSeq _: Int,
+        receivedSeq _: Int
+    ) async {
+        guard !runId.isEmpty else { return }
+        pendingResyncRunIDs.insert(runId)
+        await refresh(runIdHint: runId)
     }
 
     public func subscribeToEvents(runId: String) -> AsyncStream<EventFrame> {

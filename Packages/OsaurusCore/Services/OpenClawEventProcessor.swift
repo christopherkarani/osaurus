@@ -205,6 +205,8 @@ final class OpenClawEventProcessor {
     private func recordSequence(_ seq: Int?) {
         guard let seq, seq > 0 else { return }
         if lastSeq > 0, seq > lastSeq + 1 {
+            // The callback must remain lightweight and non-blocking. Network-side
+            // refresh/resync work is handled by the gateway connection actor.
             onSequenceGap?(lastSeq + 1, seq)
         }
         if seq > lastSeq {
