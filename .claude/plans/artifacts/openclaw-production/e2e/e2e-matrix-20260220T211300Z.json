@@ -1,0 +1,37 @@
+{
+  "generatedAtUtc": "2026-02-20T21:13:00Z",
+  "probeArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/gateway-probe-20260220T211300Z.json",
+  "channelsStatusArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/channels-status-20260220T211300Z.json",
+  "channels": [
+    {
+      "channelId": "telegram",
+      "channelLabel": "Telegram",
+      "configured": true,
+      "running": true,
+      "mode": "polling",
+      "accounts": [
+        {
+          "accountId": "default",
+          "enabled": true,
+          "configured": true,
+          "tokenSource": "config",
+          "running": true,
+          "lastStartAt": 1771616736948,
+          "lastStopAt": null,
+          "lastError": null,
+          "mode": "polling",
+          "allowUnmentionedGroups": false,
+          "lastInboundAt": null,
+          "lastOutboundAt": null
+        }
+      ],
+      "validation": {
+        "outboundRequired": true,
+        "inboundRequired": true,
+        "restartReconnectRequired": true,
+        "authRecoveryRequired": true,
+        "seqGapResyncRequired": true
+      }
+    }
+  ]
+}

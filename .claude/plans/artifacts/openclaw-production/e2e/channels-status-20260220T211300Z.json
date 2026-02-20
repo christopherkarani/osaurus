@@ -1,0 +1,56 @@
+{
+  "ts": 1771621989608,
+  "channelOrder": [
+    "telegram"
+  ],
+  "channelLabels": {
+    "telegram": "Telegram"
+  },
+  "channelDetailLabels": {
+    "telegram": "Telegram Bot"
+  },
+  "channelSystemImages": {
+    "telegram": "paperplane"
+  },
+  "channelMeta": [
+    {
+      "id": "telegram",
+      "label": "Telegram",
+      "detailLabel": "Telegram Bot",
+      "systemImage": "paperplane"
+    }
+  ],
+  "channels": {
+    "telegram": {
+      "configured": true,
+      "tokenSource": "config",
+      "running": true,
+      "mode": "polling",
+      "lastStartAt": 1771616736948,
+      "lastStopAt": null,
+      "lastError": null,
+      "lastProbeAt": null
+    }
+  },
+  "channelAccounts": {
+    "telegram": [
+      {
+        "accountId": "default",
+        "enabled": true,
+        "configured": true,
+        "tokenSource": "config",
+        "running": true,
+        "lastStartAt": 1771616736948,
+        "lastStopAt": null,
+        "lastError": null,
+        "mode": "polling",
+        "allowUnmentionedGroups": false,
+        "lastInboundAt": null,
+        "lastOutboundAt": null
+      }
+    ]
+  },
+  "channelDefaultAccountId": {
+    "telegram": "default"
+  }
+}
