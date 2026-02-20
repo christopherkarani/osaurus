@@ -222,10 +222,139 @@ struct OpenClawNotificationServiceTests {
         #expect(badge == nil)
     }
 
-    nonisolated private static func makeStatus(lastInboundAt: Date) -> ChannelsStatusResult {
-        let account = ChannelAccountSnapshot(
-            accountId: "acct-1",
-            name: "John",
+    @Test
+    func reconnectBaselineReset_suppressesStaleNotificationsAfterReconnect() {
+        let service = OpenClawNotificationService.shared
+        var notifications: [(String, String, String)] = []
+        var badge: String?
+
+        OpenClawNotificationService._testSetHooks(
+            .init(
+                fetchStatus: { Self.makeStatus(lastInboundAt: Date()) },
+                postNotification: { channelId, title, body in
+                    notifications.append((channelId, title, body))
+                },
+                setDockBadge: { value in
+                    badge = value
+                },
+                sleep: { _ in }
+            )
+        )
+        defer {
+            OpenClawNotificationService._testSetHooks(nil)
+            service._testReset()
+        }
+
+        let firstBaseline = Date()
+        let firstInbound = firstBaseline.addingTimeInterval(1)
+        service._testSetListeningStartedAt(firstBaseline)
+        service.ingestStatus(Self.makeStatus(lastInboundAt: firstInbound))
+        #expect(notifications.count == 1)
+        #expect(badge == "1")
+
+        // Simulate reconnect baseline reset with no carried state.
+        service._testReset()
+        notifications.removeAll()
+        badge = nil
+
+        let reconnectBaseline = firstBaseline.addingTimeInterval(30)
+        service._testSetListeningStartedAt(reconnectBaseline)
+        service.ingestStatus(Self.makeStatus(lastInboundAt: firstInbound))
+        #expect(notifications.isEmpty)
+        #expect(badge == nil)
+    }
+
+    @Test
+    func multiAccountBurst_dedupesPerAccountAndTimestamp() {
+        let service = OpenClawNotificationService.shared
+        var notifications: [(String, String, String)] = []
+        var badge: String?
+
+        OpenClawNotificationService._testSetHooks(
+            .init(
+                fetchStatus: { Self.makeStatus(lastInboundAt: Date()) },
+                postNotification: { channelId, title, body in
+                    notifications.append((channelId, title, body))
+                },
+                setDockBadge: { value in
+                    badge = value
+                },
+                sleep: { _ in }
+            )
+        )
+        defer {
+            OpenClawNotificationService._testSetHooks(nil)
+            service._testReset()
+        }
+
+        let baseline = Date()
+        service._testSetListeningStartedAt(baseline.addingTimeInterval(-1))
+        let ts = baseline.addingTimeInterval(2)
+        let account1 = Self.makeAccount(accountId: "acct-1", name: "Alpha", lastInboundAt: ts)
+        let account2 = Self.makeAccount(accountId: "acct-2", name: "Beta", lastInboundAt: ts)
+
+        let burst = Self.makeStatus(accounts: [account1, account2])
+        service.ingestStatus(burst)
+        #expect(notifications.count == 2)
+        #expect(badge == "2")
+
+        service.ingestStatus(burst)
+        #expect(notifications.count == 2)
+        #expect(badge == "2")
+
+        let account2Advanced = Self.makeAccount(
+            accountId: "acct-2",
+            name: "Beta",
+            lastInboundAt: ts.addingTimeInterval(2)
+        )
+        service.ingestStatus(Self.makeStatus(accounts: [account1, account2Advanced]))
+        #expect(notifications.count == 3)
+        #expect(badge == "3")
+    }
+
+    @Test
+    func rapidUnchangedPollCycles_doNotIncrementUnread() {
+        let service = OpenClawNotificationService.shared
+        var notifications: [(String, String, String)] = []
+        var badge: String?
+
+        OpenClawNotificationService._testSetHooks(
+            .init(
+                fetchStatus: { Self.makeStatus(lastInboundAt: Date()) },
+                postNotification: { channelId, title, body in
+                    notifications.append((channelId, title, body))
+                },
+                setDockBadge: { value in
+                    badge = value
+                },
+                sleep: { _ in }
+            )
+        )
+        defer {
+            OpenClawNotificationService._testSetHooks(nil)
+            service._testReset()
+        }
+
+        let inbound = Date()
+        service._testSetListeningStartedAt(inbound.addingTimeInterval(-1))
+        let snapshot = Self.makeStatus(lastInboundAt: inbound)
+
+        for _ in 0..<5 {
+            service.ingestStatus(snapshot)
+        }
+
+        #expect(notifications.count == 1)
+        #expect(badge == "1")
+    }
+
+    nonisolated private static func makeAccount(
+        accountId: String,
+        name: String,
+        lastInboundAt: Date
+    ) -> ChannelAccountSnapshot {
+        ChannelAccountSnapshot(
+            accountId: accountId,
+            name: name,
             enabled: true,
             configured: true,
             linked: true,
@@ -239,16 +368,36 @@ struct OpenClawNotificationServiceTests {
             mode: "operator",
             dmPolicy: "allow"
         )
+    }
 
+    nonisolated private static func makeStatus(lastInboundAt: Date) -> ChannelsStatusResult {
+        makeStatus(
+            accounts: [
+                makeAccount(
+                    accountId: "acct-1",
+                    name: "John",
+                    lastInboundAt: lastInboundAt
+                )
+            ]
+        )
+    }
+
+    nonisolated private static func makeStatus(
+        channelId: String = "whatsapp",
+        channelLabel: String = "WhatsApp",
+        accounts: [ChannelAccountSnapshot]
+    ) -> ChannelsStatusResult {
+        let maxInbound = accounts.compactMap(\.lastInboundAt).max() ?? Date()
         return ChannelsStatusResult(
-            ts: Int(lastInboundAt.timeIntervalSince1970 * 1000),
-            channelOrder: ["whatsapp"],
-            channelLabels: ["whatsapp": "WhatsApp"],
+            ts: Int(maxInbound.timeIntervalSince1970 * 1000),
+            channelOrder: [channelId],
+            channelLabels: [channelId: channelLabel],
             channelDetailLabels: [:],
             channelSystemImages: [:],
             channelMeta: [],
-            channelAccounts: ["whatsapp": [account]],
+            channelAccounts: [channelId: accounts],
             channelDefaultAccountId: [:]
         )
     }
+
 }
