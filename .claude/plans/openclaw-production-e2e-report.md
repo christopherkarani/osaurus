@@ -10,7 +10,7 @@ Scope: `PR-E2E-01` through `PR-E2E-06`
 |---|---|---|
 | `PR-E2E-01` | PASS | Enabled channels discovered and matrix generated with artifacts. |
 | `PR-E2E-02` | BLOCKED | Telegram outbound send failed: bot cannot initiate conversation with target user. |
-| `PR-E2E-03` | PENDING | Inbound delivery proof per enabled channel. |
+| `PR-E2E-03` | BLOCKED | `lastInboundAt` remained `null`; no inbound Telegram event observed in wait window. |
 | `PR-E2E-04` | PENDING | Restart/reconnect under active traffic. |
 | `PR-E2E-05` | PENDING | Auth failure and recovery flow. |
 | `PR-E2E-06` | PENDING | Seq-gap/resync evidence under real event load. |
@@ -97,3 +97,43 @@ No outbound timestamp progression was possible because Telegram rejected the sen
   2. Start DM with `@codanicia_bot`.
   3. Send any message (`/start` is sufficient).
   4. Re-run `./scripts/openclaw/e2e_outbound.sh 6749713257`.
+
+## PR-E2E-03: Inbound Delivery Validation (Current Blocker)
+
+### Commands
+
+```bash
+cd /Users/chriskarani/CodingProjects/Jarvis/osaurus
+./scripts/openclaw/e2e_inbound.sh 6749713257 30
+```
+
+### Execution Evidence
+
+- Timestamp (UTC): `2026-02-20T21:20:21Z`
+- Summary artifact:  
+  `/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/e2e-inbound-summary-20260220T212021Z.json`
+
+Summary fields:
+
+- `status: failed`
+- `reason: lastInboundAt did not advance within wait window`
+- `preLastInboundAt: null`
+- `postLastInboundAt: null`
+- `waitSeconds: 30`
+
+### Before/After State
+
+From `channels-status-post-inbound-20260220T212021Z.json`:
+
+- `channelAccounts.telegram[0].running=true`
+- `channelAccounts.telegram[0].mode=polling`
+- `channelAccounts.telegram[0].lastInboundAt=null`
+- `channelAccounts.telegram[0].lastOutboundAt=null`
+
+### Blocker and Smallest Unblocking Action
+
+- Blocker: no inbound Telegram update was observed for the configured bot account during validation window.
+- Smallest unblocking action:
+  1. Open Telegram.
+  2. Send a message to `@codanicia_bot` from the user associated with target `6749713257`.
+  3. Re-run `./scripts/openclaw/e2e_inbound.sh 6749713257 120`.
