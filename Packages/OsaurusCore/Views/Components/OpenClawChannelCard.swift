@@ -7,6 +7,8 @@ import SwiftUI
 
 struct OpenClawChannelCard: View {
     @Environment(\.theme) private var theme
+    @State private var hasAppeared = false
+    @State private var isHovered = false
 
     let channel: OpenClawManager.ChannelInfo
 
@@ -40,6 +42,10 @@ struct OpenClawChannelCard: View {
                 .padding(.vertical, 3)
                 .background(Capsule().fill(statusColor.opacity(0.12)))
         }
+        .scaleEffect(isHovered ? 1.02 : 1)
+        .opacity(hasAppeared ? 1 : 0)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isHovered)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 10)
@@ -47,13 +53,19 @@ struct OpenClawChannelCard: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
                         .stroke(theme.primaryBorder, lineWidth: 1)
-                )
+            )
         )
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(channel.name) channel")
         .accessibilityValue(
             channel.isConnected ? "Connected" : channel.isLinked ? "Linked but disconnected" : "Not linked"
         )
+        .onHover { isHovered = $0 }
+        .onAppear {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                hasAppeared = true
+            }
+        }
     }
 
     private var statusColor: Color {

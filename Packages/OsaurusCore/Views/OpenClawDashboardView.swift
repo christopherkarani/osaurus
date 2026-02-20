@@ -101,6 +101,10 @@ struct OpenClawDashboardView: View {
         VStack(alignment: .leading, spacing: 16) {
             OpenClawGatewayStatusCard(manager: manager)
 
+            if manager.phase == .checkingEnvironment || manager.phase == .installingCLI {
+                loadingStrip
+            }
+
             if !manager.activeSessions.isEmpty {
                 sectionTitle("Active Sessions")
                 VStack(spacing: 10) {
@@ -126,23 +130,13 @@ struct OpenClawDashboardView: View {
                     spacing: 8
                 ) {
                     ForEach(manager.availableModels, id: \.self) { model in
-                        Text(model)
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundColor(theme.primaryText)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 8)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(theme.secondaryBackground)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .stroke(theme.primaryBorder, lineWidth: 1)
-                                    )
-                            )
+                        OpenClawDashboardModelChip(model: model)
                     }
                 }
             }
+
+            sectionTitle("Gateway Logs")
+            OpenClawLogViewer()
 
             if let health = manager.lastHealth {
                 sectionTitle("Health")
@@ -154,6 +148,27 @@ struct OpenClawDashboardView: View {
                         metricRow("Active Runs", value: "\(health.activeRuns)")
                     }
                 }
+            }
+        }
+    }
+
+    private var loadingStrip: some View {
+        GlassListRow {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(theme.warningColor.opacity(0.16))
+                        .frame(width: 18, height: 18)
+                        .overlay(
+                            Image(systemName: "antenna.radiowaves.left.and.right")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(theme.warningColor)
+                        )
+                    Text("Loading OpenClaw runtime state…")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                }
+                IndeterminateShimmerProgress(color: theme.accentColor, height: 4)
             }
         }
     }
@@ -206,5 +221,42 @@ struct OpenClawDashboardView: View {
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundColor(theme.primaryText)
         }
+    }
+}
+
+private struct OpenClawDashboardModelChip: View {
+    @Environment(\.theme) private var theme
+
+    let model: String
+    @State private var isHovered = false
+    @State private var hasAppeared = false
+
+    var body: some View {
+        Text(model)
+            .font(.system(size: 12, design: .monospaced))
+            .foregroundColor(theme.primaryText)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.secondaryBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(theme.primaryBorder, lineWidth: 1)
+                    )
+            )
+            .scaleEffect(isHovered ? 1.02 : 1)
+            .opacity(hasAppeared ? 1 : 0)
+            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isHovered)
+            .onHover { hovering in
+                isHovered = hovering
+            }
+            .onAppear {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                    hasAppeared = true
+                }
+            }
     }
 }
