@@ -86,3 +86,70 @@ This confirms the metadata path used by the connected-clients UI row.
 ## E-01 Exit Criteria Verdict
 
 All local smoke runbook checkpoints passed without code workarounds. WS-E `E-01` is complete.
+
+---
+
+## WS-E / E-02 Failure-Mode Smoke Checks
+
+Date (UTC): 2026-02-20  
+Scope: operator-visible recovery paths and deterministic resync behavior
+
+| Scenario | Command(s) | Observed result | Status |
+|---|---|---|---|
+| Gateway restart while connected | `openclaw gateway restart --json` then `openclaw gateway probe --json` | Restart returned `ok: true`, and immediate probe returned `ok: true` with active successful target connection | PASS |
+| Auth/token failure path | `openclaw gateway call health --token invalid-smoke-token --json` | Command failed with `unauthorized: device token mismatch` (exit `1`), then normal probe recovered to `ok: true` | PASS |
+| Seq-gap/resync path determinism (active run + end-race windows) | `swift test --filter streamRunIntoTurn_sequenceGapTriggersConnectionRefresh` (10x loop), `swift test --filter streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations` (10x loop) | Both loops passed `10/10`, validating deterministic refresh/resync behavior across ordering windows | PASS |
+
+## E-02 Evidence Highlights
+
+### Restart recovery
+
+`openclaw gateway restart --json`:
+
+```json
+{
+  "action": "restart",
+  "ok": true,
+  "result": "restarted"
+}
+```
+
+Follow-up probe summary:
+
+```json
+{
+  "ok": true,
+  "primaryTargetId": "sshTunnel",
+  "targetConnect": [
+    { "id": "sshTunnel", "connectOk": true },
+    { "id": "configRemote", "connectOk": true }
+  ]
+}
+```
+
+### Auth/token rejection + recovery
+
+Bad-token call result:
+
+```text
+exit=1
+gateway connect failed: Error: unauthorized: device token mismatch (rotate/reissue device token)
+Gateway call failed: Error: gateway closed (1008): unauthorized: device token mismatch (rotate/reissue device token)
+```
+
+Post-failure probe remained healthy (`ok: true`), confirming no stuck disconnected state after rejected auth.
+
+### Seq-gap/resync deterministic guard
+
+Repeated race-sensitive checks:
+
+```text
+iterations_passed=10/10  (streamRunIntoTurn_sequenceGapTriggersConnectionRefresh)
+iterations_passed=10/10  (streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations)
+```
+
+These runs cover both active-run seq-gap refresh and immediate lifecycle-end interleaving, with no flake observed.
+
+## E-02 Exit Criteria Verdict
+
+All failure-mode scenarios passed with deterministic outcomes and verified recovery. WS-E `E-02` is complete.
