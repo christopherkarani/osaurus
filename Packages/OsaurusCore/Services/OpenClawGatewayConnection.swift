@@ -206,24 +206,16 @@ public actor OpenClawGatewayConnection {
     }
 
     public func channelsStatus() async throws -> [[String: OpenClawProtocol.AnyCodable]] {
-        let data = try await requestRaw(method: "channels.status", params: nil)
-        let result = try decodePayload(method: "channels.status", data: data, as: ChannelsStatusResult.self)
+        let result = try await channelsStatusDetailed()
+        let ids = result.channelOrder.isEmpty ? Array(result.channelAccounts.keys).sorted() : result.channelOrder
+        let metaByID = Dictionary(uniqueKeysWithValues: result.channelMeta.map { ($0.id, $0) })
 
-        let ids = result.channelorder.isEmpty ? Array(result.channels.keys).sorted() : result.channelorder
         return ids.map { id in
-            let channelState = result.channels[id]?.value as? [String: OpenClawProtocol.AnyCodable]
-            let linked = boolValue(
-                channelState?["linked"]?.value
-                    ?? channelState?["isLinked"]?.value
-                    ?? channelState?["configured"]?.value
-            )
-            let connected = boolValue(
-                channelState?["connected"]?.value
-                    ?? channelState?["isConnected"]?.value
-                    ?? channelState?["ready"]?.value
-            )
-            let name = (result.channellabels[id]?.value as? String) ?? id.capitalized
-            let systemImage = (result.channelsystemimages?[id]?.value as? String)
+            let accounts = result.channelAccounts[id] ?? []
+            let linked = accounts.contains { $0.linked || $0.configured }
+            let connected = accounts.contains { $0.connected || $0.running }
+            let name = metaByID[id]?.label ?? result.channelLabels[id] ?? id.capitalized
+            let systemImage = metaByID[id]?.systemImage ?? result.channelSystemImages[id]
                 ?? "antenna.radiowaves.left.and.right"
 
             return [
@@ -234,6 +226,26 @@ public actor OpenClawGatewayConnection {
                 "isConnected": OpenClawProtocol.AnyCodable(connected),
             ]
         }
+    }
+
+    public func channelsStatusDetailed(
+        probe: Bool = false,
+        timeoutMs: Int? = nil
+    ) async throws -> ChannelsStatusResult {
+        var params: [String: OpenClawProtocol.AnyCodable]?
+        if probe || timeoutMs != nil {
+            var payload: [String: OpenClawProtocol.AnyCodable] = [:]
+            if probe {
+                payload["probe"] = OpenClawProtocol.AnyCodable(true)
+            }
+            if let timeoutMs {
+                payload["timeoutMs"] = OpenClawProtocol.AnyCodable(timeoutMs)
+            }
+            params = payload
+        }
+
+        let data = try await requestRaw(method: "channels.status", params: params)
+        return try decodePayload(method: "channels.status", data: data, as: ChannelsStatusResult.self)
     }
 
     public func modelsList() async throws -> [String] {

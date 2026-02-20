@@ -61,6 +61,7 @@ public final class OpenClawManager: ObservableObject {
 
     struct GatewayHooks {
         var channelsStatus: @Sendable () async throws -> [GatewayPayload]
+        var channelsStatusDetailed: (@Sendable () async throws -> ChannelsStatusResult)? = nil
         var modelsList: @Sendable () async throws -> [String]
         var health: @Sendable () async throws -> GatewayPayload
         var heartbeatStatus: (@Sendable () async throws -> OpenClawHeartbeatStatus)?
@@ -165,6 +166,7 @@ public final class OpenClawManager: ObservableObject {
     @Published public private(set) var heartbeatLastTimestamp: Date?
     @Published public private(set) var environmentStatus: OpenClawEnvironmentStatus = .checking
     @Published public private(set) var channels: [ChannelInfo] = []
+    @Published public private(set) var channelStatus: ChannelsStatusResult?
     @Published public private(set) var availableModels: [String] = []
     @Published public private(set) var activeSessions: [ActiveSessionInfo] = []
     @Published public private(set) var lastHealth: OpenClawGatewayHealth?
@@ -367,8 +369,14 @@ public final class OpenClawManager: ObservableObject {
         guard isConnected else { return }
 
         do {
-            let channelPayload = try await gatewayChannelsStatus()
-            channels = channelPayload.map(channelInfo(from:)).sorted { $0.name < $1.name }
+            if let detailedStatus = try await gatewayChannelsStatusDetailed() {
+                channelStatus = detailedStatus
+                channels = channelInfos(from: detailedStatus)
+            } else {
+                let channelPayload = try await gatewayChannelsStatus()
+                channels = channelPayload.map(channelInfo(from:)).sorted { $0.name < $1.name }
+                channelStatus = nil
+            }
 
             let models = try await gatewayModelsList()
             if models != availableModels {
@@ -458,6 +466,7 @@ public final class OpenClawManager: ObservableObject {
         heartbeatLastTimestamp = nil
         connectionState = .disconnected
         channels = []
+        channelStatus = nil
         availableModels = []
         activeSessions = []
         lastHealth = nil
@@ -886,6 +895,42 @@ public final class OpenClawManager: ObservableObject {
             return try await hooks.channelsStatus()
         }
         return try await OpenClawGatewayConnection.shared.channelsStatus()
+    }
+
+    private func gatewayChannelsStatusDetailed() async throws -> ChannelsStatusResult? {
+        if let hooks = Self.gatewayHooks {
+            if let detailed = hooks.channelsStatusDetailed {
+                return try await detailed()
+            }
+            return nil
+        }
+        return try await OpenClawGatewayConnection.shared.channelsStatusDetailed()
+    }
+
+    private func channelInfos(from snapshot: ChannelsStatusResult) -> [ChannelInfo] {
+        var ids = snapshot.channelOrder
+        let knownIDs = Set(ids)
+        let discoveredIDs = snapshot.channelAccounts.keys.sorted().filter { !knownIDs.contains($0) }
+        ids.append(contentsOf: discoveredIDs)
+
+        let metaByID = Dictionary(uniqueKeysWithValues: snapshot.channelMeta.map { ($0.id, $0) })
+        return ids.map { id in
+            let accounts = snapshot.channelAccounts[id] ?? []
+            let linked = accounts.contains { $0.linked || $0.configured }
+            let connected = accounts.contains { $0.connected || $0.running }
+            let name = metaByID[id]?.label ?? snapshot.channelLabels[id] ?? id.capitalized
+            let systemImage =
+                metaByID[id]?.systemImage
+                ?? snapshot.channelSystemImages[id]
+                ?? "antenna.radiowaves.left.and.right"
+            return ChannelInfo(
+                id: id,
+                name: name,
+                systemImage: systemImage,
+                isLinked: linked,
+                isConnected: connected
+            )
+        }
     }
 
     private func gatewayModelsList() async throws -> [String] {

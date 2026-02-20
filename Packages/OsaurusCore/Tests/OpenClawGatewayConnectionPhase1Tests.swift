@@ -229,4 +229,56 @@ struct OpenClawGatewayConnectionPhase1Tests {
         #expect(call.params?["platform"]?.value as? String == "macos")
         #expect((call.params?["roles"]?.value as? [String])?.contains("chat-client") == true)
     }
+
+    @Test
+    func channelsStatusDetailed_decodesMetaAndAccountSnapshots() async throws {
+        let recorder = OpenClawGatewayCallRecorder()
+        let connection = OpenClawGatewayConnection { method, params in
+            await recorder.record(method: method, params: params)
+            let payload: [String: Any] = [
+                "channelOrder": ["telegram"],
+                "channelLabels": ["telegram": "Telegram"],
+                "channelSystemImages": ["telegram": "paperplane.fill"],
+                "channelMeta": [
+                    [
+                        "id": "telegram",
+                        "label": "Telegram",
+                        "detailLabel": "Bot",
+                        "systemImage": "paperplane.fill"
+                    ]
+                ],
+                "channelDefaultAccountId": ["telegram": "acct-1"],
+                "channelAccounts": [
+                    "telegram": [
+                        [
+                            "accountId": "acct-1",
+                            "name": "Primary",
+                            "enabled": true,
+                            "configured": true,
+                            "linked": true,
+                            "running": true,
+                            "connected": true,
+                            "lastInboundAt": 1_708_345_600_000
+                        ]
+                    ]
+                ]
+            ]
+            return try JSONSerialization.data(withJSONObject: payload)
+        }
+
+        let result = try await connection.channelsStatusDetailed()
+        let summarized = try await connection.channelsStatus()
+
+        let call = try #require(await recorder.last())
+        #expect(call.method == "channels.status")
+        #expect(result.channelOrder == ["telegram"])
+        #expect(result.channelMeta.first?.id == "telegram")
+        #expect(result.channelAccounts["telegram"]?.first?.connected == true)
+        #expect(result.channelAccounts["telegram"]?.first?.lastInboundAt != nil)
+
+        #expect(summarized.count == 1)
+        #expect(summarized.first?["id"]?.value as? String == "telegram")
+        #expect(summarized.first?["isLinked"]?.value as? Bool == true)
+        #expect(summarized.first?["isConnected"]?.value as? Bool == true)
+    }
 }
