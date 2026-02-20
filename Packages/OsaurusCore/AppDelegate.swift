@@ -21,6 +21,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
     private var activityDot: NSView?
     private var vadDot: NSView?
+    private var openClawDot: NSView?
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
@@ -107,6 +108,26 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 layer.borderColor = NSColor.white.withAlphaComponent(0.9).cgColor
             }
             vadDot = vDot
+
+            // OpenClaw connection indicator (green connected / orange reconnecting).
+            let clawDot = NSView()
+            clawDot.wantsLayer = true
+            clawDot.translatesAutoresizingMaskIntoConstraints = false
+            clawDot.isHidden = true
+            button.addSubview(clawDot)
+            NSLayoutConstraint.activate([
+                clawDot.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 3),
+                clawDot.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: -3),
+                clawDot.widthAnchor.constraint(equalToConstant: 7),
+                clawDot.heightAnchor.constraint(equalToConstant: 7),
+            ])
+            if let layer = clawDot.layer {
+                layer.backgroundColor = NSColor.systemGreen.cgColor
+                layer.cornerRadius = 3.5
+                layer.borderWidth = 1
+                layer.borderColor = NSColor.white.withAlphaComponent(0.9).cgColor
+            }
+            openClawDot = clawDot
         }
         statusItem = item
         updateStatusItemAndMenu()
@@ -452,6 +473,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             }
             .store(in: &cancellables)
 
+        NotificationCenter.default.addObserver(
+            forName: .openClawConnectionChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.updateStatusItemAndMenu()
+        }
+
         // Publish shared configuration on state/config/address changes
         Publishers.CombineLatest3(
             serverController.$serverHealth,
@@ -563,6 +592,38 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                         layer.removeAnimation(forKey: "vadPulse")
                     }
                     vDot.isHidden = true
+                }
+            }
+
+            let openClawManager = OpenClawManager.shared
+            if let clawDot = openClawDot {
+                let connectionState = openClawManager.connectionState
+                let shouldShowOpenClawDot = {
+                    if case .connected = connectionState {
+                        return true
+                    }
+                    if case .reconnecting = connectionState {
+                        return true
+                    }
+                    return false
+                }()
+                let isReconnectingState = {
+                    if case .reconnecting = connectionState {
+                        return true
+                    }
+                    return false
+                }()
+
+                if !openClawManager.configuration.isEnabled || !shouldShowOpenClawDot {
+                    clawDot.isHidden = true
+                    if let layer = clawDot.layer {
+                        layer.removeAnimation(forKey: "openClawPulse")
+                    }
+                } else {
+                    clawDot.isHidden = false
+                    if let layer = clawDot.layer {
+                        layer.backgroundColor = isReconnectingState ? NSColor.systemOrange.cgColor : NSColor.systemGreen.cgColor
+                    }
                 }
             }
 
