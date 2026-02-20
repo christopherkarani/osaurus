@@ -24,6 +24,10 @@ private actor OpenClawGatewayCallRecorder {
     func last() -> Call? {
         calls.last
     }
+
+    func all() -> [Call] {
+        calls
+    }
 }
 
 private actor OpenClawGatewayEventBox {
@@ -35,6 +39,18 @@ private actor OpenClawGatewayEventBox {
 
     func get() -> EventFrame? {
         frame
+    }
+}
+
+private actor OpenClawGapReconnectGate {
+    private var allowAgentWait = false
+
+    func setAllowAgentWait(_ value: Bool) {
+        allowAgentWait = value
+    }
+
+    func canAgentWait() -> Bool {
+        allowAgentWait
     }
 }
 
@@ -228,6 +244,7 @@ struct OpenClawGatewayConnectionPhase1Tests {
         #expect(call.params?["text"]?.value as? String == "Node: Osaurus")
         #expect(call.params?["platform"]?.value as? String == "macos")
         #expect((call.params?["roles"]?.value as? [String])?.contains("chat-client") == true)
+        #expect((call.params?["scopes"]?.value as? [String])?.contains("operator.admin") == true)
     }
 
     @Test
@@ -333,5 +350,109 @@ struct OpenClawGatewayConnectionPhase1Tests {
         let call = try #require(await recorder.last())
         #expect(call.method == "wizard.cancel")
         #expect(call.params?["sessionId"]?.value as? String == "wizard-1")
+    }
+
+    @Test
+    func registerSequenceGap_refreshesEvenAfterLifecycleEndRemovesActiveRun() async throws {
+        let recorder = OpenClawGatewayCallRecorder()
+        let connection = OpenClawGatewayConnection { method, params in
+            await recorder.record(method: method, params: params)
+            switch method {
+            case "agent.wait":
+                return try JSONSerialization.data(
+                    withJSONObject: ["runId": "gap-run", "status": "completed"]
+                )
+            default:
+                return try JSONSerialization.data(withJSONObject: [:])
+            }
+        }
+
+        // First event maps run -> session.
+        await connection._testEmitPush(
+            .event(
+                makeEventFrame(
+                    event: "agent.event",
+                    payload: [
+                        "runId": "gap-run",
+                        "seq": 1,
+                        "stream": "assistant",
+                        "sessionKey": "agent:main:test",
+                        "data": ["text": "hello"]
+                    ],
+                    seq: 1
+                )
+            )
+        )
+
+        // Lifecycle end removes active run tracking.
+        await connection._testEmitPush(
+            .event(
+                makeEventFrame(
+                    event: "agent.event",
+                    payload: [
+                        "runId": "gap-run",
+                        "seq": 2,
+                        "stream": "lifecycle",
+                        "data": ["phase": "end"]
+                    ],
+                    seq: 2
+                )
+            )
+        )
+
+        // Gap resync must still refresh this run even after lifecycle end.
+        await connection.registerSequenceGap(runId: "gap-run", expectedSeq: 2, receivedSeq: 4)
+
+        let calls = await recorder.all()
+        #expect(
+            calls.contains { call in
+                guard call.method == "agent.wait" else { return false }
+                return call.params?["runId"]?.value as? String == "gap-run"
+            }
+        )
+    }
+
+    @Test
+    func registerSequenceGap_gapResyncSurvivesReconnectInterleaving() async throws {
+        let recorder = OpenClawGatewayCallRecorder()
+        let gate = OpenClawGapReconnectGate()
+
+        let connection = OpenClawGatewayConnection(
+            requestExecutor: { method, params in
+                await recorder.record(method: method, params: params)
+                if method == "agent.wait" {
+                    if await gate.canAgentWait() {
+                        return try JSONSerialization.data(
+                            withJSONObject: ["runId": "run-reconnect-gap", "status": "timeout"]
+                        )
+                    }
+                    throw OpenClawConnectionError.noChannel
+                }
+                return try JSONSerialization.data(withJSONObject: [:])
+            },
+            reconnectConnectHook: { _, _, _ in
+                await gate.setAllowAgentWait(true)
+            },
+            sleepHook: { _ in }
+        )
+
+        await connection._testSetReconnectContext(host: "127.0.0.1", port: 18789, token: "token")
+        await connection._testSetConnected(true)
+
+        // Initial attempt races/fails before reconnect path is active.
+        await connection.registerSequenceGap(runId: "run-reconnect-gap", expectedSeq: 10, receivedSeq: 12)
+
+        // Unexpected disconnect triggers reconnect and post-reconnect refresh.
+        await connection._testTriggerDisconnect(reason: "receive failed: close code=1008 slow consumer")
+        await connection._testWaitForReconnectCompletion()
+
+        let calls = await recorder.all()
+        let waitCalls = calls.filter { $0.method == "agent.wait" }
+        #expect(waitCalls.count >= 2)
+        #expect(
+            waitCalls.contains { call in
+                call.params?["runId"]?.value as? String == "run-reconnect-gap"
+            }
+        )
     }
 }

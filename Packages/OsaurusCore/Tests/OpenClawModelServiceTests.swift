@@ -24,6 +24,10 @@ private actor OpenClawModelServiceCallRecorder {
     func all() -> [Call] {
         calls
     }
+
+    func contains(method: String) -> Bool {
+        calls.contains { $0.method == method }
+    }
 }
 
 private func encodeJSONObject(_ object: Any) throws -> Data {
@@ -37,6 +41,41 @@ struct OpenClawModelServiceTests {
         topPOverride: nil,
         repetitionPenalty: nil
     )
+
+    private func waitForCall(
+        _ method: String,
+        recorder: OpenClawModelServiceCallRecorder,
+        timeoutNanoseconds: UInt64 = 1_000_000_000,
+        pollIntervalNanoseconds: UInt64 = 10_000_000
+    ) async -> Bool {
+        let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
+        while DispatchTime.now().uptimeNanoseconds < deadline {
+            if await recorder.contains(method: method) {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: pollIntervalNanoseconds)
+        }
+        return await recorder.contains(method: method)
+    }
+
+    private func waitForCallCount(
+        _ method: String,
+        minimumCount: Int,
+        recorder: OpenClawModelServiceCallRecorder,
+        timeoutNanoseconds: UInt64 = 1_000_000_000,
+        pollIntervalNanoseconds: UInt64 = 10_000_000
+    ) async -> Bool {
+        let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
+        while DispatchTime.now().uptimeNanoseconds < deadline {
+            let count = await recorder.all().filter { $0.method == method }.count
+            if count >= minimumCount {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: pollIntervalNanoseconds)
+        }
+        let finalCount = await recorder.all().filter { $0.method == method }.count
+        return finalCount >= minimumCount
+    }
 
     @Test @MainActor
     func handlesOpenClawModelIdentifiers() async throws {
@@ -259,6 +298,215 @@ struct OpenClawModelServiceTests {
             Issue.record("Expected unsupported model identifier error")
         } catch {
             #expect(error.localizedDescription.contains("Unsupported OpenClaw model identifier"))
+        }
+    }
+
+    @Test @MainActor
+    func streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() async throws {
+        let recorder = OpenClawModelServiceCallRecorder()
+        let connection = OpenClawGatewayConnection { method, params in
+            await recorder.append(method: method, params: params)
+            switch method {
+            case "chat.send":
+                return try encodeJSONObject(["runId": "run-gap", "status": "started"])
+            case "agent.wait":
+                return try encodeJSONObject(["runId": "run-gap", "status": "timeout"])
+            default:
+                return try encodeJSONObject([:])
+            }
+        }
+
+        let service = OpenClawModelService(connection: connection, availabilityProvider: { true })
+        let turn = ChatTurn(role: .assistant, content: "")
+
+        let runTask = Task {
+            try await service.streamRunIntoTurn(
+                messages: [ChatMessage(role: "user", content: "Question with sequence gap")],
+                requestedModel: "openclaw:main",
+                turn: turn
+            )
+        }
+
+        await connection._testEmitPush(
+            .event(
+                makeAgentEventFrame(
+                    stream: "assistant",
+                    runId: "run-gap",
+                    seq: 1,
+                    data: ["text": "first"]
+                )
+            )
+        )
+        await connection._testEmitPush(
+            .event(
+                makeAgentEventFrame(
+                    stream: "assistant",
+                    runId: "run-gap",
+                    seq: 3,
+                    data: ["text": "third"]
+                )
+            )
+        )
+        let refreshObserved = await waitForCall("agent.wait", recorder: recorder)
+        #expect(refreshObserved)
+
+        await connection._testEmitPush(
+            .event(
+                makeAgentEventFrame(
+                    stream: "lifecycle",
+                    runId: "run-gap",
+                    seq: 4,
+                    data: ["phase": "end"]
+                )
+            )
+        )
+
+        try await runTask.value
+
+        let calls = await recorder.all()
+        #expect(calls.contains { $0.method == "agent.wait" })
+    }
+
+    @Test @MainActor
+    func streamRunIntoTurn_multipleSequenceGapsTriggerRepeatedRefreshes() async throws {
+        let recorder = OpenClawModelServiceCallRecorder()
+        let connection = OpenClawGatewayConnection { method, params in
+            await recorder.append(method: method, params: params)
+            switch method {
+            case "chat.send":
+                return try encodeJSONObject(["runId": "run-multi-gap", "status": "started"])
+            case "agent.wait":
+                return try encodeJSONObject(["runId": "run-multi-gap", "status": "timeout"])
+            default:
+                return try encodeJSONObject([:])
+            }
+        }
+
+        let service = OpenClawModelService(connection: connection, availabilityProvider: { true })
+        let turn = ChatTurn(role: .assistant, content: "")
+
+        let runTask = Task {
+            try await service.streamRunIntoTurn(
+                messages: [ChatMessage(role: "user", content: "Question with multiple gaps")],
+                requestedModel: "openclaw:main",
+                turn: turn
+            )
+        }
+
+        await connection._testEmitPush(
+            .event(
+                makeAgentEventFrame(
+                    stream: "assistant",
+                    runId: "run-multi-gap",
+                    seq: 1,
+                    data: ["text": "first"]
+                )
+            )
+        )
+        await connection._testEmitPush(
+            .event(
+                makeAgentEventFrame(
+                    stream: "assistant",
+                    runId: "run-multi-gap",
+                    seq: 3,
+                    data: ["text": "third"]
+                )
+            )
+        )
+        await connection._testEmitPush(
+            .event(
+                makeAgentEventFrame(
+                    stream: "assistant",
+                    runId: "run-multi-gap",
+                    seq: 5,
+                    data: ["text": "fifth"]
+                )
+            )
+        )
+
+        let observedTwoRefreshes = await waitForCallCount(
+            "agent.wait",
+            minimumCount: 2,
+            recorder: recorder
+        )
+        #expect(observedTwoRefreshes)
+
+        await connection._testEmitPush(
+            .event(
+                makeAgentEventFrame(
+                    stream: "lifecycle",
+                    runId: "run-multi-gap",
+                    seq: 6,
+                    data: ["phase": "end"]
+                )
+            )
+        )
+
+        try await runTask.value
+    }
+
+    @Test @MainActor
+    func streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() async throws {
+        for iteration in 1...10 {
+            let runId = "run-gap-stability-\(iteration)"
+            let recorder = OpenClawModelServiceCallRecorder()
+            let connection = OpenClawGatewayConnection { method, params in
+                await recorder.append(method: method, params: params)
+                switch method {
+                case "chat.send":
+                    return try encodeJSONObject(["runId": runId, "status": "started"])
+                case "agent.wait":
+                    return try encodeJSONObject(["runId": runId, "status": "timeout"])
+                default:
+                    return try encodeJSONObject([:])
+                }
+            }
+
+            let service = OpenClawModelService(connection: connection, availabilityProvider: { true })
+            let turn = ChatTurn(role: .assistant, content: "")
+
+            let runTask = Task {
+                try await service.streamRunIntoTurn(
+                    messages: [ChatMessage(role: "user", content: "Immediate end gap test \(iteration)")],
+                    requestedModel: "openclaw:main",
+                    turn: turn
+                )
+            }
+
+            await connection._testEmitPush(
+                .event(
+                    makeAgentEventFrame(
+                        stream: "assistant",
+                        runId: runId,
+                        seq: 1,
+                        data: ["text": "first"]
+                    )
+                )
+            )
+            await connection._testEmitPush(
+                .event(
+                    makeAgentEventFrame(
+                        stream: "assistant",
+                        runId: runId,
+                        seq: 3,
+                        data: ["text": "gap"]
+                    )
+                )
+            )
+            await connection._testEmitPush(
+                .event(
+                    makeAgentEventFrame(
+                        stream: "lifecycle",
+                        runId: runId,
+                        seq: 4,
+                        data: ["phase": "end"]
+                    )
+                )
+            )
+
+            try await runTask.value
+            let observedRefresh = await waitForCall("agent.wait", recorder: recorder)
+            #expect(observedRefresh)
         }
     }
 }
