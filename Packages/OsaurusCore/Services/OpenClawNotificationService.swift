@@ -5,6 +5,8 @@
 
 import AppKit
 import Foundation
+import OpenClawKit
+import OpenClawProtocol
 import UserNotifications
 
 @MainActor
@@ -47,8 +49,6 @@ public final class OpenClawNotificationService {
         pollTask?.cancel()
         pollTask = nil
         listeningStartedAt = nil
-        unreadCount = 0
-        setDockBadge(nil)
     }
 
     public func markAllAsRead() {
@@ -59,6 +59,19 @@ public final class OpenClawNotificationService {
 
     public func ingestStatus(_ status: ChannelsStatusResult) {
         process(status)
+    }
+
+    public func ingestEvent(_ frame: EventFrame) {
+        guard listeningStartedAt != nil else { return }
+        guard let inbound = decodeInboundEvent(frame) else { return }
+        processInbound(
+            channelId: inbound.channelId,
+            accountId: inbound.accountId,
+            channelLabel: inbound.channelLabel,
+            sender: inbound.sender,
+            inboundAt: inbound.inboundAt,
+            body: inbound.body
+        )
     }
 
     private func pollAndProcessStatus() async {
@@ -76,24 +89,122 @@ public final class OpenClawNotificationService {
             for account in accounts {
                 guard account.linked || account.connected || account.running else { continue }
                 guard let inbound = account.lastInboundAt else { continue }
-
-                let key = "\(channelId)::\(account.accountId)"
-                if let previous = lastInboundByAccount[key], previous >= inbound {
-                    continue
-                }
-
-                if shouldNotifyForInboundEvent(previous: lastInboundByAccount[key], inbound: inbound) {
-                    unreadCount += 1
-                    let sender = normalized(account.name) ?? account.accountId
-                    let title = "\(channelLabel) - \(sender)"
-                    let body = String("New inbound message received.".prefix(100))
-                    postNotification(channelId: channelId, title: title, body: body)
-                    setDockBadge(unreadCount > 0 ? "\(unreadCount)" : nil)
-                }
-
-                lastInboundByAccount[key] = inbound
+                processInbound(
+                    channelId: channelId,
+                    accountId: account.accountId,
+                    channelLabel: channelLabel,
+                    sender: normalized(account.name) ?? account.accountId,
+                    inboundAt: inbound,
+                    body: "New inbound message received."
+                )
             }
         }
+    }
+
+    private struct InboundEvent {
+        let channelId: String
+        let accountId: String
+        let channelLabel: String
+        let sender: String
+        let body: String
+        let inboundAt: Date
+    }
+
+    private func decodeInboundEvent(_ frame: EventFrame) -> InboundEvent? {
+        let eventName = frame.event.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard eventName.contains("inbound") || eventName.contains("message.in") else {
+            return nil
+        }
+
+        guard let payload = frame.payload?.value as? [String: OpenClawProtocol.AnyCodable] else {
+            return nil
+        }
+
+        let data = dictionaryValue(payload["data"]?.value)
+        let channelId = normalized(
+            stringValue(payload["channel"]?.value)
+                ?? stringValue(payload["channelId"]?.value)
+                ?? stringValue(payload["provider"]?.value)
+                ?? stringValue(data?["channel"]?.value)
+                ?? stringValue(data?["channelId"]?.value)
+                ?? stringValue(data?["provider"]?.value)
+        ) ?? "unknown"
+        let channelLabel = normalized(
+            stringValue(payload["channelLabel"]?.value)
+                ?? stringValue(data?["channelLabel"]?.value)
+                ?? channelId.capitalized
+        ) ?? channelId.capitalized
+        let accountId = normalized(
+            stringValue(payload["accountId"]?.value)
+                ?? stringValue(data?["accountId"]?.value)
+                ?? stringValue(data?["account"]?.value)
+                ?? "default"
+        ) ?? "default"
+        let sender = normalized(
+            stringValue(payload["sender"]?.value)
+                ?? stringValue(payload["from"]?.value)
+                ?? stringValue(payload["name"]?.value)
+                ?? stringValue(data?["sender"]?.value)
+                ?? stringValue(data?["from"]?.value)
+                ?? stringValue(data?["name"]?.value)
+                ?? accountId
+        ) ?? accountId
+        let body = normalized(
+            stringValue(payload["text"]?.value)
+                ?? stringValue(payload["preview"]?.value)
+                ?? stringValue(payload["body"]?.value)
+                ?? stringValue(data?["text"]?.value)
+                ?? stringValue(data?["preview"]?.value)
+                ?? stringValue(data?["body"]?.value)
+                ?? "New inbound message received."
+        ) ?? "New inbound message received."
+
+        let inboundAt = dateValue(
+            payload["ts"]?.value
+                ?? payload["timestamp"]?.value
+                ?? data?["ts"]?.value
+                ?? data?["timestamp"]?.value
+                ?? data?["receivedAt"]?.value
+        ) ?? Date()
+
+        return InboundEvent(
+            channelId: channelId,
+            accountId: accountId,
+            channelLabel: channelLabel,
+            sender: sender,
+            body: body,
+            inboundAt: inboundAt
+        )
+    }
+
+    private func processInbound(
+        channelId: String,
+        accountId: String,
+        channelLabel: String,
+        sender: String,
+        inboundAt: Date,
+        body: String
+    ) {
+        let normalizedInbound = Date(
+            timeIntervalSince1970: floor(inboundAt.timeIntervalSince1970 * 1000) / 1000
+        )
+        let key = "\(channelId)::\(accountId)"
+        if let previous = lastInboundByAccount[key], previous >= normalizedInbound {
+            return
+        }
+
+        if shouldNotifyForInboundEvent(previous: lastInboundByAccount[key], inbound: normalizedInbound) {
+            unreadCount += 1
+            let title = "\(channelLabel) - \(sender)"
+            postNotification(
+                channelId: channelId,
+                title: title,
+                body: String(body.prefix(100))
+            )
+            setDockBadge(unreadCount > 0 ? "\(unreadCount)" : nil)
+        }
+
+        lastInboundByAccount[key] = normalizedInbound
     }
 
     private func shouldNotifyForInboundEvent(previous: Date?, inbound: Date) -> Bool {
@@ -174,10 +285,49 @@ public final class OpenClawNotificationService {
         return value
     }
 
+    private func stringValue(_ raw: Any?) -> String? {
+        if let raw = raw as? String {
+            return raw
+        }
+        return nil
+    }
+
+    private func dictionaryValue(_ raw: Any?) -> [String: OpenClawProtocol.AnyCodable]? {
+        if let raw = raw as? [String: OpenClawProtocol.AnyCodable] {
+            return raw
+        }
+        return nil
+    }
+
+    private func dateValue(_ raw: Any?) -> Date? {
+        if let value = raw as? Date {
+            return value
+        }
+        if let value = raw as? TimeInterval, value > 0 {
+            return Date(timeIntervalSince1970: value > 10_000_000_000 ? value / 1000 : value)
+        }
+        if let value = raw as? Int, value > 0 {
+            let asDouble = Double(value)
+            return Date(timeIntervalSince1970: asDouble > 10_000_000_000 ? asDouble / 1000 : asDouble)
+        }
+        if let value = raw as? Double, value > 0 {
+            return Date(timeIntervalSince1970: value > 10_000_000_000 ? value / 1000 : value)
+        }
+        if let value = raw as? String,
+            let numeric = Double(value.trimmingCharacters(in: .whitespacesAndNewlines)),
+            numeric > 0
+        {
+            return Date(timeIntervalSince1970: numeric > 10_000_000_000 ? numeric / 1000 : numeric)
+        }
+        return nil
+    }
+
 #if DEBUG
     func _testReset() {
         stopListening()
         lastInboundByAccount = [:]
+        unreadCount = 0
+        setDockBadge(nil)
         listeningStartedAt = nil
     }
 

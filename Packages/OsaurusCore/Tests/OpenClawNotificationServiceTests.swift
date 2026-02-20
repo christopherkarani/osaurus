@@ -129,6 +129,99 @@ struct OpenClawNotificationServiceTests {
         #expect(badge == "2")
     }
 
+    @Test
+    func ingestEvent_postsNotification_andPollFallbackDedupesSameTimestamp() {
+        let service = OpenClawNotificationService.shared
+        var notifications: [(String, String, String)] = []
+        var badge: String?
+
+        OpenClawNotificationService._testSetHooks(
+            .init(
+                fetchStatus: { Self.makeStatus(lastInboundAt: Date()) },
+                postNotification: { channelId, title, body in
+                    notifications.append((channelId, title, body))
+                },
+                setDockBadge: { value in
+                    badge = value
+                },
+                sleep: { _ in }
+            )
+        )
+        defer {
+            OpenClawNotificationService._testSetHooks(nil)
+            service._testReset()
+        }
+
+        let inbound = Date()
+        service._testSetListeningStartedAt(inbound.addingTimeInterval(-1))
+
+        service.ingestEvent(
+            makeEventFrame(
+                event: "message.inbound",
+                payload: [
+                    "channel": "whatsapp",
+                    "accountId": "acct-1",
+                    "sender": "Jane",
+                    "text": "hello",
+                    "ts": inbound.timeIntervalSince1970 * 1000
+                ],
+                seq: 1
+            )
+        )
+        #expect(notifications.count == 1)
+        #expect(badge == "1")
+
+        // Same timestamp arriving via polling fallback must be deduped.
+        service.ingestStatus(Self.makeStatus(lastInboundAt: inbound))
+        #expect(notifications.count == 1)
+        #expect(badge == "1")
+    }
+
+    @Test
+    func ingestEvent_ignoresHistoricalInboundBeforeListeningBaseline() {
+        let service = OpenClawNotificationService.shared
+        var notifications: [(String, String, String)] = []
+        var badge: String?
+
+        OpenClawNotificationService._testSetHooks(
+            .init(
+                fetchStatus: { Self.makeStatus(lastInboundAt: Date()) },
+                postNotification: { channelId, title, body in
+                    notifications.append((channelId, title, body))
+                },
+                setDockBadge: { value in
+                    badge = value
+                },
+                sleep: { _ in }
+            )
+        )
+        defer {
+            OpenClawNotificationService._testSetHooks(nil)
+            service._testReset()
+        }
+
+        let baseline = Date()
+        service._testSetListeningStartedAt(baseline)
+        let stale = baseline.addingTimeInterval(-60)
+
+        service.ingestEvent(
+            makeEventFrame(
+                event: "message.inbound",
+                payload: [
+                    "channel": "whatsapp",
+                    "accountId": "acct-1",
+                    "sender": "Jane",
+                    "text": "old",
+                    "ts": stale.timeIntervalSince1970 * 1000
+                ],
+                seq: 1
+            )
+        )
+
+        #expect(notifications.isEmpty)
+        #expect(badge == nil)
+    }
+
     nonisolated private static func makeStatus(lastInboundAt: Date) -> ChannelsStatusResult {
         let account = ChannelAccountSnapshot(
             accountId: "acct-1",

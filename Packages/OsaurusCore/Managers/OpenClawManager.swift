@@ -602,6 +602,7 @@ public final class OpenClawManager: ObservableObject {
             await MainActor.run {
                 self?.activityStore.processEventFrame(frame)
                 self?.ingestActiveSessionEvent(frame)
+                self?.notificationService.ingestEvent(frame)
             }
         }
         eventListenerID = id
