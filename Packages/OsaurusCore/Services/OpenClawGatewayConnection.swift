@@ -65,9 +65,46 @@ public struct OpenClawSessionsListResponse: Codable, Sendable {
     public let sessions: [OpenClawSessionListItem]
 }
 
+public struct OpenClawHeartbeatStatus: Codable, Sendable {
+    public let enabled: Bool?
+    public let lastHeartbeatAt: Date?
+
+    public init(enabled: Bool?, lastHeartbeatAt: Date?) {
+        self.enabled = enabled
+        self.lastHeartbeatAt = lastHeartbeatAt
+    }
+}
+
 private struct OpenClawSessionsPatchResponse: Codable, Sendable {
     let ok: Bool?
     let key: String
+}
+
+public enum OpenClawGatewayConnectionState: Equatable, Sendable {
+    case disconnected
+    case connecting
+    case connected
+    case reconnecting(attempt: Int)
+    case reconnected
+    case failed(String)
+}
+
+public enum OpenClawDisconnectDisposition: Equatable, Sendable {
+    case intentional
+    case slowConsumer
+    case authFailure
+    case unexpected
+}
+
+private struct OpenClawConnectionParameters: Sendable {
+    let host: String
+    let port: Int
+    let token: String?
+}
+
+private struct AgentWaitResponse: Codable, Sendable {
+    let runId: String
+    let status: String
 }
 
 public actor OpenClawGatewayConnection {
@@ -76,69 +113,91 @@ public actor OpenClawGatewayConnection {
         _ params: [String: OpenClawProtocol.AnyCodable]?
     ) async throws -> Data
 
+    public typealias ReconnectConnectHook = @Sendable (_ host: String, _ port: Int, _ token: String?) async throws ->
+        Void
+    public typealias SleepHook = @Sendable (_ nanoseconds: UInt64) async -> Void
+    public typealias ResyncHook = @Sendable () async -> Void
+
     public static let shared = OpenClawGatewayConnection()
 
     private var channel: GatewayChannelActor?
     private var listeners: [UUID: @Sendable (GatewayPush) async -> Void] = [:]
+    private var connectionStateListeners: [UUID: @Sendable (OpenClawGatewayConnectionState) async -> Void] = [:]
     private var recentEventFrames: [EventFrame] = []
+    private var activeRunSessionKeys: [String: String] = [:]
     private var connected = false
+    private var intentionalDisconnect = false
+    private var reconnectTask: Task<Void, Never>?
+    private var connectionParameters: OpenClawConnectionParameters?
+    private var connectionState: OpenClawGatewayConnectionState = .disconnected
     private let requestExecutor: RequestExecutor?
+    private let reconnectConnectHook: ReconnectConnectHook?
+    private let sleepHook: SleepHook
+    private let reconnectResyncHook: ResyncHook?
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
     private static let maxBufferedEventFrames = 128
+    private static let reconnectBackoffSeconds = [1, 2, 4, 8, 16, 30]
+    private static let maxReconnectAttempts = 5
 
-    public init(requestExecutor: RequestExecutor? = nil) {
+    public init(
+        requestExecutor: RequestExecutor? = nil,
+        reconnectConnectHook: ReconnectConnectHook? = nil,
+        sleepHook: SleepHook? = nil,
+        reconnectResyncHook: ResyncHook? = nil
+    ) {
         self.requestExecutor = requestExecutor
+        self.reconnectConnectHook = reconnectConnectHook
+        self.sleepHook = sleepHook ?? { nanoseconds in
+            try? await Task.sleep(nanoseconds: nanoseconds)
+        }
+        self.reconnectResyncHook = reconnectResyncHook
     }
 
     public var isConnected: Bool {
         connected
     }
 
+    public var currentConnectionState: OpenClawGatewayConnectionState {
+        connectionState
+    }
+
+    public func addConnectionStateListener(
+        _ handler: @escaping @Sendable (OpenClawGatewayConnectionState) async -> Void
+    ) -> UUID {
+        let id = UUID()
+        connectionStateListeners[id] = handler
+        return id
+    }
+
+    public func removeConnectionStateListener(_ id: UUID) {
+        connectionStateListeners.removeValue(forKey: id)
+    }
+
     public func connect(host: String, port: Int, token: String?) async throws {
-        await disconnect()
-        try await assertGatewayHealth(host: host, port: port)
-
-        let wsURL = URL(string: "ws://\(host):\(port)/ws")!
-        let options = GatewayConnectOptions(
-            role: "operator",
-            scopes: ["operator.admin", "operator.approvals", "operator.pairing"],
-            caps: ["tool-events"],
-            commands: [],
-            permissions: [:],
-            clientId: "gateway-client",
-            clientMode: "ui",
-            clientDisplayName: "Osaurus",
-            includeDeviceIdentity: true
-        )
-
-        let channel = GatewayChannelActor(
-            url: wsURL,
-            token: token,
-            pushHandler: { [weak self] push in
-                await self?.handlePush(push)
-            },
-            connectOptions: options,
-            disconnectHandler: { [weak self] reason in
-                await self?.handleDisconnect(reason)
-            }
-        )
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        intentionalDisconnect = false
+        connectionParameters = OpenClawConnectionParameters(host: host, port: port, token: token)
+        await transitionConnectionState(.connecting)
+        await shutdownChannel()
 
         do {
-            try await channel.connect()
-            self.channel = channel
-            self.connected = true
+            try await performConnect(host: host, port: port, token: token)
+            await transitionConnectionState(.connected)
         } catch {
-            throw mapError(error)
+            let mapped = mapError(error)
+            await transitionConnectionState(.failed(mapped.localizedDescription))
+            throw mapped
         }
     }
 
     public func disconnect() async {
-        if let channel {
-            await channel.shutdown()
-        }
-        self.channel = nil
-        self.connected = false
+        intentionalDisconnect = true
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        await shutdownChannel()
+        await transitionConnectionState(.disconnected)
     }
 
     public func health() async throws -> [String: OpenClawProtocol.AnyCodable] {
@@ -223,7 +282,9 @@ public actor OpenClawGatewayConnection {
         )
         let params = try encodeParams(request)
         let data = try await requestRaw(method: "chat.send", params: params)
-        return try decodePayload(method: "chat.send", data: data, as: OpenClawChatSendResponse.self)
+        let payload = try decodePayload(method: "chat.send", data: data, as: OpenClawChatSendResponse.self)
+        activeRunSessionKeys[payload.runId] = sessionKey
+        return payload
     }
 
     public func chatHistory(sessionKey: String, limit: Int? = 200) async throws -> OpenClawChatHistoryResponse {
@@ -302,6 +363,44 @@ public actor OpenClawGatewayConnection {
         _ = try await requestRaw(method: "sessions.compact", params: params)
     }
 
+    public func heartbeatStatus() async throws -> OpenClawHeartbeatStatus {
+        let data = try await requestRaw(method: "heartbeat.status", params: nil)
+        let payload = try decodeJSONDictionary(method: "heartbeat.status", data: data)
+        let enabled = boolValue(payload["enabled"]?.value)
+        let lastHeartbeat = payload["lastHeartbeatAt"] ?? payload["lastHeartbeat"] ?? payload["lastRunAt"]
+        return OpenClawHeartbeatStatus(
+            enabled: enabled,
+            lastHeartbeatAt: Self.heartbeatTimestamp(from: lastHeartbeat?.value)
+        )
+    }
+
+    public func setHeartbeats(enabled: Bool) async throws {
+        let params: [String: OpenClawProtocol.AnyCodable] = [
+            "enabled": OpenClawProtocol.AnyCodable(enabled)
+        ]
+        _ = try await requestRaw(method: "set-heartbeats", params: params)
+    }
+
+    public func refresh() async {
+        let runIds = Array(activeRunSessionKeys.keys)
+        for runId in runIds {
+            let params: [String: OpenClawProtocol.AnyCodable] = [
+                "runId": OpenClawProtocol.AnyCodable(runId),
+                "timeoutMs": OpenClawProtocol.AnyCodable(0)
+            ]
+
+            guard let data = try? await requestRaw(method: "agent.wait", params: params),
+                let snapshot = try? decodePayload(method: "agent.wait", data: data, as: AgentWaitResponse.self)
+            else {
+                continue
+            }
+
+            if snapshot.status.lowercased() != "timeout" {
+                activeRunSessionKeys.removeValue(forKey: runId)
+            }
+        }
+    }
+
     public func subscribeToEvents(runId: String) -> AsyncStream<EventFrame> {
         let bufferedFrames = recentEventFrames.filter { Self.runId(for: $0) == runId }
         return AsyncStream { continuation in
@@ -330,6 +429,143 @@ public actor OpenClawGatewayConnection {
 
     public func removeEventListener(_ id: UUID) {
         listeners.removeValue(forKey: id)
+    }
+
+    private func performConnect(host: String, port: Int, token: String?) async throws {
+        try await assertGatewayHealth(host: host, port: port)
+
+        let wsURL = URL(string: "ws://\(host):\(port)/ws")!
+        let options = GatewayConnectOptions(
+            role: "operator",
+            scopes: ["operator.admin", "operator.approvals", "operator.pairing"],
+            caps: ["tool-events"],
+            commands: [],
+            permissions: [:],
+            clientId: "gateway-client",
+            clientMode: "ui",
+            clientDisplayName: "Osaurus",
+            includeDeviceIdentity: true
+        )
+
+        let newChannel = GatewayChannelActor(
+            url: wsURL,
+            token: token,
+            pushHandler: { [weak self] push in
+                await self?.handlePush(push)
+            },
+            connectOptions: options,
+            disconnectHandler: { [weak self] reason in
+                await self?.handleDisconnect(reason)
+            }
+        )
+
+        do {
+            try await newChannel.connect()
+            channel = newChannel
+            connected = true
+        } catch {
+            throw mapError(error)
+        }
+    }
+
+    private func shutdownChannel() async {
+        if let channel {
+            await channel.shutdown()
+        }
+        self.channel = nil
+        self.connected = false
+    }
+
+    private func beginReconnect(
+        after reason: String,
+        immediate: Bool
+    ) async {
+        guard reconnectTask == nil else { return }
+        guard let connectionParameters else {
+            await transitionConnectionState(.failed("OpenClaw reconnect failed: missing connection context."))
+            return
+        }
+
+        reconnectTask = Task {
+            await self.reconnectLoop(
+                parameters: connectionParameters,
+                reason: reason,
+                immediate: immediate
+            )
+        }
+    }
+
+    private func reconnectLoop(
+        parameters: OpenClawConnectionParameters,
+        reason: String,
+        immediate: Bool
+    ) async {
+        for attempt in 1...Self.maxReconnectAttempts {
+            guard !Task.isCancelled else { return }
+
+            await transitionConnectionState(.reconnecting(attempt: attempt))
+            let delay = Self.delaySeconds(forAttempt: attempt, immediateFirstAttempt: immediate)
+            if delay > 0 {
+                await sleepHook(UInt64(delay) * 1_000_000_000)
+            }
+            guard !Task.isCancelled else { return }
+
+            do {
+                await shutdownChannel()
+
+                if let reconnectConnectHook {
+                    try await reconnectConnectHook(parameters.host, parameters.port, parameters.token)
+                    connected = true
+                } else {
+                    try await performConnect(host: parameters.host, port: parameters.port, token: parameters.token)
+                }
+
+                if let reconnectResyncHook {
+                    await reconnectResyncHook()
+                } else {
+                    try? await announcePresence()
+                    await refresh()
+                }
+
+                reconnectTask = nil
+                await transitionConnectionState(.reconnected)
+                await transitionConnectionState(.connected)
+                return
+            } catch {
+                let mapped = mapError(error)
+                if case .authFailed(let message) = mapped as? OpenClawConnectionError {
+                    reconnectTask = nil
+                    await transitionConnectionState(.failed(message))
+                    return
+                }
+                if attempt == Self.maxReconnectAttempts {
+                    break
+                }
+            }
+        }
+
+        reconnectTask = nil
+        await transitionConnectionState(
+            .failed("OpenClaw disconnected and failed to reconnect after \(Self.maxReconnectAttempts) attempts: \(reason)")
+        )
+    }
+
+    private static func delaySeconds(
+        forAttempt attempt: Int,
+        immediateFirstAttempt: Bool
+    ) -> Int {
+        if immediateFirstAttempt && attempt == 1 {
+            return 0
+        }
+        let index = max(0, min(attempt - 1, reconnectBackoffSeconds.count - 1))
+        return reconnectBackoffSeconds[index]
+    }
+
+    private func transitionConnectionState(_ state: OpenClawGatewayConnectionState) async {
+        connectionState = state
+        for listener in connectionStateListeners.values {
+            await listener(state)
+        }
     }
 
     private func assertGatewayHealth(host: String, port: Int) async throws {
@@ -421,6 +657,35 @@ public actor OpenClawGatewayConnection {
         return false
     }
 
+    private static func heartbeatTimestamp(from raw: Any?) -> Date? {
+        guard let raw else { return nil }
+        if let interval = raw as? Double, interval > 0 {
+            return Date(timeIntervalSince1970: interval)
+        }
+        if let interval = raw as? Int {
+            return Date(timeIntervalSince1970: Double(interval))
+        }
+        if let timestamp = raw as? TimeInterval {
+            return Date(timeIntervalSince1970: timestamp)
+        }
+        if let string = raw as? String {
+            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                return nil
+            }
+            if let interval = Double(trimmed), interval > 0 {
+                return Date(timeIntervalSince1970: interval)
+            }
+            if let iso = ISO8601DateFormatter().date(from: trimmed) {
+                return iso
+            }
+            if let numericDate = Double(trimmed), numericDate > 0 {
+                return Date(timeIntervalSince1970: numericDate)
+            }
+        }
+        return nil
+    }
+
     private func mapError(_ error: Error) -> Error {
         if let typed = error as? OpenClawConnectionError {
             return typed
@@ -493,6 +758,86 @@ public actor OpenClawGatewayConnection {
         return nil
     }
 
+    private static func sessionKey(for frame: EventFrame) -> String? {
+        guard let payload = frame.payload?.value as? [String: OpenClawProtocol.AnyCodable] else {
+            return nil
+        }
+        if let key = payload["sessionKey"]?.value as? String, !key.isEmpty {
+            return key
+        }
+        if let data = payload["data"]?.value as? [String: OpenClawProtocol.AnyCodable],
+            let key = data["sessionKey"]?.value as? String,
+            !key.isEmpty
+        {
+            return key
+        }
+        return nil
+    }
+
+    private static func lifecyclePhase(for frame: EventFrame) -> String? {
+        guard let payload = frame.payload?.value as? [String: OpenClawProtocol.AnyCodable],
+            let stream = payload["stream"]?.value as? String,
+            stream.lowercased() == "lifecycle",
+            let data = payload["data"]?.value as? [String: OpenClawProtocol.AnyCodable],
+            let phase = data["phase"]?.value as? String
+        else {
+            return nil
+        }
+        return phase.lowercased()
+    }
+
+    private static func closeCode(in reason: String) -> Int? {
+        let pattern = #"(?:(?:close\s*)?code[\s:=]+)(\d{3,4})"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return nil
+        }
+        let nsReason = reason as NSString
+        let range = NSRange(location: 0, length: nsReason.length)
+        guard let match = regex.firstMatch(in: reason, options: [], range: range),
+            match.numberOfRanges > 1
+        else {
+            return nil
+        }
+        let value = nsReason.substring(with: match.range(at: 1))
+        return Int(value)
+    }
+
+    static func classifyDisconnect(
+        reason: String,
+        intentional: Bool
+    ) -> OpenClawDisconnectDisposition {
+        if intentional {
+            return .intentional
+        }
+
+        let lowered = reason.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if lowered.isEmpty {
+            return .unexpected
+        }
+
+        if lowered.contains("slow consumer") {
+            return .slowConsumer
+        }
+        if lowered.contains("auth") || lowered.contains("unauthorized") || lowered.contains("forbidden") {
+            return .authFailure
+        }
+
+        let code = closeCode(in: lowered)
+        switch code {
+        case 1000:
+            return .intentional
+        case 1008:
+            if lowered.contains("slow") {
+                return .slowConsumer
+            }
+            return .authFailure
+        case 1001, 1006:
+            return .unexpected
+        default:
+            return .unexpected
+        }
+    }
+
     func _testEmitPush(_ push: GatewayPush) async {
         await handlePush(push)
     }
@@ -502,6 +847,19 @@ public actor OpenClawGatewayConnection {
             recentEventFrames.append(frame)
             if recentEventFrames.count > Self.maxBufferedEventFrames {
                 recentEventFrames.removeFirst(recentEventFrames.count - Self.maxBufferedEventFrames)
+            }
+
+            if let runId = Self.runId(for: frame),
+                let sessionKey = Self.sessionKey(for: frame)
+            {
+                activeRunSessionKeys[runId] = sessionKey
+            }
+
+            if let runId = Self.runId(for: frame),
+                let lifecyclePhase = Self.lifecyclePhase(for: frame),
+                lifecyclePhase == "end" || lifecyclePhase == "error"
+            {
+                activeRunSessionKeys.removeValue(forKey: runId)
             }
         }
 
@@ -513,7 +871,9 @@ public actor OpenClawGatewayConnection {
     }
 
     private func handleDisconnect(_ reason: String) async {
+        let wasConnected = connected
         connected = false
+
         if !reason.isEmpty {
             for listener in listeners.values {
                 Task {
@@ -521,5 +881,53 @@ public actor OpenClawGatewayConnection {
                 }
             }
         }
+
+        let disposition = Self.classifyDisconnect(reason: reason, intentional: intentionalDisconnect)
+        switch disposition {
+        case .intentional:
+            await transitionConnectionState(.disconnected)
+
+        case .authFailure:
+            reconnectTask?.cancel()
+            reconnectTask = nil
+            await transitionConnectionState(.failed("Gateway authentication failed. Reconfigure credentials."))
+
+        case .slowConsumer:
+            guard wasConnected else { return }
+            await transitionConnectionState(.disconnected)
+            await beginReconnect(after: reason, immediate: true)
+
+        case .unexpected:
+            guard wasConnected else { return }
+            await transitionConnectionState(.disconnected)
+            await beginReconnect(after: reason, immediate: false)
+        }
     }
+
+#if DEBUG
+    func _testSetReconnectContext(host: String, port: Int, token: String?) {
+        connectionParameters = OpenClawConnectionParameters(host: host, port: port, token: token)
+    }
+
+    func _testSetConnected(_ value: Bool) {
+        connected = value
+    }
+
+    func _testTriggerDisconnect(reason: String) async {
+        await handleDisconnect(reason)
+    }
+
+    func _testWaitForReconnectCompletion() async {
+        if let reconnectTask {
+            _ = await reconnectTask.result
+        }
+    }
+
+    nonisolated static func _testClassifyDisconnect(
+        reason: String,
+        intentional: Bool
+    ) -> OpenClawDisconnectDisposition {
+        classifyDisconnect(reason: reason, intentional: intentional)
+    }
+#endif
 }
