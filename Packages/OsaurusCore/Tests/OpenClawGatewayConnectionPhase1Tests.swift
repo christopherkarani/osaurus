@@ -281,4 +281,57 @@ struct OpenClawGatewayConnectionPhase1Tests {
         #expect(summarized.first?["isLinked"]?.value as? Bool == true)
         #expect(summarized.first?["isConnected"]?.value as? Bool == true)
     }
+
+    @Test
+    func wizardStart_andNext_encodeExpectedParams() async throws {
+        let recorder = OpenClawGatewayCallRecorder()
+        let connection = OpenClawGatewayConnection { method, params in
+            await recorder.record(method: method, params: params)
+            switch method {
+            case "wizard.start":
+                let payload: [String: Any] = [
+                    "sessionId": "wizard-1",
+                    "done": false,
+                    "status": "running",
+                    "step": [
+                        "id": "token-input",
+                        "type": "text",
+                        "title": "Enter token",
+                        "placeholder": "Paste token"
+                    ]
+                ]
+                return try JSONSerialization.data(withJSONObject: payload)
+            case "wizard.next":
+                let payload: [String: Any] = [
+                    "done": true,
+                    "status": "done"
+                ]
+                return try JSONSerialization.data(withJSONObject: payload)
+            case "wizard.cancel":
+                let payload: [String: Any] = [
+                    "status": "cancelled"
+                ]
+                return try JSONSerialization.data(withJSONObject: payload)
+            default:
+                return try JSONSerialization.data(withJSONObject: [:])
+            }
+        }
+
+        let start = try await connection.wizardStart(mode: "local", workspace: nil)
+        #expect(start.sessionId == "wizard-1")
+        #expect(start.step?.id == "token-input")
+
+        let next = try await connection.wizardNext(
+            sessionId: start.sessionId,
+            stepId: "token-input",
+            value: OpenClawProtocol.AnyCodable("abc-token")
+        )
+        #expect(next.done == true)
+        #expect(next.status == .done)
+
+        _ = try await connection.wizardCancel(sessionId: start.sessionId)
+        let call = try #require(await recorder.last())
+        #expect(call.method == "wizard.cancel")
+        #expect(call.params?["sessionId"]?.value as? String == "wizard-1")
+    }
 }

@@ -258,6 +258,57 @@ public actor OpenClawGatewayConnection {
         _ = try await requestRaw(method: "channels.logout", params: params)
     }
 
+    public func wizardStart(
+        mode: String = "local",
+        workspace: String?
+    ) async throws -> OpenClawWizardStartResult {
+        var params: [String: OpenClawProtocol.AnyCodable] = [
+            "mode": OpenClawProtocol.AnyCodable(mode)
+        ]
+        if let workspace, !workspace.isEmpty {
+            params["workspace"] = OpenClawProtocol.AnyCodable(workspace)
+        }
+
+        let data = try await requestRaw(method: "wizard.start", params: params)
+        return try decodePayload(method: "wizard.start", data: data, as: OpenClawWizardStartResult.self)
+    }
+
+    public func wizardNext(
+        sessionId: String,
+        stepId: String,
+        value: OpenClawProtocol.AnyCodable?
+    ) async throws -> OpenClawWizardNextResult {
+        var answer: [String: OpenClawProtocol.AnyCodable] = [
+            "stepId": OpenClawProtocol.AnyCodable(stepId)
+        ]
+        if let value {
+            answer["value"] = value
+        }
+
+        let params: [String: OpenClawProtocol.AnyCodable] = [
+            "sessionId": OpenClawProtocol.AnyCodable(sessionId),
+            "answer": OpenClawProtocol.AnyCodable(answer)
+        ]
+        let data = try await requestRaw(method: "wizard.next", params: params)
+        return try decodePayload(method: "wizard.next", data: data, as: OpenClawWizardNextResult.self)
+    }
+
+    public func wizardCancel(sessionId: String) async throws -> OpenClawWizardStatusResult {
+        let params: [String: OpenClawProtocol.AnyCodable] = [
+            "sessionId": OpenClawProtocol.AnyCodable(sessionId)
+        ]
+        let data = try await requestRaw(method: "wizard.cancel", params: params)
+        return try decodePayload(method: "wizard.cancel", data: data, as: OpenClawWizardStatusResult.self)
+    }
+
+    public func wizardStatus(sessionId: String) async throws -> OpenClawWizardStatusResult {
+        let params: [String: OpenClawProtocol.AnyCodable] = [
+            "sessionId": OpenClawProtocol.AnyCodable(sessionId)
+        ]
+        let data = try await requestRaw(method: "wizard.status", params: params)
+        return try decodePayload(method: "wizard.status", data: data, as: OpenClawWizardStatusResult.self)
+    }
+
     public func modelsList() async throws -> [String] {
         let data = try await requestRaw(method: "models.list", params: nil)
         let payload = try decodePayload(method: "models.list", data: data, as: ModelsListResult.self)

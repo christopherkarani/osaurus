@@ -12,6 +12,7 @@ struct OpenClawDashboardView: View {
     @State private var showSetupWizard = false
     @State private var hasAppeared = false
     @State private var selectedChannelID: String?
+    @State private var linkingChannel: OpenClawManager.ChannelInfo?
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -48,6 +49,9 @@ struct OpenClawDashboardView: View {
         }
         .sheet(isPresented: $showSetupWizard) {
             OpenClawSetupWizardSheet(manager: manager)
+        }
+        .sheet(item: $linkingChannel) { channel in
+            OpenClawChannelLinkSheet(manager: manager, channel: channel)
         }
     }
 
@@ -142,7 +146,7 @@ struct OpenClawDashboardView: View {
                             accounts: manager.channelAccounts(for: selectedChannel.id),
                             defaultAccountId: manager.channelDefaultAccountId(for: selectedChannel.id),
                             onLinkAccount: {
-                                showSetupWizard = true
+                                linkingChannel = selectedChannel
                             },
                             onDisconnect: { accountId in
                                 Task {
