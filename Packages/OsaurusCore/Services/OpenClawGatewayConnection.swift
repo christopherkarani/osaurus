@@ -454,6 +454,46 @@ public actor OpenClawGatewayConnection {
         _ = try await requestRaw(method: "set-heartbeats", params: params)
     }
 
+    public func cronStatus() async throws -> OpenClawCronStatus {
+        let data = try await requestRaw(method: "cron.status", params: [:])
+        return try decodePayload(method: "cron.status", data: data, as: OpenClawCronStatus.self)
+    }
+
+    public func cronList(includeDisabled: Bool = true) async throws -> [OpenClawCronJob] {
+        let params: [String: OpenClawProtocol.AnyCodable] = [
+            "includeDisabled": OpenClawProtocol.AnyCodable(includeDisabled)
+        ]
+        let data = try await requestRaw(method: "cron.list", params: params)
+        let payload = try decodePayload(method: "cron.list", data: data, as: OpenClawCronListResponse.self)
+        return payload.jobs
+    }
+
+    public func cronRuns(jobId: String, limit: Int = 50) async throws -> [OpenClawCronRunLogEntry] {
+        let params: [String: OpenClawProtocol.AnyCodable] = [
+            "id": OpenClawProtocol.AnyCodable(jobId),
+            "limit": OpenClawProtocol.AnyCodable(limit)
+        ]
+        let data = try await requestRaw(method: "cron.runs", params: params)
+        let payload = try decodePayload(method: "cron.runs", data: data, as: OpenClawCronRunsResponse.self)
+        return payload.entries
+    }
+
+    public func cronRun(jobId: String, mode: String = "force") async throws {
+        let params: [String: OpenClawProtocol.AnyCodable] = [
+            "id": OpenClawProtocol.AnyCodable(jobId),
+            "mode": OpenClawProtocol.AnyCodable(mode)
+        ]
+        _ = try await requestRaw(method: "cron.run", params: params)
+    }
+
+    public func cronSetEnabled(jobId: String, enabled: Bool) async throws {
+        let params: [String: OpenClawProtocol.AnyCodable] = [
+            "id": OpenClawProtocol.AnyCodable(jobId),
+            "patch": OpenClawProtocol.AnyCodable(["enabled": enabled])
+        ]
+        _ = try await requestRaw(method: "cron.update", params: params)
+    }
+
     public func refresh() async {
         let runIds = Array(activeRunSessionKeys.keys)
         for runId in runIds {

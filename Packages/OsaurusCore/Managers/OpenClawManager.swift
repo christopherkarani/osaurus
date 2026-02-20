@@ -67,6 +67,11 @@ public final class OpenClawManager: ObservableObject {
         var health: @Sendable () async throws -> GatewayPayload
         var heartbeatStatus: (@Sendable () async throws -> OpenClawHeartbeatStatus)?
         var setHeartbeats: (@Sendable (Bool) async throws -> Void)?
+        var cronStatus: (@Sendable () async throws -> OpenClawCronStatus)? = nil
+        var cronList: (@Sendable () async throws -> [OpenClawCronJob])? = nil
+        var cronRuns: (@Sendable (_ jobId: String, _ limit: Int) async throws -> [OpenClawCronRunLogEntry])? = nil
+        var cronRun: (@Sendable (_ jobId: String) async throws -> Void)? = nil
+        var cronSetEnabled: (@Sendable (_ jobId: String, _ enabled: Bool) async throws -> Void)? = nil
     }
 
     nonisolated(unsafe) static var gatewayHooks: GatewayHooks?
@@ -169,6 +174,9 @@ public final class OpenClawManager: ObservableObject {
     @Published public private(set) var channels: [ChannelInfo] = []
     @Published public private(set) var channelStatus: ChannelsStatusResult?
     @Published public private(set) var availableModels: [String] = []
+    @Published public private(set) var cronStatus: OpenClawCronStatus?
+    @Published public private(set) var cronJobs: [OpenClawCronJob] = []
+    @Published public private(set) var cronRunsByJobID: [String: [OpenClawCronRunLogEntry]] = [:]
     @Published public private(set) var activeSessions: [ActiveSessionInfo] = []
     @Published public private(set) var lastHealth: OpenClawGatewayHealth?
     @Published public private(set) var lastError: String?
@@ -421,6 +429,36 @@ public final class OpenClawManager: ObservableObject {
         await refreshStatus()
     }
 
+    public func refreshCron() async {
+        guard isConnected else { return }
+        do {
+            cronStatus = try await gatewayCronStatus()
+            cronJobs = try await gatewayCronList()
+        } catch {
+            lastError = "Cron refresh failed: \(error.localizedDescription)"
+        }
+    }
+
+    public func refreshCronRuns(jobId: String, limit: Int = 50) async {
+        guard isConnected else { return }
+        do {
+            cronRunsByJobID[jobId] = try await gatewayCronRuns(jobId: jobId, limit: limit)
+        } catch {
+            lastError = "Cron run history failed: \(error.localizedDescription)"
+        }
+    }
+
+    public func runCronJob(jobId: String) async throws {
+        try await gatewayCronRun(jobId: jobId)
+        await refreshCronRuns(jobId: jobId)
+        await refreshCron()
+    }
+
+    public func setCronJobEnabled(jobId: String, enabled: Bool) async throws {
+        try await gatewayCronSetEnabled(jobId: jobId, enabled: enabled)
+        await refreshCron()
+    }
+
     public func setHeartbeat(enabled: Bool) async throws {
         do {
             try await gatewaySetHeartbeats(enabled: enabled)
@@ -492,6 +530,9 @@ public final class OpenClawManager: ObservableObject {
         channels = []
         channelStatus = nil
         availableModels = []
+        cronStatus = nil
+        cronJobs = []
+        cronRunsByJobID = [:]
         activeSessions = []
         lastHealth = nil
         trackedPID = nil
@@ -989,6 +1030,43 @@ public final class OpenClawManager: ObservableObject {
             return
         }
         try await OpenClawGatewayConnection.shared.setHeartbeats(enabled: enabled)
+    }
+
+    private func gatewayCronStatus() async throws -> OpenClawCronStatus {
+        if let hooks = Self.gatewayHooks, let cronStatus = hooks.cronStatus {
+            return try await cronStatus()
+        }
+        return try await OpenClawGatewayConnection.shared.cronStatus()
+    }
+
+    private func gatewayCronList() async throws -> [OpenClawCronJob] {
+        if let hooks = Self.gatewayHooks, let cronList = hooks.cronList {
+            return try await cronList()
+        }
+        return try await OpenClawGatewayConnection.shared.cronList()
+    }
+
+    private func gatewayCronRuns(jobId: String, limit: Int) async throws -> [OpenClawCronRunLogEntry] {
+        if let hooks = Self.gatewayHooks, let cronRuns = hooks.cronRuns {
+            return try await cronRuns(jobId, limit)
+        }
+        return try await OpenClawGatewayConnection.shared.cronRuns(jobId: jobId, limit: limit)
+    }
+
+    private func gatewayCronRun(jobId: String) async throws {
+        if let hooks = Self.gatewayHooks, let cronRun = hooks.cronRun {
+            try await cronRun(jobId)
+            return
+        }
+        try await OpenClawGatewayConnection.shared.cronRun(jobId: jobId)
+    }
+
+    private func gatewayCronSetEnabled(jobId: String, enabled: Bool) async throws {
+        if let hooks = Self.gatewayHooks, let cronSetEnabled = hooks.cronSetEnabled {
+            try await cronSetEnabled(jobId, enabled)
+            return
+        }
+        try await OpenClawGatewayConnection.shared.cronSetEnabled(jobId: jobId, enabled: enabled)
     }
 
     private func gatewayChannelsLogout(channelId: String, accountId: String?) async throws {

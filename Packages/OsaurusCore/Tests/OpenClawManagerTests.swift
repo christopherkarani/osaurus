@@ -164,4 +164,86 @@ struct OpenClawManagerTests {
         #expect(channelId == "telegram")
         #expect(accountId == "acct-1")
     }
+
+    @Test
+    func refreshCron_populatesStatusAndJobsFromHooks() async {
+        let manager = OpenClawManager.shared
+        let job = OpenClawCronJob(
+            id: "job-1",
+            name: "Hourly check",
+            description: nil,
+            enabled: true,
+            schedule: OpenClawCronSchedule(kind: .every, at: nil, everyMs: 3_600_000, expr: nil, tz: nil),
+            state: OpenClawCronJobState(lastStatus: "ok")
+        )
+
+        OpenClawManager._testSetGatewayHooks(
+            .init(
+                channelsStatus: { [] },
+                modelsList: { [] },
+                health: { [:] },
+                cronStatus: {
+                    OpenClawCronStatus(
+                        enabled: true,
+                        jobs: 1,
+                        storePath: "/tmp/cron.json",
+                        nextWakeAt: Date(timeIntervalSince1970: 1_708_345_600)
+                    )
+                },
+                cronList: { [job] }
+            )
+        )
+        defer { OpenClawManager._testSetGatewayHooks(nil) }
+
+        manager._testSetConnectionState(.connected, gatewayStatus: .running)
+        await manager.refreshCron()
+
+        #expect(manager.cronStatus?.enabled == true)
+        #expect(manager.cronStatus?.jobs == 1)
+        #expect(manager.cronJobs.count == 1)
+        #expect(manager.cronJobs.first?.id == "job-1")
+    }
+
+    @Test
+    func setCronJobEnabled_routesThroughGatewayHook() async {
+        let manager = OpenClawManager.shared
+
+        actor Recorder {
+            var jobId: String?
+            var enabled: Bool?
+
+            func record(jobId: String, enabled: Bool) {
+                self.jobId = jobId
+                self.enabled = enabled
+            }
+
+            func values() -> (String?, Bool?) {
+                (jobId, enabled)
+            }
+        }
+        let recorder = Recorder()
+
+        OpenClawManager._testSetGatewayHooks(
+            .init(
+                channelsStatus: { [] },
+                modelsList: { [] },
+                health: { [:] },
+                cronStatus: {
+                    OpenClawCronStatus(enabled: true, jobs: 0, storePath: nil, nextWakeAt: nil)
+                },
+                cronList: { [] },
+                cronSetEnabled: { jobId, enabled in
+                    await recorder.record(jobId: jobId, enabled: enabled)
+                }
+            )
+        )
+        defer { OpenClawManager._testSetGatewayHooks(nil) }
+
+        manager._testSetConnectionState(.connected, gatewayStatus: .running)
+        try? await manager.setCronJobEnabled(jobId: "job-2", enabled: false)
+
+        let (jobId, enabled) = await recorder.values()
+        #expect(jobId == "job-2")
+        #expect(enabled == false)
+    }
 }
