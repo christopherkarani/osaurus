@@ -180,6 +180,7 @@ public final class OpenClawManager: ObservableObject {
     private var eventListenerID: UUID?
     private var runToSessionKey: [String: String] = [:]
     private var gatewayConnectionListenerID: UUID?
+    private let notificationService = OpenClawNotificationService.shared
     private static func emitDefaultToastEvent(_ event: ToastEvent) {
         switch event {
         case .started:
@@ -373,6 +374,7 @@ public final class OpenClawManager: ObservableObject {
             if let detailedStatus = try await gatewayChannelsStatusDetailed() {
                 channelStatus = detailedStatus
                 channels = channelInfos(from: detailedStatus)
+                notificationService.ingestStatus(detailedStatus)
             } else {
                 let channelPayload = try await gatewayChannelsStatus()
                 channels = channelPayload.map(channelInfo(from:)).sorted { $0.name < $1.name }
@@ -494,6 +496,7 @@ public final class OpenClawManager: ObservableObject {
         lastHealth = nil
         trackedPID = nil
         runToSessionKey = [:]
+        notificationService.stopListening()
 
         if configuration.isEnabled {
             phase = gatewayStatus == .running ? .gatewayRunning : .configured
@@ -542,6 +545,7 @@ public final class OpenClawManager: ObservableObject {
             connectionState = .disconnected
             phase = gatewayStatus == .running ? .gatewayRunning : .configured
             stopHealthMonitoring()
+            notificationService.stopListening()
             heartbeatEnabled = true
             heartbeatLastTimestamp = nil
 
@@ -556,6 +560,7 @@ public final class OpenClawManager: ObservableObject {
             phase = .connected
             lastError = nil
             startHealthMonitoring()
+            notificationService.startListening()
             await refreshStatus()
             emitToastEvent(.connected)
 
@@ -567,6 +572,7 @@ public final class OpenClawManager: ObservableObject {
         case .reconnected:
             connectionState = .connected
             phase = .connected
+            notificationService.startListening()
             emitToastEvent(.reconnected)
             await refreshStatus()
 
@@ -575,6 +581,7 @@ public final class OpenClawManager: ObservableObject {
             phase = .connectionFailed(message)
             gatewayStatus = .failed(message)
             lastError = message
+            notificationService.stopListening()
             emitToastEvent(.failed(message))
             postGatewayStatusChanged()
         }
