@@ -246,4 +246,97 @@ struct OpenClawManagerTests {
         #expect(jobId == "job-2")
         #expect(enabled == false)
     }
+
+    @Test
+    func refreshSkills_populatesReportAndBinsFromHooks() async {
+        let manager = OpenClawManager.shared
+        let skill = OpenClawSkillStatus(
+            name: "my-skill",
+            description: "Example skill",
+            source: "local",
+            filePath: "/tmp/SKILL.md",
+            baseDir: "/tmp",
+            skillKey: "my-skill",
+            bundled: false,
+            primaryEnv: nil,
+            emoji: nil,
+            homepage: nil,
+            always: false,
+            disabled: false,
+            blockedByAllowlist: false,
+            eligible: true,
+            requirements: OpenClawSkillRequirementSet(),
+            missing: OpenClawSkillRequirementSet(),
+            configChecks: [],
+            install: []
+        )
+
+        OpenClawManager._testSetGatewayHooks(
+            .init(
+                channelsStatus: { [] },
+                modelsList: { [] },
+                health: { [:] },
+                skillsStatus: {
+                    OpenClawSkillStatusReport(
+                        workspaceDir: "/tmp/workspace",
+                        managedSkillsDir: "/tmp/managed",
+                        skills: [skill]
+                    )
+                },
+                skillsBins: { ["node", "uv"] }
+            )
+        )
+        defer { OpenClawManager._testSetGatewayHooks(nil) }
+
+        manager._testSetConnectionState(.connected, gatewayStatus: .running)
+        await manager.refreshSkills()
+
+        #expect(manager.skillsReport?.skills.count == 1)
+        #expect(manager.skillsReport?.skills.first?.skillKey == "my-skill")
+        #expect(manager.skillsBins == ["node", "uv"])
+    }
+
+    @Test
+    func updateSkillEnabled_routesThroughGatewayHook() async {
+        let manager = OpenClawManager.shared
+
+        actor Recorder {
+            var skillKey: String?
+            var enabled: Bool?
+
+            func record(skillKey: String, enabled: Bool?) {
+                self.skillKey = skillKey
+                self.enabled = enabled
+            }
+
+            func values() -> (String?, Bool?) {
+                (skillKey, enabled)
+            }
+        }
+        let recorder = Recorder()
+
+        OpenClawManager._testSetGatewayHooks(
+            .init(
+                channelsStatus: { [] },
+                modelsList: { [] },
+                health: { [:] },
+                skillsStatus: {
+                    OpenClawSkillStatusReport(workspaceDir: "/tmp", managedSkillsDir: "/tmp", skills: [])
+                },
+                skillsBins: { [] },
+                skillsUpdate: { skillKey, enabled in
+                    await recorder.record(skillKey: skillKey, enabled: enabled)
+                    return OpenClawSkillUpdateResult(ok: true, skillKey: skillKey)
+                }
+            )
+        )
+        defer { OpenClawManager._testSetGatewayHooks(nil) }
+
+        manager._testSetConnectionState(.connected, gatewayStatus: .running)
+        try? await manager.updateSkillEnabled(skillKey: "my-skill", enabled: false)
+
+        let (skillKey, enabled) = await recorder.values()
+        #expect(skillKey == "my-skill")
+        #expect(enabled == false)
+    }
 }

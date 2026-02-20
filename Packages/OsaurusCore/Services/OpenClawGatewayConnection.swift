@@ -315,6 +315,59 @@ public actor OpenClawGatewayConnection {
         return payload.models.map(\.id)
     }
 
+    public func skillsStatus(agentId: String? = nil) async throws -> OpenClawSkillStatusReport {
+        var params: [String: OpenClawProtocol.AnyCodable]?
+        if let agentId, !agentId.isEmpty {
+            params = ["agentId": OpenClawProtocol.AnyCodable(agentId)]
+        }
+        let data = try await requestRaw(method: "skills.status", params: params)
+        return try decodePayload(method: "skills.status", data: data, as: OpenClawSkillStatusReport.self)
+    }
+
+    public func skillsBins() async throws -> [String] {
+        let data = try await requestRaw(method: "skills.bins", params: [:])
+        let payload = try decodePayload(method: "skills.bins", data: data, as: OpenClawSkillBinsResponse.self)
+        return payload.bins
+    }
+
+    public func skillsInstall(
+        name: String,
+        installId: String,
+        timeoutMs: Int? = nil
+    ) async throws -> OpenClawSkillInstallResult {
+        var params: [String: OpenClawProtocol.AnyCodable] = [
+            "name": OpenClawProtocol.AnyCodable(name),
+            "installId": OpenClawProtocol.AnyCodable(installId)
+        ]
+        if let timeoutMs {
+            params["timeoutMs"] = OpenClawProtocol.AnyCodable(timeoutMs)
+        }
+        let data = try await requestRaw(method: "skills.install", params: params)
+        return try decodePayload(method: "skills.install", data: data, as: OpenClawSkillInstallResult.self)
+    }
+
+    public func skillsUpdate(
+        skillKey: String,
+        enabled: Bool? = nil,
+        apiKey: String? = nil,
+        env: [String: String]? = nil
+    ) async throws -> OpenClawSkillUpdateResult {
+        var params: [String: OpenClawProtocol.AnyCodable] = [
+            "skillKey": OpenClawProtocol.AnyCodable(skillKey)
+        ]
+        if let enabled {
+            params["enabled"] = OpenClawProtocol.AnyCodable(enabled)
+        }
+        if let apiKey {
+            params["apiKey"] = OpenClawProtocol.AnyCodable(apiKey)
+        }
+        if let env, !env.isEmpty {
+            params["env"] = OpenClawProtocol.AnyCodable(env)
+        }
+        let data = try await requestRaw(method: "skills.update", params: params)
+        return try decodePayload(method: "skills.update", data: data, as: OpenClawSkillUpdateResult.self)
+    }
+
     public func configGet() async throws -> [String: OpenClawProtocol.AnyCodable] {
         let data = try await requestRaw(method: "config.get", params: nil)
         if let raw = try? decodeJSONDictionary(method: "config.get", data: data) {
