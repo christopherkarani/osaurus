@@ -12,6 +12,40 @@ import Testing
 @Suite(.serialized)
 struct OpenClawManagerTests {
     @Test
+    func toastSink_capturesConnectionEvents() async {
+        let manager = OpenClawManager.shared
+        var events: [OpenClawManager.ToastEvent] = []
+
+        OpenClawManager._testSetGatewayHooks(
+            .init(
+                channelsStatus: { [] },
+                modelsList: { [] },
+                health: { [:] }
+            )
+        )
+        OpenClawManager._testSetToastSink { event in
+            events.append(event)
+        }
+        defer {
+            OpenClawManager._testResetToastSink()
+            OpenClawManager._testSetGatewayHooks(nil)
+        }
+
+        await manager._testHandleConnectionState(.connected)
+        await manager._testHandleConnectionState(.reconnecting(attempt: 2))
+        await manager._testHandleConnectionState(.reconnected)
+        await manager._testHandleConnectionState(.disconnected)
+        await manager._testHandleConnectionState(.failed("simulated failure"))
+
+        #expect(events.count == 5)
+        #expect(events[0] == .connected)
+        #expect(events[1] == .reconnecting(attempt: 2))
+        #expect(events[2] == .reconnected)
+        #expect(events[3] == .disconnected)
+        #expect(events[4] == .failed("simulated failure"))
+    }
+
+    @Test
     func refreshStatus_failureTransitionsToConnectionFailed() async {
         let manager = OpenClawManager.shared
         let expected = "simulated channels failure"

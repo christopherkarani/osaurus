@@ -57,6 +57,7 @@ public struct OpenClawGatewayHealth: Equatable, Sendable {
 @MainActor
 public final class OpenClawManager: ObservableObject {
     typealias GatewayPayload = [String: OpenClawProtocol.AnyCodable]
+    typealias ToastEventSink = @MainActor (ToastEvent) -> Void
 
     struct GatewayHooks {
         var channelsStatus: @Sendable () async throws -> [GatewayPayload]
@@ -79,6 +80,16 @@ public final class OpenClawManager: ObservableObject {
         case connected
         case reconnecting(attempt: Int)
         case failed(String)
+    }
+
+    public enum ToastEvent: Equatable, Sendable {
+        case started
+        case connected
+        case disconnected
+        case failed(String)
+        case reconnecting(attempt: Int)
+        case reconnected
+        case cliInstallSuccess
     }
 
     public struct ChannelInfo: Identifiable, Sendable, Equatable {
@@ -161,6 +172,27 @@ public final class OpenClawManager: ObservableObject {
     private var trackedPID: Int?
     private var eventListenerID: UUID?
     private var runToSessionKey: [String: String] = [:]
+    private var gatewayConnectionListenerID: UUID?
+    private static func emitDefaultToastEvent(_ event: ToastEvent) {
+        switch event {
+        case .started:
+            ToastManager.shared.success("OpenClaw gateway started")
+        case .connected:
+            ToastManager.shared.success("OpenClaw connected")
+        case .disconnected:
+            ToastManager.shared.warning("OpenClaw disconnected")
+        case .failed(let message):
+            ToastManager.shared.error("OpenClaw failed", message: message)
+        case .reconnecting(let attempt):
+            ToastManager.shared.info("OpenClaw reconnecting...", message: "Attempt \(attempt)")
+        case .reconnected:
+            ToastManager.shared.success("OpenClaw reconnected")
+        case .cliInstallSuccess:
+            ToastManager.shared.success("OpenClaw CLI installed successfully")
+        }
+    }
+
+    private var toastEventSink: ToastEventSink = OpenClawManager.emitDefaultToastEvent
 
     public var isConnected: Bool {
         connectionState == .connected
@@ -177,6 +209,7 @@ public final class OpenClawManager: ObservableObject {
 
         Task { [weak self] in
             await self?.checkEnvironment()
+            await self?.installConnectionStateListener()
         }
     }
 
@@ -221,6 +254,7 @@ public final class OpenClawManager: ObservableObject {
             throw error
         }
         await checkEnvironment()
+        emitToastEvent(.cliInstallSuccess)
     }
 
     public func startGateway() async throws {
@@ -256,6 +290,7 @@ public final class OpenClawManager: ObservableObject {
                 phase = isConnected ? .connected : .gatewayRunning
                 lastError = nil
                 postGatewayStatusChanged()
+                emitToastEvent(.started)
                 return
             } catch {
                 lastPollError = error.localizedDescription
@@ -268,6 +303,7 @@ public final class OpenClawManager: ObservableObject {
         phase = .gatewayFailed(message)
         lastError = message
         postGatewayStatusChanged()
+        emitToastEvent(.failed(message))
         throw NSError(domain: "OpenClawManager", code: 2, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
@@ -307,12 +343,7 @@ public final class OpenClawManager: ObservableObject {
                 token: OpenClawKeychain.getToken() ?? OpenClawKeychain.getDeviceToken()
             )
             await installEventListener()
-            connectionState = .connected
-            phase = .connected
             lastError = nil
-            startHealthMonitoring()
-            await refreshStatus()
-            postConnectionChanged()
         } catch {
             connectionState = .failed(error.localizedDescription)
             phase = .connectionFailed(error.localizedDescription)
@@ -349,6 +380,7 @@ public final class OpenClawManager: ObservableObject {
             lastError = message
             connectionState = .failed(message)
             phase = .connectionFailed(message)
+            emitToastEvent(.failed(message))
             postConnectionChanged()
         }
     }
@@ -399,7 +431,6 @@ public final class OpenClawManager: ObservableObject {
             eventListenerID = nil
         }
         await OpenClawGatewayConnection.shared.disconnect()
-
         connectionState = .disconnected
         channels = []
         availableModels = []
@@ -429,6 +460,68 @@ public final class OpenClawManager: ObservableObject {
             }
         }
         eventListenerID = id
+    }
+
+    private func installConnectionStateListener() async {
+        if let existingID = gatewayConnectionListenerID {
+            await OpenClawGatewayConnection.shared.removeConnectionStateListener(existingID)
+        }
+
+        let id = await OpenClawGatewayConnection.shared.addConnectionStateListener { [weak self] state in
+            await self?.handleConnectionState(state)
+        }
+        gatewayConnectionListenerID = id
+    }
+
+    private func emitToastEvent(_ event: ToastEvent) {
+        toastEventSink(event)
+    }
+
+    private func handleConnectionState(_ state: OpenClawGatewayConnectionState) async {
+        switch state {
+        case .disconnected:
+            if connectionState == .connected {
+                emitToastEvent(.disconnected)
+            }
+            connectionState = .disconnected
+            phase = gatewayStatus == .running ? .gatewayRunning : .configured
+            stopHealthMonitoring()
+
+        case .connecting:
+            if connectionState != .connecting {
+                phase = .connecting
+            }
+            connectionState = .connecting
+
+        case .connected:
+            connectionState = .connected
+            phase = .connected
+            lastError = nil
+            startHealthMonitoring()
+            await refreshStatus()
+            emitToastEvent(.connected)
+
+        case .reconnecting(let attempt):
+            connectionState = .reconnecting(attempt: attempt)
+            phase = .reconnecting(attempt: attempt)
+            emitToastEvent(.reconnecting(attempt: attempt))
+
+        case .reconnected:
+            connectionState = .connected
+            phase = .connected
+            emitToastEvent(.reconnected)
+            await refreshStatus()
+
+        case .failed(let message):
+            connectionState = .failed(message)
+            phase = .connectionFailed(message)
+            gatewayStatus = .failed(message)
+            lastError = message
+            emitToastEvent(.failed(message))
+            postGatewayStatusChanged()
+        }
+
+        postConnectionChanged()
     }
 
     private func startHealthMonitoring() {
@@ -785,6 +878,22 @@ public final class OpenClawManager: ObservableObject {
 #if DEBUG
     static func _testSetGatewayHooks(_ hooks: GatewayHooks?) {
         gatewayHooks = hooks
+    }
+
+    static func _testSetToastSink(_ sink: @escaping @MainActor (ToastEvent) -> Void) {
+        shared.toastEventSink = sink
+    }
+
+    static func _testResetToastSink() {
+        shared.toastEventSink = OpenClawManager.emitDefaultToastEvent
+    }
+
+    func _testHandleConnectionState(_ state: OpenClawGatewayConnectionState) async {
+        await handleConnectionState(state)
+    }
+
+    func _testEmitToast(_ event: ToastEvent) {
+        emitToastEvent(event)
     }
 
     func _testSetConnectionState(
