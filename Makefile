@@ -8,7 +8,7 @@ CONFIG := Release
 PROJECT := App/osaurus.xcodeproj
 DERIVED := build/DerivedData
 
-.PHONY: help cli app install-cli serve status clean
+.PHONY: help cli app install-cli serve status clean openclaw-coverage-gate
 
 help:
 	@echo "Targets:"
@@ -18,6 +18,7 @@ help:
 	@echo "  serve        Build CLI and start server (use PORT=XXXX, EXPOSE=1)"
 	@echo "  status       Check if server is running"
 	@echo "  clean        Remove DerivedData build output"
+	@echo "  openclaw-coverage-gate  Run OpenClaw coverage threshold gate"
 
 cli:
 	@echo "Building CLI ($(SCHEME_CLI))…"
@@ -52,3 +53,6 @@ status:
 clean:
 	rm -rf $(DERIVED)
 	@echo "Cleaned $(DERIVED)"
+
+openclaw-coverage-gate:
+	./scripts/openclaw/coverage_gate.sh

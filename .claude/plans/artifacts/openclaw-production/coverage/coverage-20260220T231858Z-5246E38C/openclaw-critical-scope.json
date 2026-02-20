@@ -1,0 +1,10 @@
+[
+  "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Services/OpenClawGatewayConnection.swift",
+  "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Services/OpenClawModelService.swift",
+  "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Services/OpenClawEventProcessor.swift",
+  "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Services/OpenClawNotificationService.swift",
+  "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Services/OpenClawSessionManager.swift",
+  "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Services/OpenClawChatHistoryLoader.swift",
+  "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Models/OpenClawChannelStatus.swift",
+  "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Models/OpenClawPresenceModels.swift"
+]

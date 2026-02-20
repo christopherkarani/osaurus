@@ -1,0 +1,347 @@
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.20s)
+Test Suite 'Selected tests' started at 2026-02-21 02:18:47.669.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-21 02:18:47.676.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-21 02:18:47.676.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-21 02:18:47.676.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawConfigurationStoreTests started.
+􀟈  Suite OpenClawSetupWizardSheetTests started.
+􀟈  Suite OpenClawGatewayConnectionPhase3SkillsTests started.
+􀟈  Suite OpenClawEventProcessorTests started.
+􀟈  Suite OpenClawGatewayConnectionPhase1Tests started.
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Suite OpenClawGatewayConnectionReconnectionTests started.
+􀟈  Suite OpenClawLaunchAgentTests started.
+􀟈  Suite OpenClawNotificationServiceTests started.
+􀟈  Suite OpenClawSessionManagerTests started.
+􀟈  Suite OpenClawActivityStoreLifecycleTests started.
+􀟈  Suite OpenClawChatHistoryLoaderTests started.
+􀟈  Suite OpenClawActivityStoreStreamingTests started.
+􀟈  Suite OpenClawManagerTests started.
+􀟈  Suite OpenClawInstallerTests started.
+􀟈  Suite OpenClawActivityStoreEdgeCaseTests started.
+􀟈  Suite OpenClawGatewayConnectionPhase3PresenceTests started.
+􀟈  Suite OpenClawConfigurationTests started.
+􀟈  Suite OpenClawActivityStoreToolTests started.
+􀟈  Suite OpenClawEnvironmentTests started.
+􀟈  Test installAction_onlyAllowedWhenCliMissing() started.
+􀟈  Test processChatDelta_extractsTextAndThinking() started.
+􀟈  Suite OpenClawGatewayConnectionPhase3CronTests started.
+􀟈  Test processAgentStreams_updatesChatTurn() started.
+􀟈  Test subscribeToEvents_filtersByRunId() started.
+􀟈  Suite OpenClawLogViewerTests started.
+􀟈  Test announcePresence_postsSystemEvent() started.
+􀟈  Suite OpenClawPhase3ViewLogicTests started.
+􀟈  Test subscribeToEvents_replaysBufferedFramesForRunId() started.
+􀟈  Suite OpenClawKeychainTests started.
+􀟈  Test chatSend_encodesParamsAndDecodesResponse() started.
+􀟈  Test loadMissing_returnsDefaults() started.
+􀟈  Test wizardStart_andNext_encodeExpectedParams() started.
+􀟈  Test sequenceGap_triggersCallback() started.
+􀟈  Test registerSequenceGap_refreshesEvenAfterLifecycleEndRemovesActiveRun() started.
+􀟈  Test channelsStatusDetailed_decodesMetaAndAccountSnapshots() started.
+􀟈  Test blockerMessage_isSpecificForKnownFailures() started.
+􀟈  Suite OpenClawChannelStatusTests started.
+􀟈  Suite ChatSessionOpenClawModeTests started.
+􀟈  Test processEvent_ignoresOtherRunIds() started.
+􀟈  Test sessionsCreate_usesPatchAndReturnsResolvedKey() started.
+􀟈  Test cliReadiness_rejectsIncompatibleAndMissingStates() started.
+􀟈  Test lifecycleEnd_clearsRunActive() started.
+􀟈  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() started.
+􀟈  Test skillsStatusAndBins_decodeExpectedPayloads() started.
+􀟈  Test loadSessions_mapsAndSortsByRecentActivity() started.
+􀟈  Test streamDeltas_throwsOnChatError() started.
+􀟈  Test streamDeltas_yieldsChatTextAndFinishes() started.
+􀟈  Test createSession_setsActiveAndRefreshesSessions() started.
+􀟈  Test lifecycleStart_finalizesActiveThinking() started.
+􀟈  Test skillsInstallAndUpdate_encodeExpectedParams() started.
+􀟈  Test lifecycleStart_setsRunActive() started.
+􀟈  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() started.
+􀟈  Test registerSequenceGap_gapResyncSurvivesReconnectInterleaving() started.
+􀟈  Test patchDeleteAndCompact_forwardToGatewayMethods() started.
+􀟈  Test streamRunIntoTurn_mapsThinkingToolAndTextEvents() started.
+􀟈  Test sessionsList_passesPhase1FlagsAndParsesRows() started.
+􀟈  Test ingestStatus_postsNotificationForFirstFreshInboundEvent() started.
+􀟈  Test loadHistory_stitchesToolResultIntoAssistantTurn() started.
+􀟈  Test handlesOpenClawModelIdentifiers() started.
+􀟈  Test streamRunIntoTurn_multipleSequenceGapsTriggerRepeatedRefreshes() started.
+􀟈  Test thinkingAndAssistant_areSeparateItems() started.
+􀟈  Test toolCallIndex_isCorrectlyMaintained() started.
+􀟈  Test thinkingFinalization_whenToolStarts() started.
+􀟈  Test commands_andStatusParsing_workWithHooks() started.
+􀟈  Test malformedEvent_missingTimestamp_isIgnored() started.
+􀟈  Test reconnectPolicy_usesExponentialBackoffAndStopsAfterMaxAttempts() started.
+􀟈  Test loadHistory_mapsUserAssistantThinkingAndText() started.
+􀟈  Test compactionDuringRun_doesNotAffectRunState() started.
+􀟈  Test assistantDeltaAccumulation_withMediaUrls() started.
+􀟈  Test multipleRuns_trackCorrectRunId() started.
+􀟈  Test loadHistory_handlesStringContentPayloads() started.
+􀟈  Test lifecycleError_surfacesMessage() started.
+􀟈  Test toastSink_capturesConnectionEvents() started.
+􀟈  Test unknownStream_doesNotCrash() started.
+􀟈  Test multipleRuns_preservesHistoryAcrossRuns() started.
+􀟈  Test compactionWillRetry_setsCorrectPhase() started.
+􀟈  Test toolUpdate_withoutStart_isIgnored() started.
+􀟈  Test reset_clearsAllState() started.
+􀟈  Test emptyDataPayload_isHandledCorrectly() started.
+􀟈  Test compactionInvalidPhase_isIgnored() started.
+􀟈  Test timestampAsInteger_isHandledCorrectly() started.
+􀟈  Test resetDuringActiveRun_finalizesStreams() started.
+􀟈  Test unknownStream_isIgnored() started.
+􀟈  Test streamDeltas_rejectsNonSessionIdentifiers() started.
+􀟈  Test reset_clearsIndexes() started.
+􀟈  Test installedLocation_detectsExecutableInSearchPaths() started.
+􀟈  Test systemPresence_normalizesStringSecondTimestamps() started.
+􀟈  Test assistantFinalization_whenLifecycleEnds() started.
+􀟈  Test malformedEvent_missingStream_isIgnored() started.
+􀟈  Test lifecycleError_updatesRunState() started.
+􀟈  Test thinkingDeltaAccumulation_producesOneItem() started.
+􀟈  Test unknownToolPhase_doesNotCreateItem() started.
+􀟈  Test systemPresence_identityFallbackPrefersDeviceThenInstanceThenHostThenIP() started.
+􀟈  Test malformedEvent_noPayload_isIgnored() started.
+􀟈  Test malformedEvent_missingRunId_isIgnored() started.
+􀟈  Test systemPresence_normalizesSecondTimestamps() started.
+􀟈  Test systemPresence_decodesConnectedClientRows() started.
+􀟈  Test toolUpdate_setsPartialResult() started.
+􀟈  Test codableRoundTrip_preservesFields() started.
+􀟈  Test toolWithStringResult_preservedAsIs() started.
+􀟈  Test bindMode_rawValueRoundTrip() started.
+􀟈  Test toolArgsSummary_generated() started.
+􀟈  Test decoder_usesDefaultsForMissingFields() started.
+􀟈  Test toolStartAndResult_correlateToSingleItem() started.
+􀟈  Test multipleToolCalls_maintainSeparateIndices() started.
+􀟈  Test toolUpdate_beforeStart_isIgnored() started.
+􀟈  Test toolStart_finalizesActiveThinking() started.
+􀟈  Test toolWithMissingToolCallId_isIgnored() started.
+􀟈  Test toolResultWithError_setsFailed() started.
+􀟈  Test cronStatusAndList_decodeTypedPayloads() started.
+􀟈  Test cronRunAndSetEnabled_encodeExpectedParams() started.
+􀟈  Test toolWithComplexResult_stringified() started.
+􀟈  Test parseLine_extractsLevelMessageTimestamp() started.
+􀟈  Test tokenAndDeviceToken_lifecycle() started.
+􀟈  Test channelsStatus_missingOptionalMapsDefaultsToEmptyCollections() started.
+􀟈  Test semver_parseAndCompare() started.
+􀟈  Test channelLinkMode_detectsQRAndTokenChannels() started.
+􀟈  Test compactionStartAndEnd_createsItems() started.
+􀟈  Test channelsStatus_decodesRichPayloadAndNormalizesDates() started.
+􁁛  Test sessionsCreate_usesPatchAndReturnsResolvedKey() passed after 0.002 seconds.
+􁁛  Test registerSequenceGap_refreshesEvenAfterLifecycleEndRemovesActiveRun() passed after 0.002 seconds.
+􁁛  Test skillsInstallAndUpdate_encodeExpectedParams() passed after 0.002 seconds.
+􁁛  Test sessionsList_passesPhase1FlagsAndParsesRows() passed after 0.002 seconds.
+􁁛  Test chatSend_encodesParamsAndDecodesResponse() passed after 0.002 seconds.
+􁁛  Test subscribeToEvents_replaysBufferedFramesForRunId() passed after 0.002 seconds.
+􁁛  Test skillsStatusAndBins_decodeExpectedPayloads() passed after 0.002 seconds.
+􀟈  Test modelRouter_resolvesOpenClawIdentifiersToGatewayService() started.
+􀟈  Test cronRuns_decodesRunEntries() started.
+􁁛  Test systemPresence_normalizesStringSecondTimestamps() passed after 0.002 seconds.
+􁁛  Test systemPresence_identityFallbackPrefersDeviceThenInstanceThenHostThenIP() passed after 0.002 seconds.
+􁁛  Test systemPresence_normalizesSecondTimestamps() passed after 0.002 seconds.
+􁁛  Test wizardStart_andNext_encodeExpectedParams() passed after 0.002 seconds.
+􁁛  Test systemPresence_decodesConnectedClientRows() passed after 0.002 seconds.
+􁁛  Test commands_andStatusParsing_workWithHooks() passed after 0.002 seconds.
+􁁛  Test codableRoundTrip_preservesFields() passed after 0.001 seconds.
+􁁛  Test bindMode_rawValueRoundTrip() passed after 0.001 seconds.
+􁁛  Test decoder_usesDefaultsForMissingFields() passed after 0.001 seconds.
+􁁛  Test channelsStatusDetailed_decodesMetaAndAccountSnapshots() passed after 0.003 seconds.
+􁁛  Test channelsStatus_missingOptionalMapsDefaultsToEmptyCollections() passed after 0.001 seconds.
+􁁛  Test channelLinkMode_detectsQRAndTokenChannels() passed after 0.001 seconds.
+􁁛  Test channelsStatus_decodesRichPayloadAndNormalizesDates() passed after 0.001 seconds.
+􁁛  Test processChatDelta_extractsTextAndThinking() passed after 0.003 seconds.
+􁁛  Suite OpenClawGatewayConnectionPhase3PresenceTests passed after 0.003 seconds.
+􁁛  Test semver_parseAndCompare() passed after 0.001 seconds.
+􁁛  Suite OpenClawConfigurationTests passed after 0.003 seconds.
+􁁛  Suite OpenClawChannelStatusTests passed after 0.003 seconds.
+􁁛  Test reconnectPolicy_usesExponentialBackoffAndStopsAfterMaxAttempts() passed after 0.002 seconds.
+􀟈  Test logPath_returnsDeterministicFallback() started.
+􀟈  Test channelLinkPreferredOption_selectsMatchingChannel() started.
+􀟈  Test check_returnsExpectedStatusesFromHooks() started.
+􁁛  Test modelRouter_resolvesOpenClawIdentifiersToGatewayService() passed after 0.001 seconds.
+􀟈  Test chatSessionData_persistsOpenClawSessionKeyWithBackwardCompatibleDecode() started.
+􁁛  Test channelLinkPreferredOption_selectsMatchingChannel() passed after 0.001 seconds.
+􀟈  Test channelLinkPreferredOption_matchesNestedPayloadShape() started.
+􁁛  Test channelLinkPreferredOption_matchesNestedPayloadShape() passed after 0.001 seconds.
+􀟈  Test channelLinkPreferredOption_usesStepTitleWhenStepIDIsGeneric() started.
+􁁛  Test channelLinkPreferredOption_usesStepTitleWhenStepIDIsGeneric() passed after 0.001 seconds.
+􁁛  Test cronRunAndSetEnabled_encodeExpectedParams() passed after 0.001 seconds.
+􀟈  Test channelLinkPreferredOption_returnsNilForUnrelatedSelectStep() started.
+􁁛  Test channelLinkPreferredOption_returnsNilForUnrelatedSelectStep() passed after 0.001 seconds.
+􀟈  Test channelLinkPreferredOption_returnsNilWhenNoOptionMatches() started.
+􁁛  Test channelLinkPreferredOption_returnsNilWhenNoOptionMatches() passed after 0.001 seconds.
+􀟈  Test channelLinkPreferredOption_shortChannelID_requiresExactMatch() started.
+􀟈  Test chatSession_helpersConvertSelectionAndRuntimeIdentifiers() started.
+􁁛  Test channelLinkPreferredOption_shortChannelID_requiresExactMatch() passed after 0.001 seconds.
+􀟈  Test cronToggleLogic_rollsBackOnFailure() started.
+􁁛  Test cronToggleLogic_rollsBackOnFailure() passed after 0.001 seconds.
+􀟈  Test skillsStatusLogic_matchesPriorityRules() started.
+􀟈  Test authFailureDisconnect_doesNotRetryReconnect() started.
+􁁛  Suite OpenClawGatewayConnectionPhase3SkillsTests passed after 0.004 seconds.
+􁁛  Test cronStatusAndList_decodeTypedPayloads() passed after 0.002 seconds.
+􁁛  Test check_returnsExpectedStatusesFromHooks() passed after 0.001 seconds.
+􁁛  Suite OpenClawEnvironmentTests passed after 0.004 seconds.
+􁁛  Test cronRuns_decodesRunEntries() passed after 0.001 seconds.
+􁁛  Suite OpenClawGatewayConnectionPhase3CronTests passed after 0.004 seconds.
+􁁛  Test processAgentStreams_updatesChatTurn() passed after 0.004 seconds.
+􁁛  Test installedLocation_detectsExecutableInSearchPaths() passed after 0.003 seconds.
+􁁛  Test chatSessionData_persistsOpenClawSessionKeyWithBackwardCompatibleDecode() passed after 0.001 seconds.
+􀟈  Test install_reportsProgressFromJsonEvents() started.
+􁁛  Test skillsStatusLogic_matchesPriorityRules() passed after 0.001 seconds.
+􀟈  Test connectedClientsLogic_sortsNewestFirst() started.
+􁁛  Test connectedClientsLogic_sortsNewestFirst() passed after 0.001 seconds.
+􀟈  Test connectedClientsLogic_sortsByIdentityWhenTimestampsMatch() started.
+􁁛  Test logPath_returnsDeterministicFallback() passed after 0.001 seconds.
+􁁛  Suite OpenClawLaunchAgentTests passed after 0.005 seconds.
+􁁛  Test loadMissing_returnsDefaults() passed after 0.004 seconds.
+􁁛  Test announcePresence_postsSystemEvent() passed after 0.004 seconds.
+􁁛  Test connectedClientsLogic_sortsByIdentityWhenTimestampsMatch() passed after 0.001 seconds.
+􁁛  Test install_reportsProgressFromJsonEvents() passed after 0.001 seconds.
+􀟈  Test connectedClientsAccessibility_includesIdentityStatusAndMetadata() started.
+􀟈  Test saveAndLoad_roundTrips() started.
+􁁛  Test registerSequenceGap_gapResyncSurvivesReconnectInterleaving() passed after 0.004 seconds.
+􀟈  Test install_throwsOnFailure() started.
+􁁛  Test connectedClientsAccessibility_includesIdentityStatusAndMetadata() passed after 0.001 seconds.
+􁁛  Test sequenceGap_triggersCallback() passed after 0.004 seconds.
+􁁛  Test processEvent_ignoresOtherRunIds() passed after 0.004 seconds.
+􁁛  Suite OpenClawEventProcessorTests passed after 0.005 seconds.
+􀟈  Test presenceIdentity_fallbackUsesExpectedOrder() started.
+􁁛  Test presenceIdentity_fallbackUsesExpectedOrder() passed after 0.001 seconds.
+􁁛  Suite OpenClawPhase3ViewLogicTests passed after 0.005 seconds.
+􁁛  Test lifecycleEnd_clearsRunActive() passed after 0.005 seconds.
+􁁛  Test lifecycleStart_finalizesActiveThinking() passed after 0.005 seconds.
+􁁛  Test install_throwsOnFailure() passed after 0.001 seconds.
+􁁛  Suite OpenClawInstallerTests passed after 0.005 seconds.
+􁁛  Test lifecycleStart_setsRunActive() passed after 0.005 seconds.
+􁁛  Test parseLine_extractsLevelMessageTimestamp() passed after 0.003 seconds.
+􀟈  Test parseLine_ignoresInvalidJSON() started.
+􁁛  Test parseLine_ignoresInvalidJSON() passed after 0.001 seconds.
+􀟈  Test parseJSONL_respectsLimitAndOrder() started.
+􁁛  Test thinkingFinalization_whenToolStarts() passed after 0.005 seconds.
+􁁛  Test parseJSONL_respectsLimitAndOrder() passed after 0.001 seconds.
+􀟈  Test parseFilterByLevels() started.
+􁁛  Test parseFilterByLevels() passed after 0.001 seconds.
+􁁛  Test toolCallIndex_isCorrectlyMaintained() passed after 0.005 seconds.
+􁁛  Suite OpenClawLogViewerTests passed after 0.006 seconds.
+􁁛  Test malformedEvent_missingTimestamp_isIgnored() passed after 0.005 seconds.
+􁁛  Test compactionDuringRun_doesNotAffectRunState() passed after 0.006 seconds.
+􁁛  Test handlesOpenClawModelIdentifiers() passed after 0.006 seconds.
+􁁛  Test multipleRuns_trackCorrectRunId() passed after 0.006 seconds.
+􁁛  Test thinkingAndAssistant_areSeparateItems() passed after 0.006 seconds.
+􁁛  Test unknownStream_doesNotCrash() passed after 0.006 seconds.
+􁁛  Test compactionWillRetry_setsCorrectPhase() passed after 0.006 seconds.
+􁁛  Test multipleRuns_preservesHistoryAcrossRuns() passed after 0.007 seconds.
+􁁛  Test lifecycleError_surfacesMessage() passed after 0.007 seconds.
+􁁛  Suite OpenClawActivityStoreLifecycleTests passed after 0.007 seconds.
+􁁛  Test reset_clearsAllState() passed after 0.007 seconds.
+􁁛  Test compactionInvalidPhase_isIgnored() passed after 0.007 seconds.
+􁁛  Test toolUpdate_withoutStart_isIgnored() passed after 0.007 seconds.
+􁁛  Test emptyDataPayload_isHandledCorrectly() passed after 0.007 seconds.
+􁁛  Test timestampAsInteger_isHandledCorrectly() passed after 0.007 seconds.
+􁁛  Test unknownStream_isIgnored() passed after 0.007 seconds.
+􁁛  Test resetDuringActiveRun_finalizesStreams() passed after 0.007 seconds.
+􁁛  Test assistantFinalization_whenLifecycleEnds() passed after 0.007 seconds.
+􁁛  Test malformedEvent_missingStream_isIgnored() passed after 0.007 seconds.
+􁁛  Test assistantDeltaAccumulation_withMediaUrls() passed after 0.008 seconds.
+􁁛  Test lifecycleError_updatesRunState() passed after 0.008 seconds.
+􁁛  Test thinkingDeltaAccumulation_producesOneItem() passed after 0.008 seconds.
+􁁛  Suite OpenClawActivityStoreStreamingTests passed after 0.009 seconds.
+􁁛  Test unknownToolPhase_doesNotCreateItem() passed after 0.008 seconds.
+􁁛  Test malformedEvent_noPayload_isIgnored() passed after 0.008 seconds.
+􁁛  Test malformedEvent_missingRunId_isIgnored() passed after 0.008 seconds.
+􁁛  Test toolUpdate_setsPartialResult() passed after 0.007 seconds.
+􁁛  Test reset_clearsIndexes() passed after 0.008 seconds.
+􁁛  Test toolWithStringResult_preservedAsIs() passed after 0.008 seconds.
+􁁛  Test toolArgsSummary_generated() passed after 0.008 seconds.
+􁁛  Test toolStartAndResult_correlateToSingleItem() passed after 0.008 seconds.
+􁁛  Test multipleToolCalls_maintainSeparateIndices() passed after 0.008 seconds.
+􁁛  Test toolUpdate_beforeStart_isIgnored() passed after 0.008 seconds.
+􁁛  Test toolStart_finalizesActiveThinking() passed after 0.008 seconds.
+􁁛  Test toolWithMissingToolCallId_isIgnored() passed after 0.008 seconds.
+􁁛  Test toolWithComplexResult_stringified() passed after 0.008 seconds.
+􁁛  Test toolResultWithError_setsFailed() passed after 0.009 seconds.
+􁁛  Suite OpenClawActivityStoreToolTests passed after 0.010 seconds.
+􁁛  Test compactionStartAndEnd_createsItems() passed after 0.010 seconds.
+􁁛  Suite OpenClawActivityStoreEdgeCaseTests passed after 0.011 seconds.
+[ChatSession] deinit
+􁁛  Test chatSession_helpersConvertSelectionAndRuntimeIdentifiers() passed after 0.008 seconds.
+􁁛  Suite ChatSessionOpenClawModeTests passed after 0.011 seconds.
+􁁛  Test saveAndLoad_roundTrips() passed after 0.007 seconds.
+􀟈  Test malformedFile_returnsDefaults() started.
+􁁛  Test loadSessions_mapsAndSortsByRecentActivity() passed after 0.012 seconds.
+􁁛  Test loadHistory_stitchesToolResultIntoAssistantTurn() passed after 0.012 seconds.
+􁁛  Test loadHistory_mapsUserAssistantThinkingAndText() passed after 0.012 seconds.
+􁁛  Test loadHistory_handlesStringContentPayloads() passed after 0.012 seconds.
+􁁛  Suite OpenClawChatHistoryLoaderTests passed after 0.013 seconds.
+􁁛  Test blockerMessage_isSpecificForKnownFailures() passed after 0.013 seconds.
+􁁛  Test installAction_onlyAllowedWhenCliMissing() passed after 0.013 seconds.
+􁁛  Test streamDeltas_rejectsNonSessionIdentifiers() passed after 0.013 seconds.
+[Osaurus] Failed to load OpenClawConfiguration: dataCorrupted(Swift.DecodingError.Context(codingPath: [], debugDescription: "The given data was not valid JSON.", underlyingError: Optional(Error Domain=NSCocoaErrorDomain Code=3840 "Unexpected character 'n' around line 1, column 3." UserInfo={NSDebugDescription=Unexpected character 'n' around line 1, column 3., NSJSONSerializationErrorIndex=2})))
+􁁛  Test malformedFile_returnsDefaults() passed after 0.002 seconds.
+􁁛  Test cliReadiness_rejectsIncompatibleAndMissingStates() passed after 0.014 seconds.
+􁁛  Suite OpenClawConfigurationStoreTests passed after 0.015 seconds.
+􁁛  Suite OpenClawSetupWizardSheetTests passed after 0.015 seconds.
+􁁛  Test ingestStatus_postsNotificationForFirstFreshInboundEvent() passed after 0.014 seconds.
+􀟈  Test ingestStatus_doesNotNotifyForStaleInboundOnStartup() started.
+􁁛  Test createSession_setsActiveAndRefreshesSessions() passed after 0.015 seconds.
+􁁛  Test streamDeltas_throwsOnChatError() passed after 0.015 seconds.
+􁁛  Test ingestStatus_doesNotNotifyForStaleInboundOnStartup() passed after 0.001 seconds.
+􁁛  Test patchDeleteAndCompact_forwardToGatewayMethods() passed after 0.015 seconds.
+􁁛  Suite OpenClawSessionManagerTests passed after 0.016 seconds.
+􀟈  Test markAllAsRead_clearsDockBadge() started.
+􁁛  Test streamDeltas_yieldsChatTextAndFinishes() passed after 0.015 seconds.
+􁁛  Test streamRunIntoTurn_mapsThinkingToolAndTextEvents() passed after 0.016 seconds.
+􁁛  Test markAllAsRead_clearsDockBadge() passed after 0.001 seconds.
+􀟈  Test unreadCount_persistsUntilExplicitClearAction() started.
+􁁛  Test unreadCount_persistsUntilExplicitClearAction() passed after 0.001 seconds.
+􀟈  Test ingestEvent_postsNotification_andPollFallbackDedupesSameTimestamp() started.
+􁁛  Test ingestEvent_postsNotification_andPollFallbackDedupesSameTimestamp() passed after 0.001 seconds.
+􀟈  Test ingestEvent_ignoresHistoricalInboundBeforeListeningBaseline() started.
+􁁛  Test ingestEvent_ignoresHistoricalInboundBeforeListeningBaseline() passed after 0.001 seconds.
+􀟈  Test reconnectBaselineReset_suppressesStaleNotificationsAfterReconnect() started.
+􁁛  Test reconnectBaselineReset_suppressesStaleNotificationsAfterReconnect() passed after 0.001 seconds.
+􀟈  Test multiAccountBurst_dedupesPerAccountAndTimestamp() started.
+􁁛  Test multiAccountBurst_dedupesPerAccountAndTimestamp() passed after 0.001 seconds.
+􀟈  Test rapidUnchangedPollCycles_doNotIncrementUnread() started.
+􁁛  Test rapidUnchangedPollCycles_doNotIncrementUnread() passed after 0.001 seconds.
+􁁛  Suite OpenClawNotificationServiceTests passed after 0.018 seconds.
+􁁛  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() passed after 0.019 seconds.
+􁁛  Test streamRunIntoTurn_multipleSequenceGapsTriggerRepeatedRefreshes() passed after 0.026 seconds.
+􁁛  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() passed after 0.026 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.027 seconds.
+􁁛  Test authFailureDisconnect_doesNotRetryReconnect() passed after 0.031 seconds.
+􀟈  Test slowConsumerDisconnect_reconnectsImmediately() started.
+􁁛  Test tokenAndDeviceToken_lifecycle() passed after 0.047 seconds.
+􁁛  Suite OpenClawKeychainTests passed after 0.049 seconds.
+􁁛  Test subscribeToEvents_filtersByRunId() passed after 0.156 seconds.
+􁁛  Suite OpenClawGatewayConnectionPhase1Tests passed after 0.157 seconds.
+􁁛  Test slowConsumerDisconnect_reconnectsImmediately() passed after 1.518 seconds.
+􀟈  Test disconnectClassification_handlesCloseCodes() started.
+􁁛  Test disconnectClassification_handlesCloseCodes() passed after 0.001 seconds.
+􁁛  Suite OpenClawGatewayConnectionReconnectionTests passed after 1.555 seconds.
+􁁛  Test toastSink_capturesConnectionEvents() passed after 3.088 seconds.
+􀟈  Test setHeartbeat_updatesHeartbeatStateFromRPCHooks() started.
+􁁛  Test setHeartbeat_updatesHeartbeatStateFromRPCHooks() passed after 0.001 seconds.
+􀟈  Test refreshStatus_failureTransitionsToConnectionFailed() started.
+[Osaurus] ToastManager initialized with position: Top Right
+[Osaurus] Toast shown: error - OpenClaw failed
+􁁛  Test refreshStatus_failureTransitionsToConnectionFailed() passed after 0.002 seconds.
+􀟈  Test disconnectChannel_routesThroughGatewayHook() started.
+􁁛  Test disconnectChannel_routesThroughGatewayHook() passed after 1.520 seconds.
+􀟈  Test refreshCron_populatesStatusAndJobsFromHooks() started.
+􁁛  Test refreshCron_populatesStatusAndJobsFromHooks() passed after 0.001 seconds.
+􀟈  Test setCronJobEnabled_routesThroughGatewayHook() started.
+􁁛  Test setCronJobEnabled_routesThroughGatewayHook() passed after 0.001 seconds.
+􀟈  Test refreshSkills_populatesReportAndBinsFromHooks() started.
+􁁛  Test refreshSkills_populatesReportAndBinsFromHooks() passed after 0.001 seconds.
+􀟈  Test updateSkillEnabled_routesThroughGatewayHook() started.
+􁁛  Test updateSkillEnabled_routesThroughGatewayHook() passed after 0.001 seconds.
+􀟈  Test refreshConnectedClients_populatesPresenceRowsFromHook() started.
+􁁛  Test refreshConnectedClients_populatesPresenceRowsFromHook() passed after 0.001 seconds.
+􁁛  Suite OpenClawManagerTests passed after 4.615 seconds.
+􁁛  Test run with 138 tests in 26 suites passed after 4.615 seconds.

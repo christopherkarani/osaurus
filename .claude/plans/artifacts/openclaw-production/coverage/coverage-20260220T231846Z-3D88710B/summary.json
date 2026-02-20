@@ -1,0 +1,84 @@
+{
+  "generatedAtUtc": "2026-02-20T23:18:46Z",
+  "status": "failed",
+  "reason": "OpenClaw-critical line coverage is below threshold.",
+  "thresholdPercent": 95,
+  "scope": [
+    "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Services/OpenClawGatewayConnection.swift",
+    "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Services/OpenClawModelService.swift",
+    "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Services/OpenClawEventProcessor.swift",
+    "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Services/OpenClawNotificationService.swift",
+    "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Services/OpenClawSessionManager.swift",
+    "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Services/OpenClawChatHistoryLoader.swift",
+    "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Models/OpenClawChannelStatus.swift",
+    "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Models/OpenClawPresenceModels.swift"
+  ],
+  "metrics": {
+    "files": 8,
+    "linesCovered": 1771,
+    "linesTotal": 2552,
+    "lineCoveragePercent": 69.39655172413794,
+    "perFile": [
+      {
+        "file": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Models/OpenClawChannelStatus.swift",
+        "linesCovered": 79,
+        "linesTotal": 105,
+        "lineCoveragePercent": 75.23809523809524
+      },
+      {
+        "file": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Models/OpenClawPresenceModels.swift",
+        "linesCovered": 88,
+        "linesTotal": 118,
+        "lineCoveragePercent": 74.57627118644068
+      },
+      {
+        "file": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Services/OpenClawChatHistoryLoader.swift",
+        "linesCovered": 203,
+        "linesTotal": 246,
+        "lineCoveragePercent": 82.52032520325203
+      },
+      {
+        "file": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Services/OpenClawEventProcessor.swift",
+        "linesCovered": 203,
+        "linesTotal": 305,
+        "lineCoveragePercent": 66.55737704918033
+      },
+      {
+        "file": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Services/OpenClawGatewayConnection.swift",
+        "linesCovered": 640,
+        "linesTotal": 969,
+        "lineCoveragePercent": 66.04747162022704
+      },
+      {
+        "file": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Services/OpenClawModelService.swift",
+        "linesCovered": 248,
+        "linesTotal": 309,
+        "lineCoveragePercent": 80.2588996763754
+      },
+      {
+        "file": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Services/OpenClawNotificationService.swift",
+        "linesCovered": 196,
+        "linesTotal": 379,
+        "lineCoveragePercent": 51.71503957783641
+      },
+      {
+        "file": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Services/OpenClawSessionManager.swift",
+        "linesCovered": 114,
+        "linesTotal": 121,
+        "lineCoveragePercent": 94.21487603305785
+      }
+    ]
+  },
+  "artifacts": {
+    "runDir": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/coverage/coverage-20260220T231846Z-3D88710B",
+    "swiftTestLog": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/coverage/coverage-20260220T231846Z-3D88710B/swift-test-openclaw-coverage.log",
+    "llvmExportErr": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/coverage/coverage-20260220T231846Z-3D88710B/llvm-cov-export.err.log",
+    "coverage": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/coverage/coverage-20260220T231846Z-3D88710B/openclaw-critical-coverage.json",
+    "scope": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/coverage/coverage-20260220T231846Z-3D88710B/openclaw-critical-scope.json",
+    "perFileCoverage": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/coverage/coverage-20260220T231846Z-3D88710B/openclaw-critical-per-file.tsv"
+  },
+  "coverageTooling": {
+    "profdataPath": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/.build/arm64-apple-macosx/debug/codecov/default.profdata",
+    "testBinaryPath": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/.build/arm64-apple-macosx/debug/OsaurusCorePackageTests.xctest/Contents/MacOS/OsaurusCorePackageTests"
+  }
+}
