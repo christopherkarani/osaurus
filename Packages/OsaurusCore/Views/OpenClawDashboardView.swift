@@ -11,6 +11,7 @@ struct OpenClawDashboardView: View {
 
     @State private var showSetupWizard = false
     @State private var hasAppeared = false
+    @State private var selectedChannelID: String?
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -118,7 +119,43 @@ struct OpenClawDashboardView: View {
                 sectionTitle("Channels")
                 VStack(spacing: 10) {
                     ForEach(manager.channels) { channel in
-                        OpenClawChannelCard(channel: channel)
+                        Button {
+                            selectedChannelID = selectedChannelID == channel.id ? nil : channel.id
+                        } label: {
+                            OpenClawChannelCard(
+                                channel: channel,
+                                isSelected: selectedChannelID == channel.id
+                            )
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+
+                    if
+                        let selectedChannelID,
+                        let selectedChannel = manager.channels.first(where: { $0.id == selectedChannelID })
+                    {
+                        OpenClawChannelDetailView(
+                            channelId: selectedChannel.id,
+                            channelName: selectedChannel.name,
+                            channelDetailLabel: manager.channelDetailLabel(for: selectedChannel.id),
+                            channelSystemImage: selectedChannel.systemImage,
+                            accounts: manager.channelAccounts(for: selectedChannel.id),
+                            defaultAccountId: manager.channelDefaultAccountId(for: selectedChannel.id),
+                            onLinkAccount: {
+                                showSetupWizard = true
+                            },
+                            onDisconnect: { accountId in
+                                Task {
+                                    try? await manager.disconnectChannel(
+                                        channelId: selectedChannel.id,
+                                        accountId: accountId
+                                    )
+                                }
+                            },
+                            onConfigure: {
+                                showSetupWizard = true
+                            }
+                        )
                     }
                 }
             }

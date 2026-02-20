@@ -126,4 +126,42 @@ struct OpenClawManagerTests {
         #expect(manager.isConnected == false)
         #expect(manager.lastError?.contains(expected) == true)
     }
+
+    @Test
+    func disconnectChannel_routesThroughGatewayHook() async {
+        let manager = OpenClawManager.shared
+        actor LogoutRecorder {
+            var channelId: String?
+            var accountId: String?
+
+            func record(channelId: String, accountId: String?) {
+                self.channelId = channelId
+                self.accountId = accountId
+            }
+
+            func values() -> (String?, String?) {
+                (channelId, accountId)
+            }
+        }
+        let recorder = LogoutRecorder()
+
+        OpenClawManager._testSetGatewayHooks(
+            .init(
+                channelsStatus: { [] },
+                channelsLogout: { channelId, accountId in
+                    await recorder.record(channelId: channelId, accountId: accountId)
+                },
+                modelsList: { [] },
+                health: { [:] }
+            )
+        )
+        defer { OpenClawManager._testSetGatewayHooks(nil) }
+
+        manager._testSetConnectionState(.connected, gatewayStatus: .running)
+        try? await manager.disconnectChannel(channelId: "telegram", accountId: "acct-1")
+
+        let (channelId, accountId) = await recorder.values()
+        #expect(channelId == "telegram")
+        #expect(accountId == "acct-1")
+    }
 }

@@ -11,6 +11,7 @@ struct OpenClawChannelCard: View {
     @State private var isHovered = false
 
     let channel: OpenClawManager.ChannelInfo
+    var isSelected: Bool = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -48,11 +49,14 @@ struct OpenClawChannelCard: View {
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
         .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.secondaryBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.primaryBorder, lineWidth: 1)
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.secondaryBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(
+                                isSelected ? theme.accentColor.opacity(0.75) : theme.primaryBorder,
+                                lineWidth: isSelected ? 1.5 : 1
+                            )
             )
         )
         .accessibilityElement(children: .combine)

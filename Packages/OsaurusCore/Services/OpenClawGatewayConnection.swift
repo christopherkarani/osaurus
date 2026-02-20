@@ -248,6 +248,16 @@ public actor OpenClawGatewayConnection {
         return try decodePayload(method: "channels.status", data: data, as: ChannelsStatusResult.self)
     }
 
+    public func channelsLogout(channelId: String, accountId: String? = nil) async throws {
+        var params: [String: OpenClawProtocol.AnyCodable] = [
+            "channel": OpenClawProtocol.AnyCodable(channelId)
+        ]
+        if let accountId, !accountId.isEmpty {
+            params["accountId"] = OpenClawProtocol.AnyCodable(accountId)
+        }
+        _ = try await requestRaw(method: "channels.logout", params: params)
+    }
+
     public func modelsList() async throws -> [String] {
         let data = try await requestRaw(method: "models.list", params: nil)
         let payload = try decodePayload(method: "models.list", data: data, as: ModelsListResult.self)

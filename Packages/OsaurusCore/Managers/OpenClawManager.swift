@@ -62,6 +62,7 @@ public final class OpenClawManager: ObservableObject {
     struct GatewayHooks {
         var channelsStatus: @Sendable () async throws -> [GatewayPayload]
         var channelsStatusDetailed: (@Sendable () async throws -> ChannelsStatusResult)? = nil
+        var channelsLogout: (@Sendable (_ channelId: String, _ accountId: String?) async throws -> Void)? = nil
         var modelsList: @Sendable () async throws -> [String]
         var health: @Sendable () async throws -> GatewayPayload
         var heartbeatStatus: (@Sendable () async throws -> OpenClawHeartbeatStatus)?
@@ -413,6 +414,11 @@ public final class OpenClawManager: ObservableObject {
         runToSessionKey = runToSessionKey.filter { $0.value != key }
     }
 
+    public func disconnectChannel(channelId: String, accountId: String? = nil) async throws {
+        try await gatewayChannelsLogout(channelId: channelId, accountId: accountId)
+        await refreshStatus()
+    }
+
     public func setHeartbeat(enabled: Bool) async throws {
         do {
             try await gatewaySetHeartbeats(enabled: enabled)
@@ -453,6 +459,22 @@ public final class OpenClawManager: ObservableObject {
         let token = String((0..<48).compactMap { _ in alphabet.randomElement() })
         _ = OpenClawKeychain.saveToken(token)
         return token
+    }
+
+    public func channelMeta(for channelId: String) -> ChannelMeta? {
+        channelStatus?.channelMeta.first(where: { $0.id == channelId })
+    }
+
+    public func channelAccounts(for channelId: String) -> [ChannelAccountSnapshot] {
+        channelStatus?.channelAccounts[channelId] ?? []
+    }
+
+    public func channelDetailLabel(for channelId: String) -> String? {
+        channelMeta(for: channelId)?.detailLabel ?? channelStatus?.channelDetailLabels[channelId]
+    }
+
+    public func channelDefaultAccountId(for channelId: String) -> String? {
+        channelStatus?.channelDefaultAccountId[channelId]
     }
 
     private func disconnectInternal() async {
@@ -960,6 +982,14 @@ public final class OpenClawManager: ObservableObject {
             return
         }
         try await OpenClawGatewayConnection.shared.setHeartbeats(enabled: enabled)
+    }
+
+    private func gatewayChannelsLogout(channelId: String, accountId: String?) async throws {
+        if let hooks = Self.gatewayHooks, let channelsLogout = hooks.channelsLogout {
+            try await channelsLogout(channelId, accountId)
+            return
+        }
+        try await OpenClawGatewayConnection.shared.channelsLogout(channelId: channelId, accountId: accountId)
     }
 
 #if DEBUG
