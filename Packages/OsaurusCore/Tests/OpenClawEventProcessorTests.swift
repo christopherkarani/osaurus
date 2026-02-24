@@ -181,4 +181,34 @@ struct OpenClawEventProcessorTests {
         #expect(turn.contentIsEmpty)
         #expect(turn.toolCalls == nil)
     }
+
+    @Test @MainActor
+    func onSync_firesFromDeltaProcessor_notPerEvent() async throws {
+        let turn = ChatTurn(role: .assistant, content: "")
+        var syncCount = 0
+        let processor = OpenClawEventProcessor(
+            onSync: { syncCount += 1 }
+        )
+        processor.startRun(runId: "run-sync", turn: turn)
+
+        let eventCount = 20
+        for i in 1 ... eventCount {
+            processor.processEvent(
+                makeAgentEventFrame(
+                    stream: "assistant",
+                    runId: "run-sync",
+                    seq: i,
+                    data: ["text": "word\(i) "]
+                ),
+                turn: turn
+            )
+        }
+
+        processor.endRun(turn: turn)
+
+        // The delta processor's adaptive throttle (100-250ms) should batch
+        // syncs so we get far fewer than one-per-event.
+        #expect(syncCount > 0, "onSync must fire at least once")
+        #expect(syncCount < eventCount, "onSync should be throttled, not per-event")
+    }
 }

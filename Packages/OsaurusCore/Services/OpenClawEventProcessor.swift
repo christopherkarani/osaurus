@@ -28,25 +28,49 @@ final class OpenClawEventProcessor {
     private let onTextDelta: ((String) -> Void)?
     private let onSequenceGap: ((Int, Int) -> Void)?
     private let onRunEnded: (() -> Void)?
+    private let onSync: (() -> Void)?
 
     private var deltaProcessor: StreamingDeltaProcessor?
     private var currentRunId: String?
     private var lastSeq: Int = 0
 
+    // MARK: - System Trace Detection
+    // OpenClaw responses often append a structured "System:\n\n# Task Execution..."
+    // section after the real response text. We detect this boundary and route
+    // everything from "System:" onward to thinking (collapsible) rather than content.
+
+    /// Whether we have passed the "System:" trace boundary in this run.
+    private var inSystemTrace = false
+    /// Buffer for detecting the "\nSystem:\n" marker across delta boundaries.
+    private var systemBoundaryBuffer = ""
+
+    /// The primary marker that signals the start of OpenClaw's trace section.
+    private static let systemTraceMarker = "\nSystem:\n"
+
+    /// All proper prefixes of the marker, longest first, for partial-match buffering.
+    private static let systemTracePartials: [String] = {
+        let marker = "\nSystem:\n"
+        return (1 ..< marker.count).map { String(marker.prefix($0)) }.reversed()
+    }()
+
     init(
         onTextDelta: ((String) -> Void)? = nil,
         onSequenceGap: ((Int, Int) -> Void)? = nil,
-        onRunEnded: (() -> Void)? = nil
+        onRunEnded: (() -> Void)? = nil,
+        onSync: (() -> Void)? = nil
     ) {
         self.onTextDelta = onTextDelta
         self.onSequenceGap = onSequenceGap
         self.onRunEnded = onRunEnded
+        self.onSync = onSync
     }
 
     func startRun(runId: String, turn: ChatTurn) {
         currentRunId = runId
         lastSeq = 0
-        deltaProcessor = StreamingDeltaProcessor(turn: turn)
+        inSystemTrace = false
+        systemBoundaryBuffer = ""
+        deltaProcessor = StreamingDeltaProcessor(turn: turn, onSync: onSync)
     }
 
     func processEvent(_ event: EventFrame, turn: ChatTurn) {
@@ -68,10 +92,16 @@ final class OpenClawEventProcessor {
     }
 
     func endRun(turn _: ChatTurn) {
+        // Flush any buffered boundary-detection text as regular content.
+        if !systemBoundaryBuffer.isEmpty {
+            deltaProcessor?.receiveDelta(systemBoundaryBuffer)
+            systemBoundaryBuffer = ""
+        }
         deltaProcessor?.finalize()
         deltaProcessor = nil
         currentRunId = nil
         lastSeq = 0
+        inSystemTrace = false
         onRunEnded?()
     }
 
@@ -79,8 +109,7 @@ final class OpenClawEventProcessor {
         switch payload.state {
         case "delta":
             if let text = extractChatText(payload.message), !text.isEmpty {
-                deltaProcessor?.receiveDelta(text)
-                onTextDelta?(text)
+                routeAssistantText(text, turn: turn)
             }
             if let thinking = extractChatThinking(payload.message), !thinking.isEmpty {
                 turn.appendThinkingAndNotify(thinking)
@@ -102,8 +131,7 @@ final class OpenClawEventProcessor {
             if let text = stringValue(payload.data["text"]?.value) ?? stringValue(payload.data["delta"]?.value),
                 !text.isEmpty
             {
-                deltaProcessor?.receiveDelta(text)
-                onTextDelta?(text)
+                routeAssistantText(text, turn: turn)
             }
 
         case "thinking":
@@ -114,6 +142,11 @@ final class OpenClawEventProcessor {
             }
 
         case "tool":
+            // Flush any pending boundary-detection buffer as content before processing the tool.
+            if !systemBoundaryBuffer.isEmpty {
+                deltaProcessor?.receiveDelta(systemBoundaryBuffer)
+                systemBoundaryBuffer = ""
+            }
             deltaProcessor?.flush()
             processTool(data: payload.data, turn: turn)
 
@@ -190,6 +223,56 @@ final class OpenClawEventProcessor {
         default:
             break
         }
+    }
+
+    // MARK: - System Trace Routing
+
+    /// Routes an assistant text delta to either regular content or thinking,
+    /// depending on whether we have crossed the "System:" trace boundary.
+    private func routeAssistantText(_ text: String, turn: ChatTurn) {
+        if inSystemTrace {
+            turn.appendThinkingAndNotify(text)
+            return
+        }
+
+        let combined = systemBoundaryBuffer + text
+        systemBoundaryBuffer = ""
+
+        let marker = Self.systemTraceMarker  // "\nSystem:\n"
+
+        if let markerRange = combined.range(of: marker) {
+            // Flush everything before the marker as regular content.
+            let contentPart = String(combined[..<markerRange.lowerBound])
+            if !contentPart.isEmpty {
+                deltaProcessor?.receiveDelta(contentPart)
+                onTextDelta?(contentPart)
+            }
+
+            // Switch permanently to system-trace (thinking) mode.
+            inSystemTrace = true
+
+            // Thinking begins with "System:\n" followed by whatever came after the marker.
+            let afterMarker = String(combined[markerRange.upperBound...])
+            let thinkingText = "System:\n" + afterMarker
+            turn.appendThinkingAndNotify(thinkingText)
+            return
+        }
+
+        // No full marker found — check if the end of `combined` is a partial prefix
+        // of the marker so we can buffer it rather than flushing prematurely.
+        if let partial = Self.systemTracePartials.first(where: { combined.hasSuffix($0) }) {
+            let flushPart = String(combined.dropLast(partial.count))
+            systemBoundaryBuffer = partial
+            if !flushPart.isEmpty {
+                deltaProcessor?.receiveDelta(flushPart)
+                onTextDelta?(flushPart)
+            }
+            return
+        }
+
+        // No match or partial match — flush everything as regular content.
+        deltaProcessor?.receiveDelta(combined)
+        onTextDelta?(combined)
     }
 
     private func appendError(_ message: String, to turn: ChatTurn) {

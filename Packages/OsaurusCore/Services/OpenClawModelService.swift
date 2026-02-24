@@ -149,7 +149,8 @@ actor OpenClawModelService: ModelService {
                         receivedSeq: receivedSeq
                     )
                 }
-            }
+            },
+            onSync: onSync
         )
         processor.startRun(runId: runId, turn: turn)
 
@@ -160,7 +161,6 @@ actor OpenClawModelService: ModelService {
             }
 
             processor.processEvent(frame, turn: turn)
-            onSync?()
 
             if let terminal = Self.terminalState(for: frame, runId: runId) {
                 processor.endRun(turn: turn)
