@@ -28,8 +28,134 @@ public enum OpenClawConnectionError: LocalizedError, Sendable {
         case .disconnected(let reason):
             return "Gateway disconnected: \(reason)"
         case .noChannel:
-            return "Gateway connection is not established."
+            return "Gateway connection is not established yet."
         }
+    }
+}
+
+public struct ConfigGetResult: Codable, Sendable {
+    public let config: [String: OpenClawProtocol.AnyCodable]?
+    public let baseHash: String?
+
+    public init(config: [String: OpenClawProtocol.AnyCodable]?, baseHash: String?) {
+        self.config = config
+        self.baseHash = baseHash
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case config
+        case baseHash
+        case hash
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        config = try container.decodeIfPresent([String: OpenClawProtocol.AnyCodable].self, forKey: .config)
+
+        let explicitBaseHash = try container.decodeIfPresent(String.self, forKey: .baseHash)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let explicitBaseHash, !explicitBaseHash.isEmpty {
+            baseHash = explicitBaseHash
+            return
+        }
+
+        let legacyHash = try container.decodeIfPresent(String.self, forKey: .hash)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let legacyHash, !legacyHash.isEmpty {
+            baseHash = legacyHash
+        } else {
+            baseHash = nil
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(config, forKey: .config)
+        try container.encodeIfPresent(baseHash, forKey: .baseHash)
+    }
+}
+
+public struct ConfigPatchResult: Codable, Sendable {
+    public let ok: Bool
+    public let path: String?
+    public let restart: Bool?
+
+    public init(ok: Bool, path: String?, restart: Bool?) {
+        self.ok = ok
+        self.path = path
+        self.restart = restart
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case ok
+        case path
+        case restart
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try container.decode(Bool.self, forKey: .ok)
+        path = try container.decodeIfPresent(String.self, forKey: .path)
+
+        if let restartBool = try? container.decode(Bool.self, forKey: .restart) {
+            restart = restartBool
+            return
+        }
+
+        if let restartSignal = try? container.decode([String: OpenClawProtocol.AnyCodable].self, forKey: .restart) {
+            if let rawOK = restartSignal["ok"]?.value,
+                let parsed = Self.parseBoolean(rawOK)
+            {
+                restart = parsed
+            } else {
+                // Newer gateways emit restart metadata objects. Presence means a restart was requested.
+                restart = true
+            }
+            return
+        }
+
+        if let restartInt = try? container.decode(Int.self, forKey: .restart) {
+            restart = restartInt != 0
+            return
+        }
+
+        if let restartString = try? container.decode(String.self, forKey: .restart),
+            let parsed = Self.parseBoolean(restartString)
+        {
+            restart = parsed
+            return
+        }
+
+        restart = nil
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(ok, forKey: .ok)
+        try container.encodeIfPresent(path, forKey: .path)
+        try container.encodeIfPresent(restart, forKey: .restart)
+    }
+
+    private static func parseBoolean(_ raw: Any) -> Bool? {
+        if let bool = raw as? Bool {
+            return bool
+        }
+        if let int = raw as? Int {
+            return int != 0
+        }
+        if let double = raw as? Double {
+            return double != 0
+        }
+        if let string = raw as? String {
+            let normalized = string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if ["1", "true", "yes", "y", "on"].contains(normalized) {
+                return true
+            }
+            if ["0", "false", "no", "n", "off"].contains(normalized) {
+                return false
+            }
+        }
+        return nil
     }
 }
 
@@ -65,6 +191,100 @@ public struct OpenClawSessionsListResponse: Codable, Sendable {
     public let sessions: [OpenClawSessionListItem]
 }
 
+public struct OpenClawGatewayAgentSummary: Codable, Sendable, Identifiable, Equatable {
+    public let id: String
+    public let name: String?
+
+    public init(id: String, name: String?) {
+        self.id = id
+        self.name = name
+    }
+}
+
+public struct OpenClawGatewayAgentsListResponse: Codable, Sendable, Equatable {
+    public let defaultId: String
+    public let mainKey: String
+    public let scope: String
+    public let agents: [OpenClawGatewayAgentSummary]
+
+    public init(
+        defaultId: String,
+        mainKey: String,
+        scope: String,
+        agents: [OpenClawGatewayAgentSummary]
+    ) {
+        self.defaultId = defaultId
+        self.mainKey = mainKey
+        self.scope = scope
+        self.agents = agents
+    }
+}
+
+public struct OpenClawAgentWorkspaceFile: Codable, Sendable, Equatable, Identifiable {
+    public let name: String
+    public let path: String
+    public let missing: Bool
+    public let size: Int?
+    public let updatedAtMs: Int?
+    public let content: String?
+
+    public var id: String { path }
+
+    public init(
+        name: String,
+        path: String,
+        missing: Bool,
+        size: Int?,
+        updatedAtMs: Int?,
+        content: String?
+    ) {
+        self.name = name
+        self.path = path
+        self.missing = missing
+        self.size = size
+        self.updatedAtMs = updatedAtMs
+        self.content = content
+    }
+}
+
+public struct OpenClawAgentFilesListResponse: Codable, Sendable, Equatable {
+    public let agentId: String
+    public let workspace: String
+    public let files: [OpenClawAgentWorkspaceFile]
+
+    public init(agentId: String, workspace: String, files: [OpenClawAgentWorkspaceFile]) {
+        self.agentId = agentId
+        self.workspace = workspace
+        self.files = files
+    }
+}
+
+public struct OpenClawAgentFileGetResponse: Codable, Sendable, Equatable {
+    public let agentId: String
+    public let workspace: String
+    public let file: OpenClawAgentWorkspaceFile
+
+    public init(agentId: String, workspace: String, file: OpenClawAgentWorkspaceFile) {
+        self.agentId = agentId
+        self.workspace = workspace
+        self.file = file
+    }
+}
+
+public struct OpenClawAgentFileSetResponse: Codable, Sendable, Equatable {
+    public let ok: Bool
+    public let agentId: String
+    public let workspace: String
+    public let file: OpenClawAgentWorkspaceFile
+
+    public init(ok: Bool, agentId: String, workspace: String, file: OpenClawAgentWorkspaceFile) {
+        self.ok = ok
+        self.agentId = agentId
+        self.workspace = workspace
+        self.file = file
+    }
+}
+
 public struct OpenClawHeartbeatStatus: Codable, Sendable {
     public let enabled: Bool?
     public let lastHeartbeatAt: Date?
@@ -97,8 +317,8 @@ public enum OpenClawDisconnectDisposition: Equatable, Sendable {
 }
 
 private struct OpenClawConnectionParameters: Sendable {
-    let host: String
-    let port: Int
+    let wsURL: URL
+    let healthURL: URL?
     let token: String?
 }
 
@@ -121,7 +341,13 @@ public actor OpenClawGatewayConnection {
     public static let shared = OpenClawGatewayConnection()
 
     private var channel: GatewayChannelActor?
-    private var listeners: [UUID: @Sendable (GatewayPush) async -> Void] = [:]
+    private struct GatewayPushListenerRegistration {
+        let handler: @Sendable (GatewayPush) async -> Void
+        var pendingPushes: [GatewayPush] = []
+        var isDispatching = false
+    }
+
+    private var listeners: [UUID: GatewayPushListenerRegistration] = [:]
     private var connectionStateListeners: [UUID: @Sendable (OpenClawGatewayConnectionState) async -> Void] = [:]
     private var recentEventFrames: [EventFrame] = []
     private var activeRunSessionKeys: [String: String] = [:]
@@ -137,9 +363,21 @@ public actor OpenClawGatewayConnection {
     private let reconnectResyncHook: ResyncHook?
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
-    private static let maxBufferedEventFrames = 128
-    private static let reconnectBackoffSeconds = [1, 2, 4, 8, 16, 30]
-    private static let maxReconnectAttempts = 5
+    private static let maxBufferedEventFrames = 512
+    private static let maxPendingPushesPerListener = 256
+    private static let reconnectBackoffSeconds = [1, 2, 4, 8, 16, 30, 60]
+    private static let maxBackoffSeconds = 60
+    private static let diagnosticSensitiveKeyFragments = [
+        "authorization",
+        "api_key",
+        "apikey",
+        "token",
+        "secret",
+        "password",
+        "bearer",
+    ]
+    private static let maxDiagnosticArrayValues = 8
+    private static let maxDiagnosticObjectKeys = 16
 
     public init(
         requestExecutor: RequestExecutor? = nil,
@@ -175,19 +413,101 @@ public actor OpenClawGatewayConnection {
         connectionStateListeners.removeValue(forKey: id)
     }
 
+    private func emitGatewayDiagnostic(
+        level: StartupDiagnosticsLevel,
+        event: String,
+        context: [String: String] = [:]
+    ) async {
+        await StartupDiagnostics.shared.emit(
+            level: level,
+            component: "openclaw-gateway-connection",
+            event: event,
+            context: context
+        )
+    }
+
+    private static func endpointContext(wsURL: URL, healthURL: URL?) -> [String: String] {
+        var context: [String: String] = [
+            "webSocketURL": wsURL.absoluteString,
+            "webSocketHost": wsURL.host ?? "<missing>",
+            "webSocketScheme": wsURL.scheme ?? "<missing>",
+            "webSocketPort": wsURL.port.map(String.init) ?? "<default>",
+        ]
+        context["healthURL"] = healthURL?.absoluteString ?? "<none>"
+        context["isLoopback"] = shouldPreflightHealthCheck(for: wsURL) ? "true" : "false"
+        return context
+    }
+
+    private static func mappedErrorKind(_ error: Error) -> String {
+        guard let typed = error as? OpenClawConnectionError else {
+            return String(describing: type(of: error))
+        }
+        switch typed {
+        case .gatewayNotReachable:
+            return "gateway-not-reachable"
+        case .authFailed:
+            return "auth-failed"
+        case .rateLimited:
+            return "rate-limited"
+        case .slowConsumer:
+            return "slow-consumer"
+        case .disconnected:
+            return "disconnected"
+        case .noChannel:
+            return "no-channel"
+        }
+    }
+
     public func connect(host: String, port: Int, token: String?) async throws {
+        let wsURL = URL(string: "ws://\(host):\(port)/ws")!
+        let healthURL = URL(string: "http://\(host):\(port)/health")
+        try await connect(url: wsURL, token: token, healthURL: healthURL)
+    }
+
+    public func connect(
+        url: URL,
+        token: String?,
+        healthURL: URL? = nil
+    ) async throws {
         reconnectTask?.cancel()
         reconnectTask = nil
         intentionalDisconnect = false
-        connectionParameters = OpenClawConnectionParameters(host: host, port: port, token: token)
+        let normalizedHealthURL = healthURL ?? Self.defaultHealthURL(for: url)
+        connectionParameters = OpenClawConnectionParameters(
+            wsURL: url,
+            healthURL: normalizedHealthURL,
+            token: token
+        )
+        var beginContext = Self.endpointContext(wsURL: url, healthURL: normalizedHealthURL)
+        beginContext["credentialProvided"] = token?.isEmpty == false ? "true" : "false"
+        beginContext["reconnectTaskWasActive"] = reconnectTask == nil ? "false" : "true"
+        await emitGatewayDiagnostic(
+            level: .info,
+            event: "gateway.connect.begin",
+            context: beginContext
+        )
         await transitionConnectionState(.connecting)
         await shutdownChannel()
 
         do {
-            try await performConnect(host: host, port: port, token: token)
+            try await performConnect(wsURL: url, healthURL: normalizedHealthURL, token: token)
+            await emitGatewayDiagnostic(
+                level: .info,
+                event: "gateway.connect.success",
+                context: Self.endpointContext(wsURL: url, healthURL: normalizedHealthURL)
+            )
             await transitionConnectionState(.connected)
         } catch {
             let mapped = mapError(error)
+            var failureContext = Self.endpointContext(wsURL: url, healthURL: normalizedHealthURL)
+            failureContext["rawError"] = error.localizedDescription
+            failureContext["mappedError"] = mapped.localizedDescription
+            failureContext["mappedErrorKind"] = Self.mappedErrorKind(mapped)
+            await emitGatewayDiagnostic(
+                level: .error,
+                event: "gateway.connect.failed",
+                context: failureContext
+            )
             await transitionConnectionState(.failed(mapped.localizedDescription))
             throw mapped
         }
@@ -197,6 +517,11 @@ public actor OpenClawGatewayConnection {
         intentionalDisconnect = true
         reconnectTask?.cancel()
         reconnectTask = nil
+        await emitGatewayDiagnostic(
+            level: .info,
+            event: "gateway.disconnect.intentional",
+            context: ["hasActiveChannel": channel == nil ? "false" : "true"]
+        )
         await shutdownChannel()
         await transitionConnectionState(.disconnected)
     }
@@ -316,6 +641,64 @@ public actor OpenClawGatewayConnection {
         return payload.models.map(\.id)
     }
 
+    public func modelsListFull() async throws -> [OpenClawProtocol.ModelChoice] {
+        let data = try await requestRaw(method: "models.list", params: nil)
+        let payload = try decodePayload(method: "models.list", data: data, as: ModelsListResult.self)
+        return payload.models
+    }
+
+    public func agentsList() async throws -> OpenClawGatewayAgentsListResponse {
+        let data = try await requestRaw(method: "agents.list", params: [:])
+        return try decodePayload(
+            method: "agents.list",
+            data: data,
+            as: OpenClawGatewayAgentsListResponse.self
+        )
+    }
+
+    public func agentsFilesList(agentId: String) async throws -> OpenClawAgentFilesListResponse {
+        let params: [String: OpenClawProtocol.AnyCodable] = [
+            "agentId": OpenClawProtocol.AnyCodable(agentId)
+        ]
+        let data = try await requestRaw(method: "agents.files.list", params: params)
+        return try decodePayload(
+            method: "agents.files.list",
+            data: data,
+            as: OpenClawAgentFilesListResponse.self
+        )
+    }
+
+    public func agentsFileGet(agentId: String, name: String) async throws -> OpenClawAgentFileGetResponse {
+        let params: [String: OpenClawProtocol.AnyCodable] = [
+            "agentId": OpenClawProtocol.AnyCodable(agentId),
+            "name": OpenClawProtocol.AnyCodable(name)
+        ]
+        let data = try await requestRaw(method: "agents.files.get", params: params)
+        return try decodePayload(
+            method: "agents.files.get",
+            data: data,
+            as: OpenClawAgentFileGetResponse.self
+        )
+    }
+
+    public func agentsFileSet(
+        agentId: String,
+        name: String,
+        content: String
+    ) async throws -> OpenClawAgentFileSetResponse {
+        let params: [String: OpenClawProtocol.AnyCodable] = [
+            "agentId": OpenClawProtocol.AnyCodable(agentId),
+            "name": OpenClawProtocol.AnyCodable(name),
+            "content": OpenClawProtocol.AnyCodable(content)
+        ]
+        let data = try await requestRaw(method: "agents.files.set", params: params)
+        return try decodePayload(
+            method: "agents.files.set",
+            data: data,
+            as: OpenClawAgentFileSetResponse.self
+        )
+    }
+
     public func skillsStatus(agentId: String? = nil) async throws -> OpenClawSkillStatusReport {
         var params: [String: OpenClawProtocol.AnyCodable]?
         if let agentId, !agentId.isEmpty {
@@ -381,6 +764,20 @@ public actor OpenClawGatewayConnection {
         }
         let typed = try decodePayload(method: "config.get", data: data, as: TalkConfigResult.self)
         return typed.config
+    }
+
+    public func configGetFull() async throws -> ConfigGetResult {
+        let data = try await requestRaw(method: "config.get", params: nil)
+        return try decodePayload(method: "config.get", data: data, as: ConfigGetResult.self)
+    }
+
+    public func configPatch(raw: String, baseHash: String) async throws -> ConfigPatchResult {
+        let params: [String: OpenClawProtocol.AnyCodable] = [
+            "raw": OpenClawProtocol.AnyCodable(raw),
+            "baseHash": OpenClawProtocol.AnyCodable(baseHash)
+        ]
+        let data = try await requestRaw(method: "config.patch", params: params)
+        return try decodePayload(method: "config.patch", data: data, as: ConfigPatchResult.self)
     }
 
     public func announcePresence() async throws {
@@ -623,7 +1020,7 @@ public actor OpenClawGatewayConnection {
 
     public func addEventListener(_ handler: @escaping @Sendable (GatewayPush) async -> Void) -> UUID {
         let id = UUID()
-        listeners[id] = handler
+        listeners[id] = GatewayPushListenerRegistration(handler: handler)
         return id
     }
 
@@ -631,10 +1028,30 @@ public actor OpenClawGatewayConnection {
         listeners.removeValue(forKey: id)
     }
 
-    private func performConnect(host: String, port: Int, token: String?) async throws {
-        try await assertGatewayHealth(host: host, port: port)
+    private func performConnect(
+        wsURL: URL,
+        healthURL: URL?,
+        token: String?
+    ) async throws {
+        await emitGatewayDiagnostic(
+            level: .debug,
+            event: "gateway.handshake.begin",
+            context: Self.endpointContext(wsURL: wsURL, healthURL: healthURL)
+        )
+        if Self.shouldPreflightHealthCheck(for: wsURL), let healthURL {
+            await emitGatewayDiagnostic(
+                level: .debug,
+                event: "gateway.preflight.begin",
+                context: ["healthURL": healthURL.absoluteString]
+            )
+            try await assertGatewayHealth(url: healthURL)
+            await emitGatewayDiagnostic(
+                level: .debug,
+                event: "gateway.preflight.success",
+                context: ["healthURL": healthURL.absoluteString]
+            )
+        }
 
-        let wsURL = URL(string: "ws://\(host):\(port)/ws")!
         let options = GatewayConnectOptions(
             role: "operator",
             scopes: ["operator.admin", "operator.approvals", "operator.pairing"],
@@ -660,11 +1077,35 @@ public actor OpenClawGatewayConnection {
         )
 
         do {
+            await emitGatewayDiagnostic(
+                level: .debug,
+                event: "gateway.websocket.connect.begin",
+                context: [
+                    "webSocketURL": wsURL.absoluteString,
+                    "credentialProvided": token?.isEmpty == false ? "true" : "false",
+                ]
+            )
             try await newChannel.connect()
             channel = newChannel
             connected = true
+            await emitGatewayDiagnostic(
+                level: .info,
+                event: "gateway.websocket.connect.success",
+                context: ["webSocketURL": wsURL.absoluteString]
+            )
         } catch {
-            throw mapError(error)
+            let mapped = mapError(error)
+            await emitGatewayDiagnostic(
+                level: .error,
+                event: "gateway.websocket.connect.failed",
+                context: [
+                    "webSocketURL": wsURL.absoluteString,
+                    "rawError": error.localizedDescription,
+                    "mappedError": mapped.localizedDescription,
+                    "mappedErrorKind": Self.mappedErrorKind(mapped),
+                ]
+            )
+            throw mapped
         }
     }
 
@@ -681,7 +1122,20 @@ public actor OpenClawGatewayConnection {
         immediate: Bool
     ) async {
         guard reconnectTask == nil else { return }
+        await emitGatewayDiagnostic(
+            level: .warning,
+            event: "gateway.reconnect.begin",
+            context: [
+                "reason": reason,
+                "immediate": immediate ? "true" : "false",
+            ]
+        )
         guard let connectionParameters else {
+            await emitGatewayDiagnostic(
+                level: .error,
+                event: "gateway.reconnect.missingContext",
+                context: [:]
+            )
             await transitionConnectionState(.failed("OpenClaw reconnect failed: missing connection context."))
             return
         }
@@ -700,24 +1154,52 @@ public actor OpenClawGatewayConnection {
         reason: String,
         immediate: Bool
     ) async {
-        for attempt in 1...Self.maxReconnectAttempts {
-            guard !Task.isCancelled else { return }
-
+        await emitGatewayDiagnostic(
+            level: .debug,
+            event: "gateway.reconnect.loop.started",
+            context: [
+                "reason": reason,
+                "immediate": immediate ? "true" : "false",
+                "webSocketURL": parameters.wsURL.absoluteString,
+            ]
+        )
+        var attempt = 1
+        while !Task.isCancelled {
             await transitionConnectionState(.reconnecting(attempt: attempt))
-            let delay = Self.delaySeconds(forAttempt: attempt, immediateFirstAttempt: immediate)
-            if delay > 0 {
-                await sleepHook(UInt64(delay) * 1_000_000_000)
+            let base = Self.delaySeconds(forAttempt: attempt, immediateFirstAttempt: immediate)
+            await emitGatewayDiagnostic(
+                level: .debug,
+                event: "gateway.reconnect.attempt.begin",
+                context: [
+                    "attempt": "\(attempt)",
+                    "backoffSeconds": "\(base)",
+                    "webSocketURL": parameters.wsURL.absoluteString,
+                ]
+            )
+            if base > 0 {
+                await sleepHook(Self.jitteredDelay(base: base))
             }
             guard !Task.isCancelled else { return }
 
-            do {
-                await shutdownChannel()
+            await shutdownChannel()
 
+            var shouldIncrementAttempt = true
+            do {
                 if let reconnectConnectHook {
-                    try await reconnectConnectHook(parameters.host, parameters.port, parameters.token)
+                    let hostPort = Self.hostAndPort(for: parameters.wsURL)
+                    guard let hostPort else {
+                        throw OpenClawConnectionError.disconnected(
+                            "Reconnect failed: invalid gateway URL (\(parameters.wsURL.absoluteString))."
+                        )
+                    }
+                    try await reconnectConnectHook(hostPort.host, hostPort.port, parameters.token)
                     connected = true
                 } else {
-                    try await performConnect(host: parameters.host, port: parameters.port, token: parameters.token)
+                    try await performConnect(
+                        wsURL: parameters.wsURL,
+                        healthURL: parameters.healthURL,
+                        token: parameters.token
+                    )
                 }
 
                 if let reconnectResyncHook {
@@ -728,25 +1210,66 @@ public actor OpenClawGatewayConnection {
                 }
 
                 reconnectTask = nil
+                await emitGatewayDiagnostic(
+                    level: .info,
+                    event: "gateway.reconnect.success",
+                    context: ["attempt": "\(attempt)"]
+                )
                 await transitionConnectionState(.reconnected)
                 await transitionConnectionState(.connected)
                 return
             } catch {
                 let mapped = mapError(error)
-                if case .authFailed(let message) = mapped as? OpenClawConnectionError {
-                    reconnectTask = nil
-                    await transitionConnectionState(.failed(message))
-                    return
-                }
-                if attempt == Self.maxReconnectAttempts {
-                    break
+                await emitGatewayDiagnostic(
+                    level: .warning,
+                    event: "gateway.reconnect.attempt.failed",
+                    context: [
+                        "attempt": "\(attempt)",
+                        "rawError": error.localizedDescription,
+                        "mappedError": mapped.localizedDescription,
+                        "mappedErrorKind": Self.mappedErrorKind(mapped),
+                    ]
+                )
+                if let clawError = mapped as? OpenClawConnectionError {
+                    if case .rateLimited(let retryAfterMs) = clawError {
+                        // Don't count toward attempt; just sleep for the gateway's instruction.
+                        let ns = UInt64(max(retryAfterMs, 1000)) * 1_000_000
+                        await emitGatewayDiagnostic(
+                            level: .warning,
+                            event: "gateway.reconnect.rateLimited",
+                            context: [
+                                "attempt": "\(attempt)",
+                                "retryAfterMs": "\(retryAfterMs)",
+                            ]
+                        )
+                        await sleepHook(ns)
+                        shouldIncrementAttempt = false
+                    }
+                    if case .authFailed(let message) = clawError {
+                        reconnectTask = nil
+                        await emitGatewayDiagnostic(
+                            level: .error,
+                            event: "gateway.reconnect.stopped.authFailure",
+                            context: [
+                                "attempt": "\(attempt)",
+                                "error": message,
+                            ]
+                        )
+                        await transitionConnectionState(.failed(message))
+                        return
+                    }
                 }
             }
-        }
 
+            if shouldIncrementAttempt {
+                attempt += 1
+            }
+        }
         reconnectTask = nil
-        await transitionConnectionState(
-            .failed("OpenClaw disconnected and failed to reconnect after \(Self.maxReconnectAttempts) attempts: \(reason)")
+        await emitGatewayDiagnostic(
+            level: .debug,
+            event: "gateway.reconnect.loop.cancelled",
+            context: [:]
         )
     }
 
@@ -761,6 +1284,14 @@ public actor OpenClawGatewayConnection {
         return reconnectBackoffSeconds[index]
     }
 
+    /// Returns a nanosecond sleep duration equal to `base` seconds ± 25 % random jitter,
+    /// clamped to a minimum of 1 second.
+    private static func jitteredDelay(base: Int) -> UInt64 {
+        let jitter = Double(base) * Double.random(in: -0.25...0.25)
+        let clamped = max(1, Int((Double(base) + jitter).rounded()))
+        return UInt64(clamped) * 1_000_000_000
+    }
+
     private func transitionConnectionState(_ state: OpenClawGatewayConnectionState) async {
         connectionState = state
         for listener in connectionStateListeners.values {
@@ -768,22 +1299,81 @@ public actor OpenClawGatewayConnection {
         }
     }
 
-    private func assertGatewayHealth(host: String, port: Int) async throws {
-        guard let url = URL(string: "http://\(host):\(port)/health") else {
-            throw OpenClawConnectionError.gatewayNotReachable
-        }
-
+    private func assertGatewayHealth(url: URL) async throws {
         var request = URLRequest(url: url)
         request.timeoutInterval = 5
 
         do {
             let (_, response) = try await URLSession.shared.data(for: request)
-            guard let status = (response as? HTTPURLResponse)?.statusCode, status == 200 else {
+            let status = (response as? HTTPURLResponse)?.statusCode
+            guard let status, status == 200 else {
+                await emitGatewayDiagnostic(
+                    level: .warning,
+                    event: "gateway.preflight.failed",
+                    context: [
+                        "healthURL": url.absoluteString,
+                        "httpStatus": status.map(String.init) ?? "<missing>",
+                        "error": "non-200 status",
+                    ]
+                )
                 throw OpenClawConnectionError.gatewayNotReachable
             }
         } catch {
+            await emitGatewayDiagnostic(
+                level: .warning,
+                event: "gateway.preflight.failed",
+                context: [
+                    "healthURL": url.absoluteString,
+                    "error": error.localizedDescription,
+                ]
+            )
             throw OpenClawConnectionError.gatewayNotReachable
         }
+    }
+
+    private static func hostAndPort(for wsURL: URL) -> (host: String, port: Int)? {
+        guard let host = wsURL.host else { return nil }
+        if let port = wsURL.port {
+            return (host, port)
+        }
+        switch wsURL.scheme?.lowercased() {
+        case "wss":
+            return (host, 443)
+        case "ws":
+            return (host, 80)
+        default:
+            return nil
+        }
+    }
+
+    private static func shouldPreflightHealthCheck(for wsURL: URL) -> Bool {
+        guard let scheme = wsURL.scheme?.lowercased(),
+            scheme == "ws" || scheme == "wss"
+        else {
+            return false
+        }
+        guard let host = wsURL.host?.lowercased() else { return false }
+        return host == "127.0.0.1" || host == "localhost" || host == "::1"
+    }
+
+    private static func defaultHealthURL(for wsURL: URL) -> URL? {
+        guard var components = URLComponents(url: wsURL, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        switch components.scheme?.lowercased() {
+        case "ws":
+            components.scheme = "http"
+        case "wss":
+            components.scheme = "https"
+        case "http", "https":
+            break
+        default:
+            return nil
+        }
+        components.path = "/health"
+        components.query = nil
+        components.fragment = nil
+        return components.url
     }
 
     private func requestRaw(
@@ -796,8 +1386,19 @@ public actor OpenClawGatewayConnection {
 
         let retryDelaysMs = [0, 150, 400, 900]
         var lastError: Error = OpenClawConnectionError.noChannel
+        var lastRawError: Error = OpenClawConnectionError.noChannel
+        let requestDebugContext = Self.requestDebugContext(method: method, params: params)
 
-        for delay in retryDelaysMs {
+        if method == "sessions.patch" {
+            await emitGatewayDiagnostic(
+                level: .debug,
+                event: "gateway.request.sessionsPatch.begin",
+                context: requestDebugContext
+            )
+        }
+
+        for (index, delay) in retryDelaysMs.enumerated() {
+            let attempt = index + 1
             if delay > 0 {
                 try? await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000)
             }
@@ -806,13 +1407,209 @@ public actor OpenClawGatewayConnection {
                 guard let channel else {
                     throw OpenClawConnectionError.noChannel
                 }
-                return try await channel.request(method: method, params: params, timeoutMs: nil)
+                let data = try await channel.request(method: method, params: params, timeoutMs: nil)
+                if method == "sessions.patch" {
+                    var successContext = requestDebugContext
+                    successContext["attempt"] = "\(attempt)"
+                    successContext["maxAttempts"] = "\(retryDelaysMs.count)"
+                    await emitGatewayDiagnostic(
+                        level: .info,
+                        event: "gateway.request.sessionsPatch.success",
+                        context: successContext
+                    )
+                }
+                return data
             } catch {
-                lastError = mapError(error)
+                let mappedError = mapError(error)
+                lastRawError = error
+                lastError = mappedError
+
+                var attemptContext = requestDebugContext
+                attemptContext["method"] = method
+                attemptContext["attempt"] = "\(attempt)"
+                attemptContext["maxAttempts"] = "\(retryDelaysMs.count)"
+                attemptContext["retryDelayMs"] = "\(delay)"
+                attemptContext["hasChannel"] = channel == nil ? "false" : "true"
+                attemptContext["rawError"] = error.localizedDescription
+                attemptContext["mappedError"] = mappedError.localizedDescription
+                attemptContext["mappedErrorKind"] = Self.mappedErrorKind(mappedError)
+                attemptContext.merge(Self.gatewayResponseDebugContext(from: error)) { _, new in new }
+                await emitGatewayDiagnostic(
+                    level: .warning,
+                    event: "gateway.request.attempt.failed",
+                    context: attemptContext
+                )
             }
         }
 
+        var finalContext = requestDebugContext
+        finalContext["method"] = method
+        finalContext["attempts"] = "\(retryDelaysMs.count)"
+        finalContext["error"] = lastError.localizedDescription
+        finalContext["rawError"] = lastRawError.localizedDescription
+        finalContext["mappedErrorKind"] = Self.mappedErrorKind(lastError)
+        finalContext.merge(Self.gatewayResponseDebugContext(from: lastRawError)) { _, new in new }
+        await emitGatewayDiagnostic(
+            level: .warning,
+            event: "gateway.request.failed",
+            context: finalContext
+        )
         throw lastError
+    }
+
+    private static func requestDebugContext(
+        method: String,
+        params: [String: OpenClawProtocol.AnyCodable]?
+    ) -> [String: String] {
+        var context: [String: String] = [
+            "method": method,
+            "paramCount": "\(params?.count ?? 0)",
+            "paramKeys": requestParamKeys(params),
+        ]
+
+        guard method == "sessions.patch" else {
+            return context
+        }
+
+        if let key = params?["key"]?.value as? String, !key.isEmpty {
+            context["sessionKey"] = key
+        }
+        if let model = params?["model"]?.value as? String, !model.isEmpty {
+            context["model"] = model
+        }
+        if let sendPolicy = params?["sendPolicy"]?.value as? String, !sendPolicy.isEmpty {
+            context["sendPolicy"] = sendPolicy
+        }
+        if let paramsJSON = diagnosticJSONString(from: params) {
+            context.merge(previewContext(value: paramsJSON, keyPrefix: "params")) { _, new in new }
+        }
+        return context
+    }
+
+    private static func requestParamKeys(_ params: [String: OpenClawProtocol.AnyCodable]?) -> String {
+        guard let params, !params.isEmpty else { return "<none>" }
+        return params.keys.sorted().joined(separator: ",")
+    }
+
+    private static func gatewayResponseDebugContext(from error: Error) -> [String: String] {
+        guard let responseError = error as? GatewayResponseError else {
+            return [:]
+        }
+
+        var context: [String: String] = [
+            "gatewayErrorCode": responseError.code,
+            "gatewayErrorMessage": responseError.message,
+        ]
+        if let detailsJSON = diagnosticJSONString(from: responseError.details), !detailsJSON.isEmpty {
+            context.merge(previewContext(value: detailsJSON, keyPrefix: "gatewayErrorDetails")) { _, new in new }
+        }
+        return context
+    }
+
+    private static func diagnosticJSONString(
+        from params: [String: OpenClawProtocol.AnyCodable]?
+    ) -> String? {
+        guard let params else { return nil }
+        let dictionary = params.reduce(into: [String: Any]()) { partialResult, entry in
+            partialResult[entry.key] = entry.value.value
+        }
+        return diagnosticJSONString(from: dictionary)
+    }
+
+    private static func diagnosticJSONString(
+        from params: [String: OpenClawProtocol.AnyCodable]
+    ) -> String? {
+        let dictionary = params.reduce(into: [String: Any]()) { partialResult, entry in
+            partialResult[entry.key] = entry.value.value
+        }
+        return diagnosticJSONString(from: dictionary)
+    }
+
+    private static func diagnosticJSONString(from dictionary: [String: Any]) -> String? {
+        let sanitized = sanitizedDiagnosticValue(dictionary, key: nil, depth: 0)
+        guard JSONSerialization.isValidJSONObject(sanitized),
+            let data = try? JSONSerialization.data(withJSONObject: sanitized, options: [.sortedKeys])
+        else {
+            return String(describing: sanitized)
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func sanitizedDiagnosticValue(_ raw: Any, key: String?, depth: Int) -> Any {
+        if let key, isSensitiveDiagnosticKey(key) {
+            return "<redacted>"
+        }
+
+        if depth >= 5 {
+            return "<max-depth>"
+        }
+
+        switch raw {
+        case let value as String:
+            return value
+        case let value as NSNumber:
+            return value
+        case let value as [OpenClawProtocol.AnyCodable]:
+            var items = value.prefix(maxDiagnosticArrayValues).map { item in
+                sanitizedDiagnosticValue(item.value, key: nil, depth: depth + 1)
+            }
+            if value.count > maxDiagnosticArrayValues {
+                items.append("...(\(value.count - maxDiagnosticArrayValues) more)")
+            }
+            return items
+        case let value as [Any]:
+            var items = value.prefix(maxDiagnosticArrayValues).map { item in
+                sanitizedDiagnosticValue(item, key: nil, depth: depth + 1)
+            }
+            if value.count > maxDiagnosticArrayValues {
+                items.append("...(\(value.count - maxDiagnosticArrayValues) more)")
+            }
+            return items
+        case let value as [String: OpenClawProtocol.AnyCodable]:
+            var sanitized: [String: Any] = [:]
+            for key in value.keys.sorted().prefix(maxDiagnosticObjectKeys) {
+                sanitized[key] = sanitizedDiagnosticValue(value[key]?.value as Any, key: key, depth: depth + 1)
+            }
+            if value.count > maxDiagnosticObjectKeys {
+                sanitized["<truncatedKeys>"] = value.count - maxDiagnosticObjectKeys
+            }
+            return sanitized
+        case let value as [String: Any]:
+            var sanitized: [String: Any] = [:]
+            for key in value.keys.sorted().prefix(maxDiagnosticObjectKeys) {
+                sanitized[key] = sanitizedDiagnosticValue(value[key] as Any, key: key, depth: depth + 1)
+            }
+            if value.count > maxDiagnosticObjectKeys {
+                sanitized["<truncatedKeys>"] = value.count - maxDiagnosticObjectKeys
+            }
+            return sanitized
+        case is NSNull:
+            return NSNull()
+        default:
+            return String(describing: raw)
+        }
+    }
+
+    private static func isSensitiveDiagnosticKey(_ key: String) -> Bool {
+        let normalized = key.lowercased()
+        return diagnosticSensitiveKeyFragments.contains { fragment in
+            normalized.contains(fragment)
+        }
+    }
+
+    private static func previewContext(value: String, keyPrefix: String) -> [String: String] {
+        guard !value.isEmpty else { return [:] }
+        if value.count <= 220 {
+            return [
+                "\(keyPrefix)Value": value,
+                "\(keyPrefix)Length": "\(value.count)",
+            ]
+        }
+        return [
+            "\(keyPrefix)Head": String(value.prefix(220)),
+            "\(keyPrefix)Tail": String(value.suffix(160)),
+            "\(keyPrefix)Length": "\(value.count)",
+        ]
     }
 
     private func encodeParams<T: Encodable>(_ value: T) throws -> [String: OpenClawProtocol.AnyCodable] {
@@ -940,41 +1737,80 @@ public actor OpenClawGatewayConnection {
         return nil
     }
 
+    private static func stringValue(
+        from dictionary: [String: OpenClawProtocol.AnyCodable]?,
+        keys: [String]
+    ) -> String? {
+        guard let dictionary else { return nil }
+        for key in keys {
+            if let value = dictionary[key]?.value as? String {
+                let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !normalized.isEmpty {
+                    return normalized
+                }
+            }
+        }
+        return nil
+    }
+
     private static func runId(for frame: EventFrame) -> String? {
+        if let runId = stringValue(from: frame.eventmeta, keys: ["runId", "runid"]) {
+            return runId
+        }
+
         guard let payload = frame.payload?.value as? [String: OpenClawProtocol.AnyCodable] else {
             return nil
         }
-        if let runId = payload["runId"]?.value as? String {
+        if let runId = payload["runId"]?.value as? String, !runId.isEmpty {
             return runId
         }
-        if let runId = payload["runid"]?.value as? String {
+        if let runId = payload["runid"]?.value as? String, !runId.isEmpty {
             return runId
         }
-        if let nested = payload["data"]?.value as? [String: OpenClawProtocol.AnyCodable],
-            let runId = nested["runId"]?.value as? String
-        {
-            return runId
+        if let nested = payload["data"]?.value as? [String: OpenClawProtocol.AnyCodable] {
+            if let runId = nested["runId"]?.value as? String, !runId.isEmpty {
+                return runId
+            }
+            if let runId = nested["runid"]?.value as? String, !runId.isEmpty {
+                return runId
+            }
         }
         return nil
     }
 
     private static func sessionKey(for frame: EventFrame) -> String? {
+        if let key = stringValue(from: frame.eventmeta, keys: ["sessionKey", "sessionkey"]) {
+            return key
+        }
+
         guard let payload = frame.payload?.value as? [String: OpenClawProtocol.AnyCodable] else {
             return nil
         }
         if let key = payload["sessionKey"]?.value as? String, !key.isEmpty {
             return key
         }
-        if let data = payload["data"]?.value as? [String: OpenClawProtocol.AnyCodable],
-            let key = data["sessionKey"]?.value as? String,
-            !key.isEmpty
-        {
+        if let key = payload["sessionkey"]?.value as? String, !key.isEmpty {
             return key
+        }
+        if let data = payload["data"]?.value as? [String: OpenClawProtocol.AnyCodable] {
+            if let key = data["sessionKey"]?.value as? String, !key.isEmpty {
+                return key
+            }
+            if let key = data["sessionkey"]?.value as? String, !key.isEmpty {
+                return key
+            }
         }
         return nil
     }
 
     private static func lifecyclePhase(for frame: EventFrame) -> String? {
+        if let stream = stringValue(from: frame.eventmeta, keys: ["stream"])?.lowercased(),
+            stream == "lifecycle",
+            let phase = stringValue(from: frame.eventmeta, keys: ["phase"])
+        {
+            return phase.lowercased()
+        }
+
         guard let payload = frame.payload?.value as? [String: OpenClawProtocol.AnyCodable],
             let stream = payload["stream"]?.value as? String,
             stream.lowercased() == "lifecycle",
@@ -1044,9 +1880,15 @@ public actor OpenClawGatewayConnection {
 
     private func handlePush(_ push: GatewayPush) async {
         if case let .event(frame) = push {
-            recentEventFrames.append(frame)
-            if recentEventFrames.count > Self.maxBufferedEventFrames {
-                recentEventFrames.removeFirst(recentEventFrames.count - Self.maxBufferedEventFrames)
+            if Self.runId(for: frame) != nil {
+                recentEventFrames.append(frame)
+                if recentEventFrames.count > Self.maxBufferedEventFrames {
+                    let dropped = recentEventFrames.count - Self.maxBufferedEventFrames
+                    recentEventFrames.removeFirst(dropped)
+                    #if DEBUG
+                    print("[OpenClawGatewayConnection] ⚠️ event buffer overflow — dropped \(dropped) frame(s)")
+                    #endif
+                }
             }
 
             if let runId = Self.runId(for: frame),
@@ -1063,26 +1905,77 @@ public actor OpenClawGatewayConnection {
             }
         }
 
-        for listener in listeners.values {
-            Task {
-                await listener(push)
+        let listenerIDs = Array(listeners.keys)
+        for id in listenerIDs {
+            await enqueuePush(push, for: id)
+        }
+    }
+
+    private func enqueuePush(_ push: GatewayPush, for listenerID: UUID) async {
+        guard var registration = listeners[listenerID] else { return }
+
+        if registration.pendingPushes.count >= Self.maxPendingPushesPerListener {
+            let dropped = registration.pendingPushes.count - Self.maxPendingPushesPerListener + 1
+            registration.pendingPushes.removeFirst(dropped)
+            #if DEBUG
+            print(
+                "[OpenClawGatewayConnection] ⚠️ listener backlog overflow — dropped \(dropped) push(es) for listener \(listenerID.uuidString)"
+            )
+            #endif
+        }
+
+        registration.pendingPushes.append(push)
+        let shouldStartDispatch = !registration.isDispatching
+        if shouldStartDispatch {
+            registration.isDispatching = true
+        }
+        listeners[listenerID] = registration
+
+        guard shouldStartDispatch else { return }
+        Task { [weak self] in
+            await self?.drainQueuedPushes(for: listenerID)
+        }
+    }
+
+    private func drainQueuedPushes(for listenerID: UUID) async {
+        while true {
+            guard var registration = listeners[listenerID] else { return }
+            guard !registration.pendingPushes.isEmpty else {
+                registration.isDispatching = false
+                listeners[listenerID] = registration
+                return
             }
+
+            let push = registration.pendingPushes.removeFirst()
+            let handler = registration.handler
+            listeners[listenerID] = registration
+            await handler(push)
         }
     }
 
     private func handleDisconnect(_ reason: String) async {
         let wasConnected = connected
-        connected = false
+        await shutdownChannel()
 
         if !reason.isEmpty {
-            for listener in listeners.values {
-                Task {
-                    await listener(.seqGap(expected: 0, received: 0))
-                }
+            let listenerIDs = Array(listeners.keys)
+            for id in listenerIDs {
+                await enqueuePush(.disconnected(reason: reason), for: id)
             }
         }
 
         let disposition = Self.classifyDisconnect(reason: reason, intentional: intentionalDisconnect)
+        await emitGatewayDiagnostic(
+            level: .warning,
+            event: "gateway.disconnect.received",
+            context: [
+                "reason": reason,
+                "wasConnected": wasConnected ? "true" : "false",
+                "intentional": intentionalDisconnect ? "true" : "false",
+                "disposition": "\(disposition)",
+                "closeCode": Self.closeCode(in: reason).map(String.init) ?? "<none>",
+            ]
+        )
         switch disposition {
         case .intentional:
             await transitionConnectionState(.disconnected)
@@ -1090,15 +1983,30 @@ public actor OpenClawGatewayConnection {
         case .authFailure:
             reconnectTask?.cancel()
             reconnectTask = nil
+            await emitGatewayDiagnostic(
+                level: .error,
+                event: "gateway.disconnect.authFailure",
+                context: ["reason": reason]
+            )
             await transitionConnectionState(.failed("Gateway authentication failed. Reconfigure credentials."))
 
         case .slowConsumer:
             guard wasConnected else { return }
+            await emitGatewayDiagnostic(
+                level: .warning,
+                event: "gateway.disconnect.slowConsumer.reconnect",
+                context: ["reason": reason]
+            )
             await transitionConnectionState(.disconnected)
             await beginReconnect(after: reason, immediate: true)
 
         case .unexpected:
             guard wasConnected else { return }
+            await emitGatewayDiagnostic(
+                level: .warning,
+                event: "gateway.disconnect.unexpected.reconnect",
+                context: ["reason": reason]
+            )
             await transitionConnectionState(.disconnected)
             await beginReconnect(after: reason, immediate: false)
         }
@@ -1106,7 +2014,9 @@ public actor OpenClawGatewayConnection {
 
 #if DEBUG
     func _testSetReconnectContext(host: String, port: Int, token: String?) {
-        connectionParameters = OpenClawConnectionParameters(host: host, port: port, token: token)
+        let wsURL = URL(string: "ws://\(host):\(port)/ws")!
+        let healthURL = URL(string: "http://\(host):\(port)/health")
+        connectionParameters = OpenClawConnectionParameters(wsURL: wsURL, healthURL: healthURL, token: token)
     }
 
     func _testSetConnected(_ value: Bool) {
