@@ -92,37 +92,37 @@ public struct ThemeColors: Codable, Equatable, Sendable {
     // Cursor
     public var cursorColor: String
 
-    // Default dark theme colors - WCAG AA compliant
+    // Default dark theme colors — Dark Tech + Cyan
     public init(
-        primaryText: String = "#f9fafb",  // ~17:1 contrast ✓
-        secondaryText: String = "#a1a1aa",  // ~8:1 contrast ✓ (was #9ca3af)
-        tertiaryText: String = "#8b8b94",  // ~5.5:1 contrast ✓ (was #6b7280, ~3.5:1)
-        primaryBackground: String = "#0f0f10",
-        secondaryBackground: String = "#18181b",
-        tertiaryBackground: String = "#27272a",
-        sidebarBackground: String = "#141416",
-        sidebarSelectedBackground: String = "#2a2a2e",
-        accentColor: String = "#60a5fa",  // Higher contrast for links (was #3b82f6)
-        accentColorLight: String = "#93c5fd",
-        primaryBorder: String = "#3f3f46",  // Improved visibility (was #27272a)
-        secondaryBorder: String = "#52525b",  // Improved visibility (was #3f3f46)
-        focusBorder: String = "#60a5fa",  // Matches accentColor for consistency
-        successColor: String = "#22c55e",  // Good contrast on dark ✓
-        warningColor: String = "#fbbf24",  // Brighter for dark bg ✓ (was #f59e0b)
-        errorColor: String = "#f87171",  // Brighter for dark bg ✓ (was #ef4444)
-        infoColor: String = "#60a5fa",  // Brighter blue for dark bg (was #3b82f6)
-        cardBackground: String = "#18181b",
-        cardBorder: String = "#3f3f46",
-        buttonBackground: String = "#18181b",
-        buttonBorder: String = "#3f3f46",
-        inputBackground: String = "#18181b",
-        inputBorder: String = "#52525b",  // Improved visibility (was #3f3f46)
-        glassTintOverlay: String = "#00000030",
-        codeBlockBackground: String = "#00000059",
+        primaryText: String = "#ededed",
+        secondaryText: String = "#a3a3a3",
+        tertiaryText: String = "#737373",
+        primaryBackground: String = "#0c0c0c",
+        secondaryBackground: String = "#171717",
+        tertiaryBackground: String = "#262626",
+        sidebarBackground: String = "#111111",
+        sidebarSelectedBackground: String = "#222222",
+        accentColor: String = "#06b6d4",
+        accentColorLight: String = "#22d3ee",
+        primaryBorder: String = "#262626",
+        secondaryBorder: String = "#363636",
+        focusBorder: String = "#06b6d4",
+        successColor: String = "#22c55e",
+        warningColor: String = "#eab308",
+        errorColor: String = "#ef4444",
+        infoColor: String = "#a3a3a3",
+        cardBackground: String = "#171717",
+        cardBorder: String = "#262626",
+        buttonBackground: String = "#06b6d4",
+        buttonBorder: String = "#06b6d4",
+        inputBackground: String = "#1a1a1a",
+        inputBorder: String = "#363636",
+        glassTintOverlay: String = "#1a1a1a70",
+        codeBlockBackground: String = "#1a1a1a",
         shadowColor: String = "#000000",
-        selectionColor: String = "#3b82f680",
-        cursorColor: String = "#3b82f6",
-        placeholderText: String? = "#a1a1aa"  // Matches secondaryText for better visibility
+        selectionColor: String = "#06b6d440",
+        cursorColor: String = "#06b6d4",
+        placeholderText: String? = "#a3a3a3"
     ) {
         self.primaryText = primaryText
         self.secondaryText = secondaryText
@@ -158,38 +158,38 @@ public struct ThemeColors: Codable, Equatable, Sendable {
     /// Create colors from dark theme defaults
     public static var darkDefaults: ThemeColors { ThemeColors() }
 
-    /// Create colors from light theme defaults - WCAG AA compliant
+    /// Create colors from light theme defaults — Dark Tech + Cyan light
     public static var lightDefaults: ThemeColors {
         ThemeColors(
-            primaryText: "#1a1a1a",  // ~17:1 contrast ✓
-            secondaryText: "#525252",  // ~7:1 contrast ✓ (was #6b7280, ~5:1)
-            tertiaryText: "#6b6b6b",  // ~5.5:1 contrast ✓ (was #9ca3af, ~2.7:1)
-            primaryBackground: "#ffffff",
-            secondaryBackground: "#f9fafb",
-            tertiaryBackground: "#f3f4f6",
-            sidebarBackground: "#f5f5f7",
-            sidebarSelectedBackground: "#e8e8ed",
-            accentColor: "#1d4ed8",  // Darker blue for better contrast (was #2563eb)
-            accentColorLight: "#3b82f6",
-            primaryBorder: "#d1d5db",  // Improved visibility (was #e5e7eb)
-            secondaryBorder: "#e5e7eb",  // Decorative (was #f3f4f6)
-            focusBorder: "#2563eb",
-            successColor: "#15803d",  // ~4.5:1 on white ✓ (was #10b981, ~2.5:1)
-            warningColor: "#a16207",  // ~4.5:1 on white ✓ (was #f59e0b, ~2.1:1)
-            errorColor: "#dc2626",  // ~4.5:1 on white ✓ (was #ef4444, ~3.1:1)
-            infoColor: "#1d4ed8",  // ~7:1 on white ✓ (was #3b82f6, ~3.8:1)
+            primaryText: "#0a0a0a",
+            secondaryText: "#525252",
+            tertiaryText: "#737373",
+            primaryBackground: "#fafafa",
+            secondaryBackground: "#f5f5f5",
+            tertiaryBackground: "#e5e5e5",
+            sidebarBackground: "#f5f5f5",
+            sidebarSelectedBackground: "#e5e5e5",
+            accentColor: "#0891b2",
+            accentColorLight: "#06b6d4",
+            primaryBorder: "#d4d4d4",
+            secondaryBorder: "#e5e5e5",
+            focusBorder: "#0891b2",
+            successColor: "#15803d",
+            warningColor: "#a16207",
+            errorColor: "#dc2626",
+            infoColor: "#525252",
             cardBackground: "#ffffff",
-            cardBorder: "#d1d5db",  // Improved visibility
-            buttonBackground: "#ffffff",
-            buttonBorder: "#9ca3af",  // ~3:1 for UI ✓ (was #d1d5db, ~1.5:1)
+            cardBorder: "#d4d4d4",
+            buttonBackground: "#0891b2",
+            buttonBorder: "#0891b2",
             inputBackground: "#ffffff",
-            inputBorder: "#9ca3af",  // ~3:1 for UI ✓ (was #d1d5db, ~1.5:1)
-            glassTintOverlay: "#0000001f",
-            codeBlockBackground: "#00000014",
+            inputBorder: "#a3a3a3",
+            glassTintOverlay: "#f5f5f560",
+            codeBlockBackground: "#f5f5f5",
             shadowColor: "#000000",
-            selectionColor: "#2563eb50",
-            cursorColor: "#2563eb",
-            placeholderText: "#525252"  // Matches secondaryText for better visibility
+            selectionColor: "#0891b230",
+            cursorColor: "#0891b2",
+            placeholderText: "#525252"
         )
     }
 }
@@ -601,7 +601,7 @@ public struct CustomTheme: Codable, Equatable, Sendable {
         isDark = try container.decode(Bool.self, forKey: .isDark)
     }
 
-    /// Default dark theme
+    /// Default dark theme — Dark Tech + Cyan
     public static var darkDefault: CustomTheme {
         CustomTheme(
             metadata: ThemeMetadata(
@@ -611,18 +611,33 @@ public struct CustomTheme: Codable, Equatable, Sendable {
             ),
             colors: .darkDefaults,
             background: .default,
-            glass: .darkDefaults,
+            glass: ThemeGlass(
+                enabled: false,
+                material: .hudWindow,
+                blurRadius: 0,
+                opacityPrimary: 0.0,
+                opacitySecondary: 0.0,
+                opacityTertiary: 0.0,
+                edgeLight: "#ffffff00",
+                windowBackingOpacity: 1.0
+            ),
             typography: .default,
             animationConfig: .default,
             shadows: .darkDefaults,
-            messages: .default,
+            messages: ThemeMessages(
+                bubbleCornerRadius: 12,
+                userBubbleOpacity: 1.0,
+                assistantBubbleOpacity: 0.85,
+                borderWidth: 0.5,
+                showEdgeLight: false
+            ),
             borders: .default,
             isBuiltIn: true,
             isDark: true
         )
     }
 
-    /// Default light theme
+    /// Default light theme — Dark Tech + Cyan light
     public static var lightDefault: CustomTheme {
         CustomTheme(
             metadata: ThemeMetadata(
@@ -632,13 +647,25 @@ public struct CustomTheme: Codable, Equatable, Sendable {
             ),
             colors: .lightDefaults,
             background: .default,
-            glass: .lightDefaults,
+            glass: ThemeGlass(
+                enabled: false,
+                material: .hudWindow,
+                blurRadius: 0,
+                opacityPrimary: 0.0,
+                opacitySecondary: 0.0,
+                opacityTertiary: 0.0,
+                edgeLight: "#ffffff00",
+                windowBackingOpacity: 1.0
+            ),
             typography: .default,
             animationConfig: .default,
             shadows: .lightDefaults,
             messages: ThemeMessages(
+                bubbleCornerRadius: 12,
                 userBubbleOpacity: 0.25,
-                assistantBubbleOpacity: 0.9
+                assistantBubbleOpacity: 0.9,
+                borderWidth: 0.5,
+                showEdgeLight: false
             ),
             borders: ThemeBorders(
                 borderOpacity: 0.25

@@ -220,60 +220,61 @@ extension ThemeProtocol {
 // MARK: - Light Theme
 
 struct LightTheme: ThemeProtocol {
-    // Primary colors - Warm, rich blacks (WCAG AA compliant)
-    let primaryText = Color(hex: "1a1a18")  // ~17:1 contrast ✓
-    let secondaryText = Color(hex: "555550")  // ~7:1 contrast ✓ (was #6b6b66)
-    let tertiaryText = Color(hex: "717168")  // ~5.5:1 contrast ✓ (was #9c9c96, ~2.8:1)
-    let placeholderText = Color(hex: "555550")  // Matches secondaryText for better visibility
+    // Primary colors — Dark Tech + Cyan light variant
+    let primaryText = Color(hex: "0a0a0a")
+    let secondaryText = Color(hex: "525252")
+    let tertiaryText = Color(hex: "737373")
+    let placeholderText = Color(hex: "525252")
 
-    // Background colors - Warm whites with depth
-    let primaryBackground = Color(hex: "ffffff")
-    let secondaryBackground = Color(hex: "f9f9f7")
-    let tertiaryBackground = Color(hex: "f2f2ef")
+    // Background colors
+    let primaryBackground = Color(hex: "fafafa")
+    let secondaryBackground = Color(hex: "f5f5f5")
+    let tertiaryBackground = Color(hex: "e5e5e5")
 
-    // Sidebar colors - Warm and inviting
-    let sidebarBackground = Color(hex: "f7f7f5")
-    let sidebarSelectedBackground = Color(hex: "eaeae6")
+    // Sidebar colors
+    let sidebarBackground = Color(hex: "f5f5f5")
+    let sidebarSelectedBackground = Color(hex: "e5e5e5")
 
-    // Accent colors - Rich warm black
-    let accentColor = Color(hex: "1a1a18")
-    let accentColorLight = Color(hex: "3d3d3a")
+    // Accent colors — Cyan (darker for light bg contrast)
+    let accentColor = Color(hex: "0891b2")
+    let accentColorLight = Color(hex: "06b6d4")
 
-    // Border colors - Warm with improved visibility (WCAG AA for UI: 3:1)
-    let primaryBorder = Color(hex: "d0d0cc")  // ~2.2:1, subtle but visible (was #e8e8e4)
-    let secondaryBorder = Color(hex: "e0e0dc")  // Decorative borders (was #f0f0ec)
-    let focusBorder = Color(hex: "4a4a46")
+    // Border colors
+    let primaryBorder = Color(hex: "d4d4d4")
+    let secondaryBorder = Color(hex: "e5e5e5")
+    let focusBorder = Color(hex: "0891b2")
 
-    // Status colors - Accessible on light backgrounds (WCAG AA compliant)
-    let successColor = Color(hex: "15803d")  // ~4.5:1 on white ✓ (was #22c55e, ~2.3:1)
-    let warningColor = Color(hex: "a16207")  // ~4.5:1 on white ✓ (was #eab308, ~1.9:1)
-    let errorColor = Color(hex: "dc2626")  // ~4.5:1 on white ✓ (was #ef4444, ~3.1:1)
-    let infoColor = Color(hex: "555550")  // Matches secondaryText (was #6b6b66)
+    // Status colors
+    let successColor = Color(hex: "15803d")
+    let warningColor = Color(hex: "a16207")
+    let errorColor = Color(hex: "dc2626")
+    let infoColor = Color(hex: "525252")
 
-    // Component specific - Warm and layered
+    // Component specific
     let cardBackground = Color(hex: "ffffff")
-    let cardBorder = Color(hex: "d0d0cc")  // Improved visibility
-    let buttonBackground = Color(hex: "1a1a18")
-    let buttonBorder = Color(hex: "1a1a18")
+    let cardBorder = Color(hex: "d4d4d4")
+    let buttonBackground = Color(hex: "0891b2")
+    let buttonBorder = Color(hex: "0891b2")
     let inputBackground = Color(hex: "ffffff")
-    let inputBorder = Color(hex: "a8a8a3")  // ~3.5:1 for UI ✓ (was #d8d8d4, ~1.6:1)
-    let glassTintOverlay = Color(hex: "f5f5f2").opacity(0.6)
-    let codeBlockBackground = Color(hex: "f5f5f2")
+    let inputBorder = Color(hex: "a3a3a3")
+    let glassTintOverlay = Color(hex: "f5f5f5").opacity(0.6)
+    let codeBlockBackground = Color(hex: "f5f5f5")
 
-    // Selection - Light blue highlight
-    let selectionColor = Color(hex: "3b82f6").opacity(0.3)
+    // Selection
+    let selectionColor = Color(hex: "0891b2").opacity(0.3)
 
-    // Cursor - High contrast black
-    let cursorColor = Color(hex: "1a1a18")
+    // Cursor
+    let cursorColor = Color(hex: "0891b2")
 
-    // Glass specific - Rich depth with improved contrast
-    let glassOpacityPrimary: Double = 0.25
-    let glassOpacitySecondary: Double = 0.18
-    let glassOpacityTertiary: Double = 0.10
-    let glassBlurRadius: Double = 24
-    let glassEdgeLight = Color.white.opacity(0.5)
+    // Glass — disabled for flat look
+    let glassEnabled = false
+    let glassOpacityPrimary: Double = 0.0
+    let glassOpacitySecondary: Double = 0.0
+    let glassOpacityTertiary: Double = 0.0
+    let glassBlurRadius: Double = 0
+    let glassEdgeLight = Color.white.opacity(0.0)
 
-    // Card shadows - Soft and diffuse
+    // Card shadows
     let cardShadowRadius: Double = 12
     let cardShadowRadiusHover: Double = 20
     let cardShadowY: Double = 3
@@ -289,9 +290,13 @@ struct LightTheme: ThemeProtocol {
         .spring(response: animationSpringResponse, dampingFraction: animationSpringDamping)
     }
 
-    // Shadows - Warm and soft
+    // Shadows
     let shadowColor = Color(hex: "8e8e93")
     let shadowOpacity: Double = 0.08
+
+    // Message bubble — flat, no glass
+    let bubbleCornerRadius: Double = 12
+    let showEdgeLight = false
 
     let isDark = false
 }
@@ -299,60 +304,61 @@ struct LightTheme: ThemeProtocol {
 // MARK: - Dark Theme
 
 struct DarkTheme: ThemeProtocol {
-    // Primary colors - Warm off-white (WCAG AA compliant)
-    let primaryText = Color(hex: "f5f5f2")  // ~17:1 contrast ✓
-    let secondaryText = Color(hex: "a8a8a3")  // ~8.5:1 contrast ✓
-    let tertiaryText = Color(hex: "8a8a85")  // ~5.5:1 contrast ✓ (was #6e6e6a, ~3.9:1)
-    let placeholderText = Color(hex: "a1a1aa")  // Matches secondaryText for better visibility
+    // Primary colors — Dark Tech + Cyan (WCAG AA compliant)
+    let primaryText = Color(hex: "ededed")
+    let secondaryText = Color(hex: "a3a3a3")
+    let tertiaryText = Color(hex: "737373")
+    let placeholderText = Color(hex: "a3a3a3")
 
-    // Background colors - Rich, warm blacks with depth
-    let primaryBackground = Color(hex: "0c0c0b")
-    let secondaryBackground = Color(hex: "161614")
-    let tertiaryBackground = Color(hex: "1e1e1c")
+    // Background colors — True dark
+    let primaryBackground = Color(hex: "0c0c0c")
+    let secondaryBackground = Color(hex: "171717")
+    let tertiaryBackground = Color(hex: "262626")
 
-    // Sidebar colors - Deep and warm
-    let sidebarBackground = Color(hex: "111110")
-    let sidebarSelectedBackground = Color(hex: "222220")
+    // Sidebar colors
+    let sidebarBackground = Color(hex: "111111")
+    let sidebarSelectedBackground = Color(hex: "222222")
 
-    // Accent colors - Warm cream
-    let accentColor = Color(hex: "f0f0eb")
-    let accentColorLight = Color(hex: "a8a8a3")
+    // Accent colors — Cyan
+    let accentColor = Color(hex: "06b6d4")
+    let accentColorLight = Color(hex: "22d3ee")
 
-    // Border colors - Warm and subtle
-    let primaryBorder = Color(hex: "2a2a28")
-    let secondaryBorder = Color(hex: "363633")
-    let focusBorder = Color(hex: "8a8a85")
+    // Border colors
+    let primaryBorder = Color(hex: "262626")
+    let secondaryBorder = Color(hex: "363636")
+    let focusBorder = Color(hex: "06b6d4")
 
-    // Status colors - Keep functional
+    // Status colors
     let successColor = Color(hex: "22c55e")
     let warningColor = Color(hex: "eab308")
     let errorColor = Color(hex: "ef4444")
-    let infoColor = Color(hex: "a8a8a3")
+    let infoColor = Color(hex: "a3a3a3")
 
-    // Component specific - Layered depth
-    let cardBackground = Color(hex: "161614")
-    let cardBorder = Color(hex: "2a2a28")
-    let buttonBackground = Color(hex: "f0f0eb")
-    let buttonBorder = Color(hex: "f0f0eb")
-    let inputBackground = Color(hex: "1a1a18")
-    let inputBorder = Color(hex: "363633")
-    let glassTintOverlay = Color(hex: "1a1a18").opacity(0.7)
-    let codeBlockBackground = Color(hex: "1a1a18")
+    // Component specific — Dark Tech surfaces
+    let cardBackground = Color(hex: "171717")
+    let cardBorder = Color(hex: "262626")
+    let buttonBackground = Color(hex: "06b6d4")
+    let buttonBorder = Color(hex: "06b6d4")
+    let inputBackground = Color(hex: "1a1a1a")
+    let inputBorder = Color(hex: "363636")
+    let glassTintOverlay = Color(hex: "1a1a1a").opacity(0.7)
+    let codeBlockBackground = Color(hex: "1a1a1a")
 
-    // Selection - Subtle warm highlight
-    let selectionColor = Color(hex: "f0f0eb").opacity(0.25)
+    // Selection
+    let selectionColor = Color(hex: "06b6d4").opacity(0.25)
 
-    // Cursor - High contrast white
-    let cursorColor = Color(hex: "f0f0eb")
+    // Cursor
+    let cursorColor = Color(hex: "06b6d4")
 
-    // Glass specific - Rich and premium with improved contrast
-    let glassOpacityPrimary: Double = 0.20
-    let glassOpacitySecondary: Double = 0.15
-    let glassOpacityTertiary: Double = 0.08
-    let glassBlurRadius: Double = 28
-    let glassEdgeLight = Color.white.opacity(0.12)
+    // Glass specific — disabled for flat Dark Tech look
+    let glassEnabled = false
+    let glassOpacityPrimary: Double = 0.0
+    let glassOpacitySecondary: Double = 0.0
+    let glassOpacityTertiary: Double = 0.0
+    let glassBlurRadius: Double = 0
+    let glassEdgeLight = Color.white.opacity(0.0)
 
-    // Card shadows - Soft glow
+    // Card shadows
     let cardShadowRadius: Double = 16
     let cardShadowRadiusHover: Double = 24
     let cardShadowY: Double = 4
@@ -368,9 +374,14 @@ struct DarkTheme: ThemeProtocol {
         .spring(response: animationSpringResponse, dampingFraction: animationSpringDamping)
     }
 
-    // Shadows - Deep and rich
+    // Shadows
     let shadowColor = Color.black
     let shadowOpacity: Double = 0.4
+
+    // Message bubble — flat, no glass
+    let bubbleCornerRadius: Double = 12
+    let userBubbleOpacity: Double = 1.0
+    let showEdgeLight = false
 
     let isDark = true
 }
