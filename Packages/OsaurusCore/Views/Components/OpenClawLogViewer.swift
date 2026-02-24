@@ -546,13 +546,9 @@ struct OpenClawLogViewer: View {
     }
 
     private func startAutoRefreshLoop() {
-        if refreshTask != nil { return }
-        refreshTask = Task { [self] in
-            while !Task.isCancelled {
-                refreshStatus()
-                try? await Task.sleep(nanoseconds: 2_500_000_000)
-            }
-        }
+        // Single initial load. Auto-refresh removed — users click the
+        // refresh button when they want updated logs.
+        refreshStatus()
     }
 
     private func stopAutoRefreshLoop() {
