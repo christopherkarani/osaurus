@@ -27,6 +27,7 @@ public final class OpenClawNotificationService {
     private var lastInboundByAccount: [String: Date] = [:]
     private var unreadCount = 0
     private var listeningStartedAt: Date?
+    public private(set) var isPaused = false
 
     private init() {}
 
@@ -35,10 +36,15 @@ public final class OpenClawNotificationService {
         guard pollTask == nil else { return }
 
         listeningStartedAt = Date()
+        isPaused = false
         registerCategory()
         pollTask = Task { [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
+                if self.isPaused {
+                    await self.sleep(nanoseconds: 500_000_000)
+                    continue
+                }
                 await self.pollAndProcessStatus()
                 await self.sleep(nanoseconds: 20_000_000_000)
             }
@@ -49,6 +55,15 @@ public final class OpenClawNotificationService {
         pollTask?.cancel()
         pollTask = nil
         listeningStartedAt = nil
+        isPaused = false
+    }
+
+    public func pauseListening() {
+        isPaused = true
+    }
+
+    public func resumeListening() {
+        isPaused = false
     }
 
     public func markAllAsRead() {
@@ -329,6 +344,7 @@ public final class OpenClawNotificationService {
         unreadCount = 0
         setDockBadge(nil)
         listeningStartedAt = nil
+        isPaused = false
     }
 
     func _testSetListeningStartedAt(_ value: Date?) {

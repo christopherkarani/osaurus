@@ -313,6 +313,20 @@ struct OpenClawNotificationServiceTests {
     }
 
     @Test
+    func pauseListening_skipsPolling() async throws {
+        let service = OpenClawNotificationService.shared
+        service.startListening()
+
+        #expect(service.isPaused == false)
+        service.pauseListening()
+        #expect(service.isPaused == true)
+        service.resumeListening()
+        #expect(service.isPaused == false)
+
+        service.stopListening()
+    }
+
+    @Test
     func rapidUnchangedPollCycles_doNotIncrementUnread() {
         let service = OpenClawNotificationService.shared
         var notifications: [(String, String, String)] = []
