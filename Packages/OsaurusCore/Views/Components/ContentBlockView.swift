@@ -40,37 +40,11 @@ struct ContentBlockView: View, Equatable {
 
     // MARK: - Body
 
-    private var userBubbleBackgroundColor: Color {
-        if let color = theme.userBubbleColor { return color }
-        return theme.accentColor
-    }
-
-    private var bubbleCornerRadius: CGFloat { CGFloat(theme.bubbleCornerRadius) }
-
-    @ViewBuilder
-    private var messageBubbleBackground: some View {
-        if isUserMessage {
-            ZStack {
-                if theme.glassEnabled {
-                    RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                }
-                RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous)
-                    .fill(userBubbleBackgroundColor.opacity(theme.userBubbleOpacity))
-            }
-        } else {
-            Color.clear
-        }
-    }
-
     var body: some View {
         if case .groupSpacer = block.kind {
-            Color.clear.frame(height: 16)
+            Color.clear.frame(height: 32)
         } else {
             contentContainer
-                .background(messageBubbleBackground)
-                .clipShape(RoundedRectangle(cornerRadius: isUserMessage ? bubbleCornerRadius : 0, style: .continuous))
-                .overlay(userMessageBorder)
         }
     }
 
@@ -115,16 +89,16 @@ struct ContentBlockView: View, Equatable {
             .padding(.bottom, isLastInTurn ? 16 : 4)
 
         case let .toolCallGroup(calls):
-            GroupedToolCallsContainerView(calls: calls)
+            ToolCallSummaryCard(calls: calls)
                 .padding(.top, 6)
                 .padding(.bottom, 16)
 
         case let .thinking(_, text, isStreaming, duration):
-            ThinkingBlockView(
+            ThinkingTraceView(
                 thinking: text,
                 baseWidth: width,
                 isStreaming: isStreaming,
-                thinkingLength: text.count,
+                duration: duration,
                 blockId: block.id
             )
             .padding(.top, 6)
@@ -141,44 +115,19 @@ struct ContentBlockView: View, Equatable {
             .padding(.bottom, isLastInTurn ? 12 : 4)
 
         case let .userMessage(text, images):
-            HeaderBlockContent(
+            UserMessageCardView(
+                text: text,
+                images: images,
                 turnId: block.turnId,
-                role: .user,
-                name: "You",
                 isTurnHovered: isTurnHovered,
+                width: width,
                 onCopy: onCopy,
-                onRegenerate: onRegenerate,
                 onEdit: onEdit,
-                isEditing: editingTurnId == block.turnId,
+                editingTurnId: editingTurnId,
+                editText: editText,
+                onConfirmEdit: onConfirmEdit,
                 onCancelEdit: onCancelEdit
             )
-            .padding(.top, 12)
-            .padding(.bottom, 2)
-
-            ForEach(Array(images.enumerated()), id: \.offset) { _, imageData in
-                ImageThumbnail(imageData: imageData)
-                    .padding(.top, 6)
-                    .padding(.bottom, text.isEmpty ? 16 : 6)
-            }
-
-            if editingTurnId == block.turnId, let editText, let onConfirmEdit, let onCancelEdit {
-                InlineEditView(
-                    text: editText,
-                    onConfirm: onConfirmEdit,
-                    onCancel: onCancelEdit
-                )
-                .padding(.top, 4)
-                .padding(.bottom, 16)
-            } else if !text.isEmpty {
-                MarkdownMessageView(
-                    text: text,
-                    baseWidth: width,
-                    cacheKey: block.id,
-                    isStreaming: false
-                )
-                .padding(.top, 4)
-                .padding(.bottom, 16)
-            }
 
         case .typingIndicator:
             TypingIndicator()
@@ -191,30 +140,6 @@ struct ContentBlockView: View, Equatable {
         }
     }
 
-    // MARK: - User Message Styling
-
-    @ViewBuilder
-    private var userMessageBorder: some View {
-        if isUserMessage {
-            if theme.showEdgeLight {
-                RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [theme.glassEdgeLight, theme.glassEdgeLight.opacity(0.4)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: CGFloat(theme.messageBorderWidth)
-                    )
-            } else {
-                RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous)
-                    .strokeBorder(
-                        theme.primaryBorder.opacity(theme.borderOpacity),
-                        lineWidth: CGFloat(theme.messageBorderWidth)
-                    )
-            }
-        }
-    }
 }
 
 // MARK: - Header Block Content
@@ -419,7 +344,6 @@ private struct ActionButton: View {
                 .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
                 .foregroundColor(theme.tertiaryText)
                 .padding(6)
-                .background(Circle().fill(theme.secondaryBackground.opacity(0.8)))
         }
         .buttonStyle(.plain)
         .help(help)
