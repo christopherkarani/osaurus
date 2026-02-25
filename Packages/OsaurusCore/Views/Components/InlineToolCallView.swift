@@ -41,91 +41,6 @@ private enum JSONFormatter {
     }
 }
 
-// MARK: - Tool Category
-
-/// Tool categories for icon selection
-private enum ToolCategory {
-    case file
-    case search
-    case terminal
-    case network
-    case database
-    case code
-    case general
-
-    var icon: String {
-        switch self {
-        case .file: return "folder.fill"
-        case .search: return "magnifyingglass"
-        case .terminal: return "terminal.fill"
-        case .network: return "globe"
-        case .database: return "cylinder.split.1x2.fill"
-        case .code: return "curlybraces"
-        case .general: return "gearshape.fill"
-        }
-    }
-
-    var gradient: [Color] {
-        switch self {
-        case .file: return [Color(hex: "f59e0b"), Color(hex: "d97706")]
-        case .search: return [Color(hex: "8b5cf6"), Color(hex: "7c3aed")]
-        case .terminal: return [Color(hex: "10b981"), Color(hex: "059669")]
-        case .network: return [Color(hex: "3b82f6"), Color(hex: "2563eb")]
-        case .database: return [Color(hex: "ec4899"), Color(hex: "db2777")]
-        case .code: return [Color(hex: "06b6d4"), Color(hex: "0891b2")]
-        case .general: return [Color(hex: "6b7280"), Color(hex: "4b5563")]
-        }
-    }
-
-    static func from(toolName: String) -> ToolCategory {
-        let name = toolName.lowercased()
-
-        // File operations
-        if name.contains("file") || name.contains("read") || name.contains("write")
-            || name.contains("path") || name.contains("directory") || name.contains("folder")
-        {
-            return .file
-        }
-
-        // Search operations
-        if name.contains("search") || name.contains("find") || name.contains("query")
-            || name.contains("grep") || name.contains("lookup")
-        {
-            return .search
-        }
-
-        // Terminal/command operations
-        if name.contains("terminal") || name.contains("command") || name.contains("exec")
-            || name.contains("shell") || name.contains("run") || name.contains("bash")
-        {
-            return .terminal
-        }
-
-        // Network operations
-        if name.contains("http") || name.contains("api") || name.contains("fetch")
-            || name.contains("request") || name.contains("url") || name.contains("web")
-        {
-            return .network
-        }
-
-        // Database operations
-        if name.contains("database") || name.contains("sql") || name.contains("db")
-            || name.contains("query") || name.contains("table")
-        {
-            return .database
-        }
-
-        // Code operations
-        if name.contains("code") || name.contains("edit") || name.contains("replace")
-            || name.contains("refactor") || name.contains("lint")
-        {
-            return .code
-        }
-
-        return .general
-    }
-}
-
 // MARK: - Preview Generator
 
 /// Generates human-readable previews for JSON and text content
@@ -333,10 +248,6 @@ struct InlineToolCallView: View {
         result?.hasPrefix("[REJECTED]") == true
     }
 
-    private var category: ToolCategory {
-        ToolCategory.from(toolName: call.function.name)
-    }
-
     /// Extract a key argument preview from the JSON arguments
     private var argPreview: String? {
         PreviewGenerator.jsonPreview(call.function.arguments, maxLength: 80)
@@ -361,9 +272,6 @@ struct InlineToolCallView: View {
                 HStack(spacing: 10) {
                     // Status icon
                     statusIcon
-
-                    // Category icon with gradient background
-                    categoryIcon
 
                     // Tool name
                     Text(call.function.name)
@@ -461,23 +369,6 @@ struct InlineToolCallView: View {
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )
-    }
-
-    private var categoryIcon: some View {
-        Image(systemName: category.icon)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(.white)
-            .frame(width: 20, height: 20)
-            .background(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: category.gradient,
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-            )
     }
 
     private var expandedContent: some View {
