@@ -119,7 +119,7 @@ struct ContentBlockView: View, Equatable {
                 .padding(.top, 6)
                 .padding(.bottom, 16)
 
-        case let .thinking(_, text, isStreaming):
+        case let .thinking(_, text, isStreaming, duration):
             ThinkingBlockView(
                 thinking: text,
                 baseWidth: width,
