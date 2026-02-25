@@ -9,20 +9,39 @@ import OpenClawProtocol
 
 @MainActor
 final class OpenClawEventProcessor {
+    private struct ChatTextPayload {
+        let snapshot: String?
+        let delta: String?
+    }
+
+    private enum SnapshotTransition {
+        case append(String)
+        case unchanged
+        case regressed
+        case rewritten
+    }
+
     private struct AgentEventPayload: Decodable {
-        let runId: String
+        let runId: String?
         let seq: Int?
-        let stream: String
+        let stream: String?
         let ts: Int?
-        let data: [String: OpenClawProtocol.AnyCodable]
+        let data: [String: OpenClawProtocol.AnyCodable]?
     }
 
     private struct ChatEventPayload: Decodable {
-        let runId: String
+        let runId: String?
         let seq: Int?
         let state: String
         let message: OpenClawProtocol.AnyCodable?
         let errorMessage: String?
+    }
+
+    private struct EventMeta {
+        let channel: String?
+        let runId: String?
+        let stream: String?
+        let phase: String?
     }
 
     private let onTextDelta: ((String) -> Void)?
@@ -33,6 +52,10 @@ final class OpenClawEventProcessor {
     private var deltaProcessor: StreamingDeltaProcessor?
     private var currentRunId: String?
     private var lastSeq: Int = 0
+    private var previousChatTextSnapshot = ""
+    private var previousChatThinkingSnapshot = ""
+    private var assistantRawOutput = ""
+    private var controlBlockFilter = OpenClawControlBlockStreamFilter()
 
     // MARK: - System Trace Detection
     // OpenClaw responses often append a structured "System:\n\n# Task Execution..."
@@ -70,49 +93,112 @@ final class OpenClawEventProcessor {
         lastSeq = 0
         inSystemTrace = false
         systemBoundaryBuffer = ""
+        previousChatTextSnapshot = ""
+        previousChatThinkingSnapshot = ""
+        assistantRawOutput = ""
+        controlBlockFilter.reset()
         deltaProcessor = StreamingDeltaProcessor(turn: turn, onSync: onSync)
     }
 
     func processEvent(_ event: EventFrame, turn: ChatTurn) {
-        let eventName = event.event.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let meta = decodeEventMeta(event)
+        let channel = eventChannel(for: event, meta: meta)
 
-        if eventName.contains("chat"), let payload = decodeChatPayload(event.payload) {
-            guard payload.runId == currentRunId else { return }
+        if channel == "chat", let payload = decodeChatPayload(event.payload) {
+            let runId = normalizedString(payload.runId) ?? meta.runId
+            guard runId == currentRunId else { return }
             recordSequence(payload.seq ?? event.seq)
             processChat(payload, turn: turn)
             return
         }
 
-        if eventName.contains("agent"), let payload = decodeAgentPayload(event.payload) {
-            guard payload.runId == currentRunId else { return }
+        if channel == "agent", let payload = decodeAgentPayload(event.payload) {
+            let runId = normalizedString(payload.runId) ?? meta.runId
+            guard runId == currentRunId else { return }
             recordSequence(payload.seq ?? event.seq)
-            processAgent(payload, turn: turn)
+            processAgent(payload, meta: meta, turn: turn)
             return
         }
     }
 
-    func endRun(turn _: ChatTurn) {
+    func endRun(turn: ChatTurn) {
         // Flush any buffered boundary-detection text as regular content.
         if !systemBoundaryBuffer.isEmpty {
-            deltaProcessor?.receiveDelta(systemBoundaryBuffer)
+            emitVisibleAssistantText(systemBoundaryBuffer)
             systemBoundaryBuffer = ""
         }
+        let trailing = controlBlockFilter.finalize()
+        if !trailing.isEmpty {
+            deltaProcessor?.receiveDelta(trailing)
+            onTextDelta?(trailing)
+        }
         deltaProcessor?.finalize()
+        let finalized = OpenClawOutputFormatting.finalizedVisibleText(
+            rawAssistantOutput: assistantRawOutput,
+            currentlyRendered: turn.content
+        )
+        if finalized != turn.content {
+            turn.content = finalized
+            turn.notifyContentChanged()
+        }
         deltaProcessor = nil
         currentRunId = nil
         lastSeq = 0
         inSystemTrace = false
+        controlBlockFilter.reset()
+        assistantRawOutput = ""
+        previousChatTextSnapshot = ""
+        previousChatThinkingSnapshot = ""
         onRunEnded?()
     }
 
     private func processChat(_ payload: ChatEventPayload, turn: ChatTurn) {
         switch payload.state {
         case "delta":
-            if let text = extractChatText(payload.message), !text.isEmpty {
-                routeAssistantText(text, turn: turn)
+            let textPayload = extractChatTextPayload(payload.message)
+            if let explicitDelta = textPayload.delta, !explicitDelta.isEmpty {
+                routeAssistantText(explicitDelta, turn: turn)
+                if let snapshot = textPayload.snapshot, !snapshot.isEmpty {
+                    previousChatTextSnapshot = snapshot
+                } else {
+                    previousChatTextSnapshot += explicitDelta
+                }
+            } else if let textSnapshot = textPayload.snapshot, !textSnapshot.isEmpty {
+                let previousSnapshot = previousChatTextSnapshot
+                switch normalizeSnapshotTransition(
+                    textSnapshot,
+                    previousSnapshot: &previousChatTextSnapshot
+                ) {
+                case .append(let textDelta):
+                    if !textDelta.isEmpty {
+                        routeAssistantText(textDelta, turn: turn)
+                    }
+                case .unchanged:
+                    break
+                case .regressed:
+                    applyAssistantSnapshotReplacement(textSnapshot, turn: turn)
+                    emitNonPrefixSnapshotTelemetry(
+                        event: "chat.delta.snapshot_regressed",
+                        previousSnapshot: previousSnapshot,
+                        nextSnapshot: textSnapshot
+                    )
+                case .rewritten:
+                    applyAssistantSnapshotReplacement(textSnapshot, turn: turn)
+                    emitNonPrefixSnapshotTelemetry(
+                        event: "chat.delta.snapshot_rewritten",
+                        previousSnapshot: previousSnapshot,
+                        nextSnapshot: textSnapshot
+                    )
+                }
             }
-            if let thinking = extractChatThinking(payload.message), !thinking.isEmpty {
-                turn.appendThinkingAndNotify(thinking)
+            if let thinkingSnapshot = extractChatThinking(payload.message), !thinkingSnapshot.isEmpty {
+                let thinkingDelta = nextDeltaFromSnapshot(
+                    thinkingSnapshot,
+                    previousSnapshot: &previousChatThinkingSnapshot
+                )
+                if !thinkingDelta.isEmpty {
+                    turn.appendThinkingAndNotify(thinkingDelta)
+                }
             }
         case "final", "aborted":
             endRun(turn: turn)
@@ -125,17 +211,20 @@ final class OpenClawEventProcessor {
         }
     }
 
-    private func processAgent(_ payload: AgentEventPayload, turn: ChatTurn) {
-        switch payload.stream {
+    private func processAgent(_ payload: AgentEventPayload, meta: EventMeta, turn: ChatTurn) {
+        let stream = normalizedString(payload.stream)?.lowercased() ?? meta.stream ?? ""
+        let data = payload.data ?? [:]
+
+        switch stream {
         case "assistant":
-            if let text = stringValue(payload.data["text"]?.value) ?? stringValue(payload.data["delta"]?.value),
+            if let text = stringValue(data["text"]?.value) ?? stringValue(data["delta"]?.value),
                 !text.isEmpty
             {
                 routeAssistantText(text, turn: turn)
             }
 
         case "thinking":
-            if let thinking = stringValue(payload.data["text"]?.value) ?? stringValue(payload.data["delta"]?.value),
+            if let thinking = stringValue(data["text"]?.value) ?? stringValue(data["delta"]?.value),
                 !thinking.isEmpty
             {
                 turn.appendThinkingAndNotify(thinking)
@@ -148,32 +237,32 @@ final class OpenClawEventProcessor {
                 systemBoundaryBuffer = ""
             }
             deltaProcessor?.flush()
-            processTool(data: payload.data, turn: turn)
+            processTool(data: data, turn: turn)
 
         case "lifecycle":
-            let phase = stringValue(payload.data["phase"]?.value)?.lowercased() ?? ""
+            let phase = stringValue(data["phase"]?.value)?.lowercased() ?? meta.phase ?? ""
             if phase == "end" {
                 endRun(turn: turn)
             } else if phase == "error" {
-                let message = stringValue(payload.data["error"]?.value)
-                    ?? stringValue(payload.data["message"]?.value)
+                let message = stringValue(data["error"]?.value)
+                    ?? stringValue(data["message"]?.value)
                     ?? "OpenClaw run failed."
                 appendError(message, to: turn)
                 endRun(turn: turn)
             }
 
         case "error":
-            let message = stringValue(payload.data["message"]?.value)
-                ?? stringValue(payload.data["error"]?.value)
+            let message = stringValue(data["message"]?.value)
+                ?? stringValue(data["error"]?.value)
                 ?? "OpenClaw run failed."
             appendError(message, to: turn)
             endRun(turn: turn)
 
         case "compaction":
-            let phase = stringValue(payload.data["phase"]?.value)?.lowercased() ?? ""
+            let phase = stringValue(data["phase"]?.value)?.lowercased() ?? meta.phase ?? ""
             if phase == "start" {
                 turn.appendThinkingAndNotify("[Compacting context…]")
-            } else if phase == "end", (payload.data["willRetry"]?.value as? Bool) == true {
+            } else if phase == "end", (data["willRetry"]?.value as? Bool) == true {
                 turn.appendThinkingAndNotify("[Compaction complete, retrying response…]")
             }
 
@@ -235,6 +324,13 @@ final class OpenClawEventProcessor {
             return
         }
 
+        // Fast path: if buffer is empty and delta has no newline,
+        // the "\nSystem:\n" marker cannot possibly match. Skip scanning.
+        if systemBoundaryBuffer.isEmpty && !text.contains("\n") {
+            emitVisibleAssistantText(text)
+            return
+        }
+
         let combined = systemBoundaryBuffer + text
         systemBoundaryBuffer = ""
 
@@ -244,8 +340,7 @@ final class OpenClawEventProcessor {
             // Flush everything before the marker as regular content.
             let contentPart = String(combined[..<markerRange.lowerBound])
             if !contentPart.isEmpty {
-                deltaProcessor?.receiveDelta(contentPart)
-                onTextDelta?(contentPart)
+                emitVisibleAssistantText(contentPart)
             }
 
             // Switch permanently to system-trace (thinking) mode.
@@ -264,15 +359,108 @@ final class OpenClawEventProcessor {
             let flushPart = String(combined.dropLast(partial.count))
             systemBoundaryBuffer = partial
             if !flushPart.isEmpty {
-                deltaProcessor?.receiveDelta(flushPart)
-                onTextDelta?(flushPart)
+                emitVisibleAssistantText(flushPart)
             }
             return
         }
 
         // No match or partial match — flush everything as regular content.
-        deltaProcessor?.receiveDelta(combined)
-        onTextDelta?(combined)
+        emitVisibleAssistantText(combined)
+    }
+
+    private func applyAssistantSnapshotReplacement(_ snapshot: String, turn: ChatTurn) {
+        // Explicitly replace assistant content when the upstream snapshot rewrites
+        // prior text (non-prefix transition) so we avoid cumulative corruption.
+        assistantRawOutput = snapshot
+        inSystemTrace = false
+        systemBoundaryBuffer = ""
+        controlBlockFilter.reset()
+        turn.content = OpenClawOutputFormatting.sanitizeVisibleText(snapshot)
+        deltaProcessor?.reset(turn: turn)
+        onTextDelta?(turn.content)
+    }
+
+    private func emitVisibleAssistantText(_ text: String) {
+        guard !text.isEmpty else { return }
+        assistantRawOutput += text
+        let visible = controlBlockFilter.consume(text)
+        guard !visible.isEmpty else { return }
+        deltaProcessor?.receiveDelta(visible)
+        onTextDelta?(visible)
+    }
+
+    private func nextDeltaFromSnapshot(_ snapshot: String, previousSnapshot: inout String) -> String {
+        defer { previousSnapshot = snapshot }
+
+        guard !previousSnapshot.isEmpty else {
+            return snapshot
+        }
+
+        if snapshot.hasPrefix(previousSnapshot) {
+            return String(snapshot.dropFirst(previousSnapshot.count))
+        }
+
+        if previousSnapshot.hasPrefix(snapshot) {
+            // Snapshot regressed (e.g., tool boundary resets); avoid re-emitting old text.
+            return ""
+        }
+
+        // Snapshot changed to unrelated text; emit as-is to stay in sync.
+        return snapshot
+    }
+
+    private func normalizeSnapshotTransition(
+        _ snapshot: String,
+        previousSnapshot: inout String
+    ) -> SnapshotTransition {
+        if previousSnapshot.isEmpty {
+            previousSnapshot = snapshot
+            return .append(snapshot)
+        }
+
+        if snapshot == previousSnapshot {
+            return .unchanged
+        }
+
+        if snapshot.hasPrefix(previousSnapshot) {
+            let delta = String(snapshot.dropFirst(previousSnapshot.count))
+            previousSnapshot = snapshot
+            return delta.isEmpty ? .unchanged : .append(delta)
+        }
+
+        if previousSnapshot.hasPrefix(snapshot) {
+            previousSnapshot = snapshot
+            return .regressed
+        }
+
+        previousSnapshot = snapshot
+        return .rewritten
+    }
+
+    private func emitNonPrefixSnapshotTelemetry(
+        event: String,
+        previousSnapshot: String,
+        nextSnapshot: String
+    ) {
+        let context: [String: String] = [
+            "runId": currentRunId ?? "<unknown>",
+            "previousLength": "\(previousSnapshot.count)",
+            "nextLength": "\(nextSnapshot.count)",
+            "previousPrefixOfNext": nextSnapshot.hasPrefix(previousSnapshot) ? "true" : "false",
+            "nextPrefixOfPrevious": previousSnapshot.hasPrefix(nextSnapshot) ? "true" : "false",
+        ]
+
+        Task {
+            await StartupDiagnostics.shared.emit(
+                level: .warning,
+                component: "openclaw.stream.ui",
+                event: event,
+                context: context
+            )
+        }
+        print(
+            "[Osaurus][OpenClawStream] \(event) run=\(currentRunId ?? "<unknown>") prevLen=\(previousSnapshot.count) nextLen=\(nextSnapshot.count)"
+        )
     }
 
     private func appendError(_ message: String, to turn: ChatTurn) {
@@ -307,21 +495,55 @@ final class OpenClawEventProcessor {
         return try? GatewayPayloadDecoding.decode(payload, as: ChatEventPayload.self)
     }
 
+    private func decodeEventMeta(_ event: EventFrame) -> EventMeta {
+        let channel = normalizedString(event.eventmeta?["channel"]?.value as? String)?.lowercased()
+        let runId = normalizedString(event.eventmeta?["runId"]?.value as? String)
+            ?? normalizedString(event.eventmeta?["runid"]?.value as? String)
+        let stream = normalizedString(event.eventmeta?["stream"]?.value as? String)?.lowercased()
+        let phase = normalizedString(event.eventmeta?["phase"]?.value as? String)?.lowercased()
+        return EventMeta(channel: channel, runId: runId, stream: stream, phase: phase)
+    }
+
+    private func eventChannel(for event: EventFrame, meta: EventMeta) -> String {
+        if let channel = meta.channel {
+            return channel
+        }
+        let eventName = event.event.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if eventName == "chat" || eventName.hasPrefix("chat.") || eventName.contains("chat") {
+            return "chat"
+        }
+        if eventName == "agent" || eventName.hasPrefix("agent.") || eventName.contains("agent") {
+            return "agent"
+        }
+        return eventName
+    }
+
     private func extractChatText(_ message: OpenClawProtocol.AnyCodable?) -> String? {
+        extractChatTextPayload(message).snapshot
+    }
+
+    private func extractChatTextPayload(_ message: OpenClawProtocol.AnyCodable?) -> ChatTextPayload {
         guard let messageDictionary = message?.value as? [String: OpenClawProtocol.AnyCodable],
             let contentArray = messageDictionary["content"]?.value as? [OpenClawProtocol.AnyCodable]
         else {
-            return nil
+            return ChatTextPayload(snapshot: nil, delta: nil)
         }
 
-        var fragments: [String] = []
+        var snapshotFragments: [String] = []
+        var deltaFragments: [String] = []
         for item in contentArray {
             guard let itemDictionary = item.value as? [String: OpenClawProtocol.AnyCodable] else { continue }
             if let text = itemDictionary["text"]?.value as? String, !text.isEmpty {
-                fragments.append(text)
+                snapshotFragments.append(text)
+            }
+            if let delta = itemDictionary["delta"]?.value as? String, !delta.isEmpty {
+                deltaFragments.append(delta)
             }
         }
-        return fragments.isEmpty ? nil : fragments.joined()
+        return ChatTextPayload(
+            snapshot: snapshotFragments.isEmpty ? nil : snapshotFragments.joined(),
+            delta: deltaFragments.isEmpty ? nil : deltaFragments.joined()
+        )
     }
 
     private func extractChatThinking(_ message: OpenClawProtocol.AnyCodable?) -> String? {
@@ -407,5 +629,12 @@ final class OpenClawEventProcessor {
         default:
             return nil
         }
+    }
+
+    private func normalizedString(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return nil
+        }
+        return value
     }
 }
