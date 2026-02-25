@@ -126,6 +126,244 @@ struct OpenClawEventProcessorTests {
     }
 
     @Test @MainActor
+    func processChatDelta_normalizesCumulativeSnapshots() async throws {
+        let turn = ChatTurn(role: .assistant, content: "")
+        var emitted: [String] = []
+        let processor = OpenClawEventProcessor(
+            onTextDelta: { emitted.append($0) }
+        )
+
+        processor.startRun(runId: "run-snapshot", turn: turn)
+
+        processor.processEvent(
+            makeEventFrame(
+                event: "chat",
+                payload: [
+                    "runId": "run-snapshot",
+                    "seq": 1,
+                    "state": "delta",
+                    "message": [
+                        "role": "assistant",
+                        "content": [
+                            ["type": "text", "text": "Hello"]
+                        ]
+                    ]
+                ],
+                seq: 1
+            ),
+            turn: turn
+        )
+        processor.processEvent(
+            makeEventFrame(
+                event: "chat",
+                payload: [
+                    "runId": "run-snapshot",
+                    "seq": 2,
+                    "state": "delta",
+                    "message": [
+                        "role": "assistant",
+                        "content": [
+                            ["type": "text", "text": "Hello"]
+                        ]
+                    ]
+                ],
+                seq: 2
+            ),
+            turn: turn
+        )
+        processor.processEvent(
+            makeEventFrame(
+                event: "chat",
+                payload: [
+                    "runId": "run-snapshot",
+                    "seq": 3,
+                    "state": "delta",
+                    "message": [
+                        "role": "assistant",
+                        "content": [
+                            ["type": "text", "text": "Hello world"]
+                        ]
+                    ]
+                ],
+                seq: 3
+            ),
+            turn: turn
+        )
+        processor.processEvent(
+            makeEventFrame(
+                event: "chat",
+                payload: [
+                    "runId": "run-snapshot",
+                    "seq": 4,
+                    "state": "final"
+                ],
+                seq: 4
+            ),
+            turn: turn
+        )
+
+        #expect(emitted == ["Hello", " world"])
+        #expect(turn.content == "Hello world")
+    }
+
+    @Test @MainActor
+    func processChatDelta_prefersExplicitDeltaField() async throws {
+        let turn = ChatTurn(role: .assistant, content: "")
+        var emitted: [String] = []
+        let processor = OpenClawEventProcessor(
+            onTextDelta: { emitted.append($0) }
+        )
+        processor.startRun(runId: "run-explicit", turn: turn)
+
+        processor.processEvent(
+            makeEventFrame(
+                event: "chat",
+                payload: [
+                    "runId": "run-explicit",
+                    "state": "delta",
+                    "message": [
+                        "role": "assistant",
+                        "content": [
+                            ["type": "text", "text": "Hello", "delta": "Hello"]
+                        ]
+                    ]
+                ],
+                seq: 1
+            ),
+            turn: turn
+        )
+        processor.processEvent(
+            makeEventFrame(
+                event: "chat",
+                payload: [
+                    "runId": "run-explicit",
+                    "state": "delta",
+                    "message": [
+                        "role": "assistant",
+                        "content": [
+                            ["type": "text", "text": "Hello there", "delta": " there"]
+                        ]
+                    ]
+                ],
+                seq: 2
+            ),
+            turn: turn
+        )
+        processor.processEvent(
+            makeEventFrame(
+                event: "chat",
+                payload: [
+                    "runId": "run-explicit",
+                    "state": "final"
+                ],
+                seq: 3
+            ),
+            turn: turn
+        )
+
+        #expect(emitted == ["Hello", " there"])
+        #expect(turn.content == "Hello there")
+    }
+
+    @Test @MainActor
+    func processChatDelta_nonPrefixRewriteReplacesTurnContent() async throws {
+        let turn = ChatTurn(role: .assistant, content: "")
+        let processor = OpenClawEventProcessor()
+        processor.startRun(runId: "run-rewrite", turn: turn)
+
+        processor.processEvent(
+            makeEventFrame(
+                event: "chat",
+                payload: [
+                    "runId": "run-rewrite",
+                    "state": "delta",
+                    "message": [
+                        "role": "assistant",
+                        "content": [
+                            ["type": "text", "text": "Hello world"]
+                        ]
+                    ]
+                ],
+                seq: 1
+            ),
+            turn: turn
+        )
+        processor.processEvent(
+            makeEventFrame(
+                event: "chat",
+                payload: [
+                    "runId": "run-rewrite",
+                    "state": "delta",
+                    "message": [
+                        "role": "assistant",
+                        "content": [
+                            ["type": "text", "text": "Hello there"]
+                        ]
+                    ]
+                ],
+                seq: 2
+            ),
+            turn: turn
+        )
+        processor.processEvent(
+            makeEventFrame(
+                event: "chat",
+                payload: [
+                    "runId": "run-rewrite",
+                    "state": "final"
+                ],
+                seq: 3
+            ),
+            turn: turn
+        )
+
+        #expect(turn.content == "Hello there")
+    }
+
+    @Test @MainActor
+    func processEvent_usesEventMetaChannelAndRunId() async throws {
+        let turn = ChatTurn(role: .assistant, content: "")
+        let processor = OpenClawEventProcessor()
+        processor.startRun(runId: "meta-run", turn: turn)
+
+        let delta = makeEventFrame(
+            event: "runtime.stream",
+            payload: [
+                "state": "delta",
+                "message": [
+                    "role": "assistant",
+                    "content": [
+                        ["type": "text", "text": "hello via meta"]
+                    ]
+                ]
+            ],
+            seq: 1,
+            eventMeta: [
+                "schemaVersion": 1,
+                "channel": "chat",
+                "runId": "meta-run"
+            ]
+        )
+        processor.processEvent(delta, turn: turn)
+
+        let final = makeEventFrame(
+            event: "runtime.stream",
+            payload: [
+                "state": "final"
+            ],
+            seq: 2,
+            eventMeta: [
+                "schemaVersion": 1,
+                "channel": "chat",
+                "runId": "meta-run"
+            ]
+        )
+        processor.processEvent(final, turn: turn)
+
+        #expect(turn.content.contains("hello via meta"))
+    }
+
+    @Test @MainActor
     func sequenceGap_triggersCallback() async throws {
         let turn = ChatTurn(role: .assistant, content: "")
         var expected = 0
@@ -210,5 +448,65 @@ struct OpenClawEventProcessorTests {
         // syncs so we get far fewer than one-per-event.
         #expect(syncCount > 0, "onSync must fire at least once")
         #expect(syncCount < eventCount, "onSync should be throttled, not per-event")
+    }
+
+    @Test @MainActor
+    func processAgentAssistant_completeTaskControlBlock_isNotRenderedAndArtifactIsPromoted() async throws {
+        let turn = ChatTurn(role: .assistant, content: "")
+        let processor = OpenClawEventProcessor()
+        processor.startRun(runId: "run-complete-block", turn: turn)
+
+        processor.processEvent(
+            makeAgentEventFrame(
+                stream: "assistant",
+                runId: "run-complete-block",
+                seq: 1,
+                data: [
+                    "delta": "Let me gather sources. I'll compile the final answer."
+                ]
+            ),
+            turn: turn
+        )
+        processor.processEvent(
+            makeAgentEventFrame(
+                stream: "assistant",
+                runId: "run-complete-block",
+                seq: 2,
+                data: [
+                    "delta": """
+                    \n---COMPLETE_TASK_START---
+                    {"summary":"Completed research.","success":true,"artifact":"# Cristiano Ronaldo\\n- Record goalscorer\\n- Multiple Ballon d'Or winner"}
+                    """
+                ]
+            ),
+            turn: turn
+        )
+        processor.processEvent(
+            makeAgentEventFrame(
+                stream: "assistant",
+                runId: "run-complete-block",
+                seq: 3,
+                data: [
+                    "delta": """
+                    \n---COMPLETE_TASK_END---
+                    """
+                ]
+            ),
+            turn: turn
+        )
+        processor.processEvent(
+            makeAgentEventFrame(
+                stream: "lifecycle",
+                runId: "run-complete-block",
+                seq: 4,
+                data: ["phase": "end"]
+            ),
+            turn: turn
+        )
+
+        #expect(!turn.content.contains("---COMPLETE_TASK_START---"))
+        #expect(!turn.content.contains("---COMPLETE_TASK_END---"))
+        #expect(turn.content.contains("# Cristiano Ronaldo"))
+        #expect(turn.content.contains("Record goalscorer"))
     }
 }

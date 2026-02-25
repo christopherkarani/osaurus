@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import OpenClawProtocol
 import Testing
 @testable import OsaurusCore
 
@@ -53,6 +54,45 @@ struct ChatSessionOpenClawModeTests {
         session.openClawSessionKey = "agent:main:test"
         #expect(session.isOpenClawSession == true)
         #expect(session.runtimeOpenClawModelIdentifier() == "openclaw:agent:main:test")
+    }
+
+    @Test @MainActor
+    func chatSession_pendingOpenClawModelId_usesCanonicalProviderReference() async {
+        let manager = OpenClawManager.shared
+        let previousModels = manager.availableModels
+        let previousProviders = manager.configuredProviders
+        defer {
+            manager._testSetProviderState(
+                availableModels: previousModels,
+                configuredProviders: previousProviders
+            )
+        }
+
+        manager._testSetProviderState(
+            availableModels: [
+                OpenClawProtocol.ModelChoice(
+                    id: "foundation",
+                    name: "Foundation",
+                    provider: "osaurus",
+                    contextwindow: 16_000,
+                    reasoning: false
+                )
+            ],
+            configuredProviders: [
+                OpenClawManager.ProviderInfo(
+                    id: "osaurus",
+                    name: "Osaurus",
+                    modelCount: 1,
+                    hasApiKey: true,
+                    needsKey: false,
+                    readinessReason: .ready
+                )
+            ]
+        )
+
+        let session = ChatSession()
+        session.selectedModel = ChatSession.openClawSelectionModelIdentifier(modelId: "foundation")
+        #expect(session.pendingOpenClawModelId() == "osaurus/foundation")
     }
 
     @Test

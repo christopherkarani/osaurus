@@ -231,7 +231,8 @@ extension ContentBlock {
         from turns: [ChatTurn],
         streamingTurnId: UUID?,
         agentName: String,
-        previousTurn: ChatTurn? = nil
+        previousTurn: ChatTurn? = nil,
+        suppressAssistantText: Bool = false
     ) -> [ContentBlock] {
         var blocks: [ContentBlock] = []
         var previousRole: MessageRole? = previousTurn?.role
@@ -304,7 +305,8 @@ extension ContentBlock {
                 )
             }
 
-            if !turn.contentIsEmpty {
+            let shouldSuppressParagraph = suppressAssistantText && turn.role == .assistant
+            if !turn.contentIsEmpty && !shouldSuppressParagraph {
                 turnBlocks.append(
                     .paragraph(
                         turnId: turn.id,
@@ -315,7 +317,7 @@ extension ContentBlock {
                         position: .middle
                     )
                 )
-            } else if isStreaming && !turn.hasThinking && (turn.toolCalls ?? []).isEmpty {
+            } else if isStreaming && !turn.hasThinking && (turn.toolCalls ?? []).isEmpty && !shouldSuppressParagraph {
                 turnBlocks.append(.typingIndicator(turnId: turn.id, position: .middle))
             }
 

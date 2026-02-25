@@ -13,8 +13,16 @@ public actor WorkExecutionEngine {
     /// The chat engine for LLM calls
     private let chatEngine: ChatEngineProtocol
 
-    init(chatEngine: ChatEngineProtocol? = nil) {
+    typealias OpenClawWorkspaceFilesLoader = @Sendable () async -> [OpenClawAgentWorkspaceFile]
+    private let openClawWorkspaceFilesLoader: OpenClawWorkspaceFilesLoader
+
+    init(
+        chatEngine: ChatEngineProtocol? = nil,
+        openClawWorkspaceFilesLoader: OpenClawWorkspaceFilesLoader? = nil
+    ) {
         self.chatEngine = chatEngine ?? ChatEngine(source: .chatUI)
+        self.openClawWorkspaceFilesLoader =
+            openClawWorkspaceFilesLoader ?? Self.defaultOpenClawWorkspaceFilesLoader
     }
 
     // MARK: - Tool Execution
@@ -154,6 +162,14 @@ public actor WorkExecutionEngine {
     /// Models that don't support tool calling will describe actions in plain text
     /// instead of invoking tools, causing an infinite loop of "Continue" prompts.
     private static let maxConsecutiveTextOnlyResponses = 3
+    private static let clarificationStartMarker = "---REQUEST_CLARIFICATION_START---"
+    private static let clarificationEndMarker = "---REQUEST_CLARIFICATION_END---"
+    private static let completeTaskStartMarker = "---COMPLETE_TASK_START---"
+    private static let completeTaskEndMarker = "---COMPLETE_TASK_END---"
+    private static let generatedArtifactStartMarker = "---GENERATED_ARTIFACT_START---"
+    private static let generatedArtifactEndMarker = "---GENERATED_ARTIFACT_END---"
+    private static let maxWorkspaceFilesToImport = 12
+    private static let maxWorkspaceArtifactCharacters = 250_000
 
     /// The main reasoning loop. Model decides what to do on each iteration.
     /// - Parameters:
@@ -193,6 +209,23 @@ public actor WorkExecutionEngine {
         onArtifact: @escaping ArtifactCallback,
         onTokensConsumed: @escaping TokenConsumptionCallback
     ) async throws -> LoopResult {
+        if Self.isOpenClawRequestedModel(model) {
+            return try await executeOpenClawGatewayRun(
+                issue: issue,
+                messages: &messages,
+                systemPrompt: systemPrompt,
+                model: model,
+                temperature: temperature,
+                maxTokens: maxTokens,
+                topPOverride: topPOverride,
+                onIterationStart: onIterationStart,
+                onDelta: onDelta,
+                onStatusUpdate: onStatusUpdate,
+                onArtifact: onArtifact,
+                onTokensConsumed: onTokensConsumed
+            )
+        }
+
         var iteration = 0
         var totalToolCalls = 0
         var toolsUsed: [String] = []
@@ -398,16 +431,518 @@ public actor WorkExecutionEngine {
         )
     }
 
+    private static func isOpenClawRequestedModel(_ model: String?) -> Bool {
+        guard let model else { return false }
+        return model.hasPrefix(OpenClawModelService.sessionPrefix)
+            || model.hasPrefix(OpenClawModelService.modelPrefix)
+    }
+
+    /// Runs Work execution through OpenClaw's gateway runtime in a single pass.
+    /// OpenClaw performs orchestration and tool execution on its side, so Osaurus does
+    /// not run the local reasoning/tool loop for this path.
+    private func executeOpenClawGatewayRun(
+        issue: Issue,
+        messages: inout [ChatMessage],
+        systemPrompt: String,
+        model: String?,
+        temperature: Float?,
+        maxTokens: Int?,
+        topPOverride: Float?,
+        onIterationStart: @escaping IterationStartCallback,
+        onDelta: @escaping IterationStreamingCallback,
+        onStatusUpdate: @escaping StatusCallback,
+        onArtifact: @escaping ArtifactCallback,
+        onTokensConsumed: @escaping TokenConsumptionCallback
+    ) async throws -> LoopResult {
+        guard let model else {
+            throw WorkExecutionError.unknown("OpenClaw model is missing.")
+        }
+
+        guard model.hasPrefix(OpenClawModelService.sessionPrefix) else {
+            throw WorkExecutionError.unknown(
+                "OpenClaw work execution requires runtime session model identifiers."
+            )
+        }
+
+        try Task.checkCancellation()
+        await onIterationStart(1)
+        await onStatusUpdate("Running via OpenClaw gateway")
+
+        let gatewayInput = buildOpenClawGatewayInput(
+            issue: issue,
+            systemPrompt: systemPrompt,
+            messages: messages
+        )
+
+        let request = ChatCompletionRequest(
+            model: model,
+            messages: [ChatMessage(role: "user", content: gatewayInput)],
+            temperature: temperature ?? 0.3,
+            max_tokens: maxTokens ?? 4096,
+            stream: nil,
+            top_p: topPOverride,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: nil,
+            tool_choice: nil,
+            session_id: nil
+        )
+
+        var rawResponseContent = ""
+        var visibleResponseContent = ""
+        var outputFilter = OpenClawOutputFilter()
+        do {
+            let stream = try await chatEngine.streamChat(request: request)
+            for try await delta in stream {
+                try Task.checkCancellation()
+                rawResponseContent += delta
+                let visibleDelta = outputFilter.consume(delta)
+                if !visibleDelta.isEmpty {
+                    visibleResponseContent += visibleDelta
+                    await onDelta(visibleDelta, 1)
+                }
+            }
+            let tail = outputFilter.finalize()
+            if !tail.isEmpty {
+                visibleResponseContent += tail
+                await onDelta(tail, 1)
+            }
+        } catch is ServiceToolInvocation {
+            throw WorkExecutionError.toolExecutionFailed(
+                "Unexpected local tool invocation during OpenClaw gateway execution."
+            )
+        }
+
+        let estimatedInputTokens = max(1, gatewayInput.count / 4)
+        let estimatedOutputTokens = max(1, rawResponseContent.count / 4)
+        await onTokensConsumed(estimatedInputTokens, estimatedOutputTokens)
+
+        let cleanedVisibleResponse = sanitizeOpenClawVisibleResponse(visibleResponseContent)
+        let trimmedResponse = cleanedVisibleResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+        messages.append(ChatMessage(role: "user", content: gatewayInput))
+        if !trimmedResponse.isEmpty {
+            messages.append(ChatMessage(role: "assistant", content: trimmedResponse))
+        }
+
+        if let clarificationJSON = extractLastJSONBlock(
+            from: rawResponseContent,
+            startMarker: Self.clarificationStartMarker,
+            endMarker: Self.clarificationEndMarker
+        ) {
+            let clarification = parseClarificationArgs(clarificationJSON)
+            return .needsClarification(clarification)
+        }
+
+        var completionSummary = extractCompletionSummary(from: trimmedResponse)
+        var completionArtifact: Artifact?
+        if let completionJSON = extractLastJSONBlock(
+            from: rawResponseContent,
+            startMarker: Self.completeTaskStartMarker,
+            endMarker: Self.completeTaskEndMarker
+        ) {
+            let parsed = parseCompleteTaskArgs(completionJSON, taskId: issue.taskId)
+            completionSummary = parsed.0
+            completionArtifact = parsed.1
+        }
+
+        var generatedArtifacts: [Artifact] = parseGeneratedArtifacts(
+            from: rawResponseContent,
+            taskId: issue.taskId
+        )
+        if let completionArtifact {
+            generatedArtifacts.removeAll {
+                $0.filename.caseInsensitiveCompare(completionArtifact.filename) == .orderedSame
+                    && $0.content == completionArtifact.content
+            }
+        }
+        for artifact in generatedArtifacts {
+            await onArtifact(artifact)
+        }
+
+        let importedWorkspaceFiles = await importOpenClawWorkspaceArtifacts(taskId: issue.taskId)
+        var workspaceFinalArtifact: Artifact?
+        for fileArtifact in importedWorkspaceFiles {
+            if let completionArtifact,
+                completionArtifact.filename.caseInsensitiveCompare(fileArtifact.filename) == .orderedSame,
+                completionArtifact.content == fileArtifact.content
+            {
+                continue
+            }
+
+            if completionArtifact == nil,
+                workspaceFinalArtifact == nil,
+                Self.isPreferredWorkspaceFinalArtifact(filename: fileArtifact.filename)
+            {
+                workspaceFinalArtifact = Artifact(
+                    taskId: fileArtifact.taskId,
+                    filename: fileArtifact.filename,
+                    content: fileArtifact.content,
+                    contentType: fileArtifact.contentType,
+                    isFinalResult: true
+                )
+                continue
+            }
+
+            await onArtifact(fileArtifact)
+        }
+
+        let finalArtifact = completionArtifact ?? workspaceFinalArtifact
+
+        if completionSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            completionSummary = trimmedResponse.isEmpty
+                ? "OpenClaw run completed."
+                : extractCompletionSummary(from: trimmedResponse)
+        }
+
+        return .completed(
+            summary: completionSummary,
+            artifact: finalArtifact
+        )
+    }
+
+    private func buildOpenClawGatewayInput(
+        issue: Issue,
+        systemPrompt: String,
+        messages: [ChatMessage]
+    ) -> String {
+        var sections: [String] = []
+        sections.append(
+            """
+            You are executing an Osaurus Work issue through the OpenClaw gateway.
+
+            Issue:
+            \(issue.title)
+            \(issue.description ?? "")
+            """
+        )
+        sections.append("System instructions:\n\(systemPrompt)")
+
+        let contextLines = messages.compactMap { message -> String? in
+            let text = (message.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            return "[\(message.role)]\n\(text)"
+        }
+        if !contextLines.isEmpty {
+            sections.append("Conversation context:\n\(contextLines.joined(separator: "\n\n"))")
+        }
+
+        sections.append(
+            """
+            Respond with concise progress updates while working.
+            Use polished, readable markdown for user-visible output (headings, lists, tables, code fences when helpful).
+            Do not include internal/system traces in the visible response (for example, do not emit `System:` trace sections).
+            When complete, include a clear completion summary.
+
+            If you need clarification, emit exactly one block:
+            \(Self.clarificationStartMarker)
+            {"question":"<question>","options":["<optional option>"],"context":"<optional context>"}
+            \(Self.clarificationEndMarker)
+
+            When complete, emit exactly one block:
+            \(Self.completeTaskStartMarker)
+            {"summary":"<what you completed>","success":true,"artifact":"<optional markdown artifact content>"}
+            \(Self.completeTaskEndMarker)
+
+            Optional additional artifacts can be emitted as:
+            ---GENERATED_ARTIFACT_START---
+            {"filename":"notes.md","content_type":"markdown"}
+            <artifact content>
+            ---GENERATED_ARTIFACT_END---
+            """
+        )
+        return sections.joined(separator: "\n\n")
+    }
+
+    private func sanitizeOpenClawVisibleResponse(_ raw: String) -> String {
+        var cleaned = raw
+        if let markerRange = cleaned.range(of: "\nSystem:\n") {
+            cleaned = String(cleaned[..<markerRange.lowerBound])
+        } else if cleaned.hasPrefix("System:\n") {
+            cleaned = ""
+        }
+        cleaned = stripTaggedBlocks(
+            from: cleaned,
+            startMarker: Self.clarificationStartMarker,
+            endMarker: Self.clarificationEndMarker
+        )
+        cleaned = stripTaggedBlocks(
+            from: cleaned,
+            startMarker: Self.completeTaskStartMarker,
+            endMarker: Self.completeTaskEndMarker
+        )
+        cleaned = stripTaggedBlocks(
+            from: cleaned,
+            startMarker: Self.generatedArtifactStartMarker,
+            endMarker: Self.generatedArtifactEndMarker
+        )
+        return cleaned
+            .replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func stripTaggedBlocks(
+        from text: String,
+        startMarker: String,
+        endMarker: String
+    ) -> String {
+        var output = text
+        while let startRange = output.range(of: startMarker),
+            let endRange = output.range(of: endMarker, range: startRange.upperBound..<output.endIndex)
+        {
+            output.removeSubrange(startRange.lowerBound..<endRange.upperBound)
+        }
+        return output
+    }
+
+    private func extractLastJSONBlock(
+        from text: String,
+        startMarker: String,
+        endMarker: String
+    ) -> String? {
+        var cursor = text.startIndex
+        var payload: String?
+
+        while cursor < text.endIndex,
+            let start = text.range(of: startMarker, range: cursor..<text.endIndex),
+            let end = text.range(of: endMarker, range: start.upperBound..<text.endIndex)
+        {
+            let candidate = String(text[start.upperBound..<end.lowerBound])
+            let normalized = normalizeJSONBlock(candidate)
+            if !normalized.isEmpty {
+                payload = normalized
+            }
+            cursor = end.upperBound
+        }
+
+        return payload
+    }
+
+    private func normalizeJSONBlock(_ raw: String) -> String {
+        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.hasPrefix("```") {
+            if let firstNewline = value.firstIndex(of: "\n") {
+                value = String(value[value.index(after: firstNewline)...])
+            }
+            if let closingFence = value.range(of: "```", options: .backwards) {
+                value = String(value[..<closingFence.lowerBound])
+            }
+            value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return value
+    }
+
+    private func parseGeneratedArtifacts(from response: String, taskId: String) -> [Artifact] {
+        var artifacts: [Artifact] = []
+        var cursor = response.startIndex
+
+        while cursor < response.endIndex,
+            let start = response.range(of: Self.generatedArtifactStartMarker, range: cursor..<response.endIndex),
+            let end = response.range(of: Self.generatedArtifactEndMarker, range: start.upperBound..<response.endIndex)
+        {
+            let block = String(response[start.lowerBound..<end.upperBound])
+            if let artifact = parseGeneratedArtifact(from: block, taskId: taskId) {
+                artifacts.append(artifact)
+            }
+            cursor = end.upperBound
+        }
+
+        return artifacts
+    }
+
+    private func importOpenClawWorkspaceArtifacts(taskId: String) async -> [Artifact] {
+        let workspaceFiles = await openClawWorkspaceFilesLoader()
+        if workspaceFiles.isEmpty {
+            return []
+        }
+
+        let sortedFiles = workspaceFiles
+            .filter { !$0.missing }
+            .sorted { lhs, rhs in
+                let l = lhs.updatedAtMs ?? 0
+                let r = rhs.updatedAtMs ?? 0
+                if l == r {
+                    return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+                }
+                return l > r
+            }
+
+        var artifacts: [Artifact] = []
+        var dedupeKeys = Set<String>()
+
+        for file in sortedFiles.prefix(Self.maxWorkspaceFilesToImport) {
+            let fileName = file.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard Self.isIngestibleWorkspaceFile(filename: fileName),
+                let content = file.content?.trimmingCharacters(in: .newlines),
+                !content.isEmpty,
+                content.count <= Self.maxWorkspaceArtifactCharacters
+            else {
+                continue
+            }
+
+            let dedupeKey = "\(fileName.lowercased())::\(content)"
+            guard !dedupeKeys.contains(dedupeKey) else { continue }
+            dedupeKeys.insert(dedupeKey)
+
+            artifacts.append(
+                Artifact(
+                    taskId: taskId,
+                    filename: fileName,
+                    content: content,
+                    contentType: Artifact.contentType(from: fileName),
+                    isFinalResult: false
+                )
+            )
+        }
+
+        return artifacts
+    }
+
+    private static func isIngestibleWorkspaceFile(filename: String) -> Bool {
+        let trimmed = filename.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        let lowered = trimmed.lowercased()
+        if lowered == "bootstrap.md" || lowered.hasPrefix(".") {
+            return false
+        }
+
+        if lowered == "readme" || lowered == "readme.md" || lowered == "memory.md" {
+            return true
+        }
+
+        let ext = (trimmed as NSString).pathExtension.lowercased()
+        return ["md", "markdown", "txt", "json", "yaml", "yml", "log"].contains(ext)
+    }
+
+    private static func isPreferredWorkspaceFinalArtifact(filename: String) -> Bool {
+        let lowered = filename.lowercased()
+        return lowered == "readme.md"
+            || lowered == "readme.markdown"
+            || lowered == "result.md"
+            || lowered == "summary.md"
+    }
+
+    private static func defaultOpenClawWorkspaceFilesLoader() async -> [OpenClawAgentWorkspaceFile] {
+        let manager = await MainActor.run { OpenClawManager.shared }
+        let connected = await MainActor.run { manager.isConnected }
+        guard connected else { return [] }
+
+        do {
+            let listing = try await manager.listAgentWorkspaceFiles()
+            var loaded: [OpenClawAgentWorkspaceFile] = []
+
+            for file in listing.files.prefix(Self.maxWorkspaceFilesToImport) {
+                guard !file.missing else { continue }
+                guard Self.isIngestibleWorkspaceFile(filename: file.name) else { continue }
+                if let content = file.content {
+                    loaded.append(
+                        OpenClawAgentWorkspaceFile(
+                            name: file.name,
+                            path: file.path,
+                            missing: file.missing,
+                            size: file.size,
+                            updatedAtMs: file.updatedAtMs,
+                            content: content
+                        )
+                    )
+                    continue
+                }
+                do {
+                    let hydrated = try await manager.readAgentWorkspaceFile(name: file.name)
+                    loaded.append(hydrated)
+                } catch {
+                    continue
+                }
+            }
+
+            return loaded
+        } catch {
+            return []
+        }
+    }
+
+    private struct OpenClawOutputFilter {
+        private static let systemTraceMarkers = ["\nSystem:\n", "System:\n"]
+        private static let systemTracePartials: [String] = {
+            var partials = Set<String>()
+            for marker in systemTraceMarkers {
+                for length in 1 ..< marker.count {
+                    partials.insert(String(marker.prefix(length)))
+                }
+            }
+            return partials.sorted { lhs, rhs in
+                if lhs.count == rhs.count {
+                    return lhs < rhs
+                }
+                return lhs.count > rhs.count
+            }
+        }()
+
+        private var inSystemTrace = false
+        private var systemBoundaryBuffer = ""
+
+        mutating func consume(_ chunk: String) -> String {
+            guard !chunk.isEmpty else { return "" }
+            if inSystemTrace {
+                return ""
+            }
+
+            let combined = systemBoundaryBuffer + chunk
+            systemBoundaryBuffer = ""
+
+            if let markerRange = firstSystemMarkerRange(in: combined) {
+                let content = String(combined[..<markerRange.lowerBound])
+                inSystemTrace = true
+                return content
+            }
+
+            if let partial = Self.systemTracePartials.first(where: { combined.hasSuffix($0) }) {
+                let flush = String(combined.dropLast(partial.count))
+                systemBoundaryBuffer = partial
+                return flush
+            }
+
+            return combined
+        }
+
+        private func firstSystemMarkerRange(in text: String) -> Range<String.Index>? {
+            var earliest: Range<String.Index>?
+            for marker in Self.systemTraceMarkers {
+                guard let range = text.range(of: marker) else { continue }
+                if let current = earliest {
+                    if range.lowerBound < current.lowerBound {
+                        earliest = range
+                    }
+                } else {
+                    earliest = range
+                }
+            }
+            return earliest
+        }
+
+        mutating func finalize() -> String {
+            guard !inSystemTrace else {
+                systemBoundaryBuffer = ""
+                return ""
+            }
+            let tail = systemBoundaryBuffer
+            systemBoundaryBuffer = ""
+            return tail
+        }
+    }
+
     /// Parses generate_artifact tool result to extract the artifact
     private func parseGeneratedArtifact(from result: String, taskId: String) -> Artifact? {
-        // Look for the artifact markers
-        guard let startRange = result.range(of: "---GENERATED_ARTIFACT_START---\n"),
-            let endRange = result.range(of: "\n---GENERATED_ARTIFACT_END---")
+        guard let startRange = result.range(of: Self.generatedArtifactStartMarker),
+            let endRange = result.range(of: Self.generatedArtifactEndMarker, range: startRange.upperBound..<result.endIndex)
         else {
             return nil
         }
 
-        let fullContent = String(result[startRange.upperBound ..< endRange.lowerBound])
+        var fullContent = String(result[startRange.upperBound ..< endRange.lowerBound])
+        fullContent = fullContent.trimmingCharacters(in: .newlines)
 
         // First line is JSON metadata, rest is content
         let lines = fullContent.components(separatedBy: "\n")

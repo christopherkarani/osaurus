@@ -93,7 +93,8 @@ enum OpenClawChatHistoryLoader {
                 turns.append(turn)
 
             case .assistant:
-                let text = extractDisplayText(from: message)
+                let rawText = extractDisplayText(from: message)
+                let text = OpenClawOutputFormatting.formatHistoryText(rawText)
                 let turn = ChatTurn(role: .assistant, content: text)
 
                 let thinking = extractThinkingText(from: message)

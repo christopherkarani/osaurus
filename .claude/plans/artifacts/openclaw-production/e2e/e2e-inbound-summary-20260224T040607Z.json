@@ -1,0 +1,11 @@
+{
+  "generatedAtUtc": "2026-02-24T04:06:07Z",
+  "target": "6749713257",
+  "status": "failed",
+  "reason": "lastInboundAt did not advance within wait window",
+  "waitSeconds": 30,
+  "preLastInboundAt": "null",
+  "postLastInboundAt": "null",
+  "preStatusArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/channels-status-pre-inbound-20260224T040607Z.json",
+  "postStatusArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/channels-status-post-inbound-20260224T040607Z.json"
+}

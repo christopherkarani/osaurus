@@ -21,10 +21,7 @@ struct OpenClawChannelLinkSheet: View {
     @State private var isWorking = false
     @State private var errorMessage: String?
 
-    @State private var textValue = ""
-    @State private var confirmValue = false
-    @State private var selectedIndex = 0
-    @State private var selectedIndices: Set<Int> = []
+    @StateObject private var formState = OpenClawWizardStepFormState()
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -38,6 +35,13 @@ struct OpenClawChannelLinkSheet: View {
 
     private var isTokenChannel: Bool {
         OpenClawChannelLinkSheetLogic.mode(for: channel.id) == .token
+    }
+
+    private var primaryActionTitle: String {
+        OpenClawWizardFlowLogic.primaryActionTitle(
+            isComplete: isComplete,
+            stepType: step?.type
+        )
     }
 
     var body: some View {
@@ -167,97 +171,12 @@ struct OpenClawChannelLinkSheet: View {
                     }
                 }
 
-                stepEditor(step)
+                OpenClawWizardStepEditor(step: step, formState: formState)
             } else {
                 ProgressView("Preparing channel linking flow…")
                     .progressViewStyle(CircularProgressViewStyle())
                     .tint(theme.accentColor)
                     .font(.system(size: 12))
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func stepEditor(_ step: OpenClawWizardStep) -> some View {
-        switch step.type {
-        case .note:
-            EmptyView()
-
-        case .progress:
-            ProgressView()
-                .progressViewStyle(CircularProgressViewStyle())
-                .tint(theme.accentColor)
-
-        case .action:
-            EmptyView()
-
-        case .text:
-            if step.sensitive == true {
-                SecureField(step.placeholder ?? "", text: $textValue)
-                    .textFieldStyle(.roundedBorder)
-            } else {
-                TextField(step.placeholder ?? "", text: $textValue)
-                    .textFieldStyle(.roundedBorder)
-            }
-
-        case .confirm:
-            Toggle("Confirm", isOn: $confirmValue)
-                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-
-        case .select:
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(Array((step.options ?? []).enumerated()), id: \.offset) { index, option in
-                    Button {
-                        selectedIndex = index
-                    } label: {
-                        HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: selectedIndex == index ? "largecircle.fill.circle" : "circle")
-                                .foregroundColor(theme.accentColor)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(option.label)
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(theme.primaryText)
-                                if let hint = option.hint, !hint.isEmpty {
-                                    Text(hint)
-                                        .font(.system(size: 11))
-                                        .foregroundColor(theme.secondaryText)
-                                }
-                            }
-                            Spacer()
-                        }
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-            }
-
-        case .multiselect:
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(Array((step.options ?? []).enumerated()), id: \.offset) { index, option in
-                    Button {
-                        if selectedIndices.contains(index) {
-                            selectedIndices.remove(index)
-                        } else {
-                            selectedIndices.insert(index)
-                        }
-                    } label: {
-                        HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: selectedIndices.contains(index) ? "checkmark.square.fill" : "square")
-                                .foregroundColor(theme.accentColor)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(option.label)
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(theme.primaryText)
-                                if let hint = option.hint, !hint.isEmpty {
-                                    Text(hint)
-                                        .font(.system(size: 11))
-                                        .foregroundColor(theme.secondaryText)
-                                }
-                            }
-                            Spacer()
-                        }
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
             }
         }
     }
@@ -270,14 +189,14 @@ struct OpenClawChannelLinkSheet: View {
 
             Spacer()
 
-            HeaderPrimaryButton(isComplete ? "Done" : "Continue", icon: isComplete ? "checkmark" : "arrow.right") {
+            HeaderPrimaryButton(primaryActionTitle, icon: isComplete ? "checkmark" : "arrow.right") {
                 if isComplete {
                     dismiss()
                 } else {
                     Task { await submitCurrentStep() }
                 }
             }
-            .disabled(isWorking || step == nil)
+            .disabled(isWorking || (!isComplete && OpenClawWizardFlowLogic.isPrimaryActionBlocked(step: step)))
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
@@ -309,7 +228,7 @@ struct OpenClawChannelLinkSheet: View {
         defer { isWorking = false }
 
         do {
-            let value = answerValue(for: step)
+            let value = formState.answerValue(for: step)
             let next = try await OpenClawGatewayConnection.shared.wizardNext(
                 sessionId: sessionId,
                 stepId: step.id,
@@ -337,115 +256,26 @@ struct OpenClawChannelLinkSheet: View {
         self.step = step
 
         guard let step else { return }
-        switch step.type {
-        case .text:
-            textValue = stringValue(step.initialValue?.value) ?? ""
-
-        case .confirm:
-            confirmValue = boolValue(step.initialValue?.value)
-
-        case .select:
-            if
-                let options = step.options,
-                let preferred = OpenClawChannelLinkSheetLogic.preferredOptionIndex(
-                    stepID: step.id,
-                    stepTitle: step.title,
-                    options: options,
-                    channelID: channel.id,
-                    channelName: channel.name
-                )
-            {
-                selectedIndex = preferred
-            } else {
-                selectedIndex = indexForInitialValue(step)
-            }
-
-        case .multiselect:
-            selectedIndices = indicesForInitialValues(step)
-
-        default:
-            break
+        let preferredIndex: Int? = if
+            let options = step.options,
+            let preferred = OpenClawChannelLinkSheetLogic.preferredOptionIndex(
+                stepID: step.id,
+                stepTitle: step.title,
+                options: options,
+                channelID: channel.id,
+                channelName: channel.name
+            )
+        {
+            preferred
+        } else {
+            nil
         }
-    }
-
-    private func indexForInitialValue(_ step: OpenClawWizardStep) -> Int {
-        guard let initial = step.initialValue else { return 0 }
-        guard let options = step.options else { return 0 }
-        return options.firstIndex(where: { option in
-            areEqual(option.value, initial)
-        }) ?? 0
-    }
-
-    private func indicesForInitialValues(_ step: OpenClawWizardStep) -> Set<Int> {
-        guard let options = step.options else { return [] }
-        guard let initial = step.initialValue?.value as? [OpenClawProtocol.AnyCodable] else {
-            return []
-        }
-        return Set(options.enumerated().compactMap { index, option in
-            initial.contains(where: { areEqual($0, option.value) }) ? index : nil
-        })
-    }
-
-    private func answerValue(for step: OpenClawWizardStep) -> OpenClawProtocol.AnyCodable? {
-        switch step.type {
-        case .text:
-            return OpenClawProtocol.AnyCodable(textValue)
-        case .confirm:
-            return OpenClawProtocol.AnyCodable(confirmValue)
-        case .select:
-            let options = step.options ?? []
-            guard selectedIndex >= 0, selectedIndex < options.count else {
-                return nil
-            }
-            return options[selectedIndex].value
-        case .multiselect:
-            let options = step.options ?? []
-            let values = selectedIndices
-                .sorted()
-                .compactMap { index -> OpenClawProtocol.AnyCodable? in
-                    guard index >= 0, index < options.count else { return nil }
-                    return options[index].value
-                }
-            return OpenClawProtocol.AnyCodable(values)
-        default:
-            return nil
-        }
-    }
-
-    private func boolValue(_ raw: Any?) -> Bool {
-        if let raw = raw as? Bool {
-            return raw
-        }
-        if let raw = raw as? String {
-            return ["true", "1", "yes", "y"].contains(raw.lowercased())
-        }
-        if let raw = raw as? Int {
-            return raw != 0
-        }
-        return false
-    }
-
-    private func stringValue(_ raw: Any?) -> String? {
-        if let raw = raw as? String {
-            return raw
-        }
-        return nil
-    }
-
-    private func areEqual(_ lhs: OpenClawProtocol.AnyCodable, _ rhs: OpenClawProtocol.AnyCodable) -> Bool {
-        let encoder = JSONEncoder()
-        guard
-            let lhsData = try? encoder.encode(lhs),
-            let rhsData = try? encoder.encode(rhs)
-        else {
-            return false
-        }
-        return lhsData == rhsData
+        formState.apply(step: step, preferredSelectIndex: preferredIndex)
     }
 
     private func qrImage(from step: OpenClawWizardStep) -> NSImage? {
         let candidates = [
-            stringValue(step.initialValue?.value),
+            OpenClawWizardStepFormState.stringValue(step.initialValue?.value),
             step.message,
             step.placeholder,
         ].compactMap { $0 }
@@ -475,6 +305,26 @@ enum OpenClawChannelLinkMode: Equatable {
 }
 
 enum OpenClawChannelLinkSheetLogic {
+    static func primaryActionTitle(isComplete: Bool, stepType: OpenClawWizardStepType?) -> String {
+        OpenClawWizardFlowLogic.primaryActionTitle(isComplete: isComplete, stepType: stepType)
+    }
+
+    static func isPrimaryActionBlocked(step: OpenClawWizardStep?) -> Bool {
+        OpenClawWizardFlowLogic.isPrimaryActionBlocked(step: step)
+    }
+
+    static func emptyOptionsMessage(for step: OpenClawWizardStep) -> String? {
+        OpenClawWizardFlowLogic.emptyOptionsMessage(for: step)
+    }
+
+    static func fallbackMessage(for step: OpenClawWizardStep) -> String? {
+        OpenClawWizardFlowLogic.fallbackMessage(for: step)
+    }
+
+    static func implicitAnswerValue(for stepType: OpenClawWizardStepType) -> OpenClawProtocol.AnyCodable? {
+        OpenClawWizardFlowLogic.implicitAnswerValue(for: stepType)
+    }
+
     static func mode(for channelId: String) -> OpenClawChannelLinkMode {
         let id = channelId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if id.contains("whatsapp") || id.contains("signal") || id == "web" || id.contains("webchat") {

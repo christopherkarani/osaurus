@@ -149,6 +149,123 @@ struct OpenClawPhase3ViewLogicTests {
     }
 
     @Test
+    func channelLinkPrimaryActionTitle_matchesStepType() {
+        #expect(OpenClawChannelLinkSheetLogic.primaryActionTitle(isComplete: false, stepType: .action) == "Run")
+        #expect(OpenClawChannelLinkSheetLogic.primaryActionTitle(isComplete: false, stepType: .text) == "Continue")
+        #expect(OpenClawChannelLinkSheetLogic.primaryActionTitle(isComplete: true, stepType: .action) == "Done")
+    }
+
+    @Test
+    func channelLinkPrimaryActionBlocked_requiresOptionsForSelectionStages() {
+        #expect(OpenClawChannelLinkSheetLogic.isPrimaryActionBlocked(step: nil) == true)
+
+        let emptySelect = OpenClawWizardStep(
+            id: "select-empty",
+            type: .select,
+            title: nil,
+            message: nil,
+            options: nil,
+            initialValue: nil,
+            placeholder: nil,
+            sensitive: nil
+        )
+        #expect(OpenClawChannelLinkSheetLogic.isPrimaryActionBlocked(step: emptySelect) == true)
+
+        let populatedSelect = OpenClawWizardStep(
+            id: "select-values",
+            type: .select,
+            title: nil,
+            message: nil,
+            options: [
+                OpenClawWizardStepOption(value: AnyCodable("discord"), label: "Discord", hint: nil)
+            ],
+            initialValue: nil,
+            placeholder: nil,
+            sensitive: nil
+        )
+        #expect(OpenClawChannelLinkSheetLogic.isPrimaryActionBlocked(step: populatedSelect) == false)
+
+        let action = OpenClawWizardStep(
+            id: "action",
+            type: .action,
+            title: nil,
+            message: nil,
+            options: nil,
+            initialValue: nil,
+            placeholder: nil,
+            sensitive: nil
+        )
+        #expect(OpenClawChannelLinkSheetLogic.isPrimaryActionBlocked(step: action) == false)
+    }
+
+    @Test
+    func channelLinkFallbackMessage_handlesBlankStages() {
+        let blankNote = OpenClawWizardStep(
+            id: "note",
+            type: .note,
+            title: nil,
+            message: nil,
+            options: nil,
+            initialValue: nil,
+            placeholder: nil,
+            sensitive: nil
+        )
+        #expect(
+            OpenClawChannelLinkSheetLogic.fallbackMessage(for: blankNote) ==
+                "Review this onboarding step, then continue."
+        )
+
+        let blankAction = OpenClawWizardStep(
+            id: "action",
+            type: .action,
+            title: nil,
+            message: nil,
+            options: nil,
+            initialValue: nil,
+            placeholder: nil,
+            sensitive: nil
+        )
+        #expect(
+            OpenClawChannelLinkSheetLogic.fallbackMessage(for: blankAction) ==
+                "Run this onboarding action to continue."
+        )
+
+        let messageNote = OpenClawWizardStep(
+            id: "note-with-message",
+            type: .note,
+            title: nil,
+            message: "Read this",
+            options: nil,
+            initialValue: nil,
+            placeholder: nil,
+            sensitive: nil
+        )
+        #expect(OpenClawChannelLinkSheetLogic.fallbackMessage(for: messageNote) == nil)
+    }
+
+    @Test
+    func channelLinkWizardStageDefaults_coverActionAndEmptySelection() {
+        let blankSelect = OpenClawWizardStep(
+            id: "select-empty",
+            type: .select,
+            title: nil,
+            message: nil,
+            options: nil,
+            initialValue: nil,
+            placeholder: nil,
+            sensitive: nil
+        )
+        #expect(
+            OpenClawChannelLinkSheetLogic.emptyOptionsMessage(for: blankSelect) ==
+                "No options are available for this onboarding stage yet."
+        )
+
+        let actionValue = OpenClawChannelLinkSheetLogic.implicitAnswerValue(for: .action)
+        #expect((actionValue?.value as? Bool) == true)
+        #expect(OpenClawChannelLinkSheetLogic.implicitAnswerValue(for: .note) == nil)
+    }
+
+    @Test
     func cronToggleLogic_rollsBackOnFailure() {
         #expect(OpenClawCronViewLogic.finalToggleValue(previous: false, desired: true, succeeded: true) == true)
         #expect(OpenClawCronViewLogic.finalToggleValue(previous: false, desired: true, succeeded: false) == false)

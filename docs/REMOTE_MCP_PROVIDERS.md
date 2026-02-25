@@ -15,6 +15,20 @@ With Remote MCP Providers, you can:
 
 This is different from Remote Providers (which provide inference endpoints). Remote MCP Providers provide **tools** that models can call.
 
+### OpenClaw Bridge (mcporter)
+
+If you use Osaurus as the frontend for OpenClaw, you can sync enabled Osaurus MCP providers into OpenClaw's `mcporter` skill from **OpenClaw Dashboard > MCP > Sync to OpenClaw**.
+
+The sync action:
+
+- Writes a generated mcporter config file at:
+  `~/Library/Application Support/com.dinoki.osaurus/providers/openclaw-mcporter.json`
+- Updates OpenClaw skill env:
+  `skills.entries.mcporter.env.MCPORTER_CONFIG=<generated path>`
+- Optionally enables the `mcporter` skill in OpenClaw
+
+This keeps MCP provider ownership in Osaurus while allowing OpenClaw runs to use the same MCP endpoints through `mcporter`.
+
 ---
 
 ## Adding an MCP Provider
@@ -210,7 +224,7 @@ Custom headers marked as "secret" are also stored in the Keychain.
 Non-secret configuration is stored at:
 
 ```
-~/Library/Application Support/Osaurus/mcp_providers.json
+~/Library/Application Support/Osaurus/providers/mcp.json
 ```
 
 ---

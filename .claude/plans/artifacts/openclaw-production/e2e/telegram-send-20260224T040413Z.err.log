@@ -1,0 +1,2 @@
+[telegram] message failed: Call to 'sendMessage' failed! (403: Forbidden: bot can't initiate conversation with a user)
+GrammyError: Call to 'sendMessage' failed! (403: Forbidden: bot can't initiate conversation with a user)

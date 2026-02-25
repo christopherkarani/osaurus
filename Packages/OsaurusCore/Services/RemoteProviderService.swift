@@ -7,11 +7,49 @@
 
 import Foundation
 
+public enum RemoteProviderFailureClass: String, Sendable, Equatable {
+    case misconfiguredEndpoint = "misconfigured-endpoint"
+    case authFailed = "auth-failed"
+    case gatewayUnavailable = "gateway-unavailable"
+    case networkUnreachable = "network-unreachable"
+    case invalidResponse = "invalid-response"
+    case unknown = "unknown"
+}
+
+public struct RemoteProviderFailureDetails: Sendable {
+    public let failureClass: RemoteProviderFailureClass
+    public let message: String
+    public let fixIt: String?
+    public let statusCode: Int?
+    public let contentType: String?
+    public let bodyPreview: String?
+    public let endpoint: String
+
+    public init(
+        failureClass: RemoteProviderFailureClass,
+        message: String,
+        fixIt: String?,
+        statusCode: Int?,
+        contentType: String?,
+        bodyPreview: String?,
+        endpoint: String
+    ) {
+        self.failureClass = failureClass
+        self.message = message
+        self.fixIt = fixIt
+        self.statusCode = statusCode
+        self.contentType = contentType
+        self.bodyPreview = bodyPreview
+        self.endpoint = endpoint
+    }
+}
+
 /// Errors specific to remote provider operations
 public enum RemoteProviderServiceError: LocalizedError {
     case invalidURL
     case notConnected
     case requestFailed(String)
+    case discoveryFailed(RemoteProviderFailureDetails)
     case invalidResponse
     case streamingError(String)
     case noModelsAvailable
@@ -24,6 +62,8 @@ public enum RemoteProviderServiceError: LocalizedError {
             return "Provider is not connected"
         case .requestFailed(let message):
             return "Request failed: \(message)"
+        case .discoveryFailed(let details):
+            return details.message
         case .invalidResponse:
             return "Invalid response from provider"
         case .streamingError(let message):
@@ -1945,50 +1985,103 @@ private struct RemoteChatRequest: Encodable {
 extension RemoteProviderService {
     /// Fetch models from a remote provider and create a service instance
     public static func fetchModels(from provider: RemoteProvider) async throws -> [String] {
+        let modelsURLText = provider.url(for: "/models")?.absoluteString ?? "<invalid-url>"
+        await emitModelsDiagnostic(
+            level: .info,
+            event: "models.fetch.begin",
+            context: [
+                "providerId": provider.id.uuidString,
+                "providerName": provider.name,
+                "providerType": provider.providerType.rawValue,
+                "baseURL": provider.baseURL?.absoluteString ?? "<invalid-url>",
+                "modelsURL": modelsURLText,
+            ]
+        )
+
         if provider.providerType == .anthropic {
             guard let baseURL = provider.url(for: "/models") else {
                 throw RemoteProviderServiceError.invalidURL
             }
-            return try await fetchAnthropicModels(
+            let models = try await fetchAnthropicModels(
                 baseURL: baseURL,
                 headers: provider.resolvedHeaders(),
                 timeout: min(provider.timeout, 30)
             )
+            await emitModelsDiagnostic(
+                level: .info,
+                event: "models.fetch.success",
+                context: [
+                    "providerId": provider.id.uuidString,
+                    "providerName": provider.name,
+                    "providerType": provider.providerType.rawValue,
+                    "modelsURL": modelsURLText,
+                    "modelCount": "\(models.count)",
+                ]
+            )
+            return models
         }
 
         // Gemini uses a different models response format
         if provider.providerType == .gemini {
-            return try await fetchGeminiModels(from: provider)
+            let models = try await fetchGeminiModels(from: provider)
+            await emitModelsDiagnostic(
+                level: .info,
+                event: "models.fetch.success",
+                context: [
+                    "providerId": provider.id.uuidString,
+                    "providerName": provider.name,
+                    "providerType": provider.providerType.rawValue,
+                    "modelsURL": modelsURLText,
+                    "modelCount": "\(models.count)",
+                ]
+            )
+            return models
         }
 
         // OpenAI-compatible providers use /models endpoint
         guard let url = provider.url(for: "/models") else {
             throw RemoteProviderServiceError.invalidURL
         }
+        let (data, httpResponse) = try await performModelsRequest(
+            url: url,
+            headers: provider.resolvedHeaders(),
+            timeout: min(provider.timeout, 30)
+        )
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-
-        // Add provider headers
-        for (key, value) in provider.resolvedHeaders() {
-            request.setValue(value, forHTTPHeaderField: key)
+        let contentType = contentType(from: httpResponse)
+        do {
+            let modelsResponse = try JSONDecoder().decode(ModelsResponse.self, from: data)
+            let modelIds = modelsResponse.data.map { $0.id }
+            await emitModelsDiagnostic(
+                level: .info,
+                event: "models.fetch.success",
+                context: [
+                    "providerId": provider.id.uuidString,
+                    "providerName": provider.name,
+                    "providerType": provider.providerType.rawValue,
+                    "modelsURL": url.absoluteString,
+                    "modelCount": "\(modelIds.count)",
+                    "statusCode": "\(httpResponse.statusCode)",
+                    "contentType": contentType ?? "<missing>",
+                    "decodeClass": "json",
+                ]
+            )
+            return modelIds
+        } catch {
+            let details = classifyModelsDecodeFailure(
+                url: url,
+                statusCode: httpResponse.statusCode,
+                contentType: contentType,
+                data: data,
+                decodeError: error
+            )
+            await emitModelsDiagnostic(
+                level: .error,
+                event: "models.decode.failed",
+                context: diagnosticsContext(for: details)
+            )
+            throw RemoteProviderServiceError.discoveryFailed(details)
         }
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw RemoteProviderServiceError.invalidResponse
-        }
-
-        if httpResponse.statusCode >= 400 {
-            let errorMessage = extractErrorMessage(from: data, statusCode: httpResponse.statusCode)
-            throw RemoteProviderServiceError.requestFailed(errorMessage)
-        }
-
-        // Parse models response
-        let modelsResponse = try JSONDecoder().decode(ModelsResponse.self, from: data)
-        return modelsResponse.data.map { $0.id }
     }
 
     /// Fetch models from Gemini API (different response format from OpenAI)
@@ -1996,33 +2089,32 @@ extension RemoteProviderService {
         guard let url = provider.url(for: "/models") else {
             throw RemoteProviderServiceError.invalidURL
         }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-
-        // Add provider headers (includes x-goog-api-key)
-        for (key, value) in provider.resolvedHeaders() {
-            request.setValue(value, forHTTPHeaderField: key)
-        }
-
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = min(provider.timeout, 30)
-        let session = URLSession(configuration: config)
-
-        let (data, response) = try await session.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw RemoteProviderServiceError.invalidResponse
-        }
-
-        if httpResponse.statusCode >= 400 {
-            let errorMessage = extractErrorMessage(from: data, statusCode: httpResponse.statusCode)
-            throw RemoteProviderServiceError.requestFailed(errorMessage)
-        }
+        let (data, httpResponse) = try await performModelsRequest(
+            url: url,
+            headers: provider.resolvedHeaders(),
+            timeout: min(provider.timeout, 30)
+        )
+        let contentType = contentType(from: httpResponse)
 
         // Parse Gemini models response
-        let modelsResponse = try JSONDecoder().decode(GeminiModelsResponse.self, from: data)
+        let modelsResponse: GeminiModelsResponse
+        do {
+            modelsResponse = try JSONDecoder().decode(GeminiModelsResponse.self, from: data)
+        } catch {
+            let details = classifyModelsDecodeFailure(
+                url: url,
+                statusCode: httpResponse.statusCode,
+                contentType: contentType,
+                data: data,
+                decodeError: error
+            )
+            await emitModelsDiagnostic(
+                level: .error,
+                event: "models.decode.failed",
+                context: diagnosticsContext(for: details)
+            )
+            throw RemoteProviderServiceError.discoveryFailed(details)
+        }
 
         // Filter to models that support generateContent and strip "models/" prefix
         let models = (modelsResponse.models ?? [])
@@ -2071,18 +2163,30 @@ extension RemoteProviderService {
                 request.setValue(value, forHTTPHeaderField: key)
             }
 
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, httpResponse) = try await performModelsRequest(
+                request: request,
+                timeout: timeout
+            )
+            let contentType = contentType(from: httpResponse)
 
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw RemoteProviderServiceError.invalidResponse
+            let modelsResponse: AnthropicModelsResponse
+            do {
+                modelsResponse = try JSONDecoder().decode(AnthropicModelsResponse.self, from: data)
+            } catch {
+                let details = classifyModelsDecodeFailure(
+                    url: url,
+                    statusCode: httpResponse.statusCode,
+                    contentType: contentType,
+                    data: data,
+                    decodeError: error
+                )
+                await emitModelsDiagnostic(
+                    level: .error,
+                    event: "models.decode.failed",
+                    context: diagnosticsContext(for: details)
+                )
+                throw RemoteProviderServiceError.discoveryFailed(details)
             }
-
-            if httpResponse.statusCode >= 400 {
-                let errorMessage = extractErrorMessage(from: data, statusCode: httpResponse.statusCode)
-                throw RemoteProviderServiceError.requestFailed(errorMessage)
-            }
-
-            let modelsResponse = try JSONDecoder().decode(AnthropicModelsResponse.self, from: data)
             allModels.append(contentsOf: modelsResponse.data.map { $0.id })
 
             if modelsResponse.has_more, let lastId = modelsResponse.last_id {
@@ -2093,6 +2197,312 @@ extension RemoteProviderService {
         }
 
         return allModels
+    }
+
+    private static func performModelsRequest(
+        url: URL,
+        headers: [String: String],
+        timeout: TimeInterval
+    ) async throws -> (Data, HTTPURLResponse) {
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        for (key, value) in headers {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        return try await performModelsRequest(request: request, timeout: timeout)
+    }
+
+    private static func performModelsRequest(
+        request: URLRequest,
+        timeout: TimeInterval
+    ) async throws -> (Data, HTTPURLResponse) {
+        let session: URLSession
+        if timeout > 0 {
+            let config = URLSessionConfiguration.default
+            config.timeoutIntervalForRequest = timeout
+            config.timeoutIntervalForResource = timeout * 2
+            session = URLSession(configuration: config)
+        } else {
+            session = URLSession.shared
+        }
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            let details = classifyTransportFailure(url: request.url, error: error)
+            await emitModelsDiagnostic(
+                level: .error,
+                event: "models.request.failed",
+                context: diagnosticsContext(for: details)
+            )
+            throw RemoteProviderServiceError.discoveryFailed(details)
+        }
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            let details = RemoteProviderFailureDetails(
+                failureClass: .invalidResponse,
+                message: "Provider returned a non-HTTP response for \(request.url?.absoluteString ?? "<unknown>").",
+                fixIt: "Ensure the endpoint targets an HTTP model API URL and retry.",
+                statusCode: nil,
+                contentType: nil,
+                bodyPreview: bodyPreview(from: data),
+                endpoint: request.url?.absoluteString ?? "<unknown>"
+            )
+            await emitModelsDiagnostic(
+                level: .error,
+                event: "models.request.invalidResponse",
+                context: diagnosticsContext(for: details)
+            )
+            throw RemoteProviderServiceError.discoveryFailed(details)
+        }
+
+        let contentType = contentType(from: httpResponse)
+        await emitModelsDiagnostic(
+            level: .info,
+            event: "models.http.response",
+            context: [
+                "endpoint": request.url?.absoluteString ?? "<unknown>",
+                "statusCode": "\(httpResponse.statusCode)",
+                "contentType": contentType ?? "<missing>",
+                "bodyPreview": bodyPreview(from: data) ?? "<empty>",
+            ]
+        )
+
+        if httpResponse.statusCode >= 400 {
+            let details = classifyModelsHTTPFailure(
+                url: request.url ?? URL(string: "about:blank")!,
+                statusCode: httpResponse.statusCode,
+                contentType: contentType,
+                data: data
+            )
+            await emitModelsDiagnostic(
+                level: .error,
+                event: "models.http.failed",
+                context: diagnosticsContext(for: details)
+            )
+            throw RemoteProviderServiceError.discoveryFailed(details)
+        }
+
+        return (data, httpResponse)
+    }
+
+    static func classifyModelsHTTPFailure(
+        url: URL,
+        statusCode: Int,
+        contentType: String?,
+        data: Data
+    ) -> RemoteProviderFailureDetails {
+        let endpoint = url.absoluteString
+        let preview = bodyPreview(from: data)
+        let likelyHTML = isLikelyHTML(contentType: contentType, bodyPreview: preview)
+        let openClawFix = openClawEndpointFixIt(for: url)
+
+        if statusCode == 401 || statusCode == 403 {
+            return RemoteProviderFailureDetails(
+                failureClass: .authFailed,
+                message: "Authentication failed while requesting \(endpoint). Verify credentials and retry.",
+                fixIt: "Update the provider API key/token in the provider settings, then test connection again.",
+                statusCode: statusCode,
+                contentType: contentType,
+                bodyPreview: preview,
+                endpoint: endpoint
+            )
+        }
+
+        if statusCode == 404 || statusCode == 405 || likelyHTML {
+            return RemoteProviderFailureDetails(
+                failureClass: .misconfiguredEndpoint,
+                message:
+                    "Provider endpoint appears misconfigured (HTTP \(statusCode)) while requesting \(endpoint).",
+                fixIt: openClawFix
+                    ?? "Check the provider base URL/path. The endpoint should return JSON from a model API (for example /v1/models).",
+                statusCode: statusCode,
+                contentType: contentType,
+                bodyPreview: preview,
+                endpoint: endpoint
+            )
+        }
+
+        if (500...599).contains(statusCode) {
+            return RemoteProviderFailureDetails(
+                failureClass: .gatewayUnavailable,
+                message:
+                    "Provider gateway returned HTTP \(statusCode) while requesting \(endpoint).",
+                fixIt: "Ensure the provider service is running and reachable, then retry.",
+                statusCode: statusCode,
+                contentType: contentType,
+                bodyPreview: preview,
+                endpoint: endpoint
+            )
+        }
+
+        return RemoteProviderFailureDetails(
+            failureClass: .unknown,
+            message: extractErrorMessage(from: data, statusCode: statusCode),
+            fixIt: openClawFix
+                ?? "Verify the provider endpoint, credentials, and network connectivity.",
+            statusCode: statusCode,
+            contentType: contentType,
+            bodyPreview: preview,
+            endpoint: endpoint
+        )
+    }
+
+    static func classifyModelsDecodeFailure(
+        url: URL,
+        statusCode: Int,
+        contentType: String?,
+        data: Data,
+        decodeError: Error
+    ) -> RemoteProviderFailureDetails {
+        let endpoint = url.absoluteString
+        let preview = bodyPreview(from: data)
+        let likelyHTML = isLikelyHTML(contentType: contentType, bodyPreview: preview)
+        let openClawFix = openClawEndpointFixIt(for: url)
+
+        if likelyHTML {
+            return RemoteProviderFailureDetails(
+                failureClass: .misconfiguredEndpoint,
+                message:
+                    "Provider returned HTML/non-JSON content for \(endpoint). This usually indicates an endpoint mismatch.",
+                fixIt: openClawFix
+                    ?? "Point the provider to a model API endpoint that returns JSON (for example /v1/models).",
+                statusCode: statusCode,
+                contentType: contentType,
+                bodyPreview: preview,
+                endpoint: endpoint
+            )
+        }
+
+        return RemoteProviderFailureDetails(
+            failureClass: .invalidResponse,
+            message:
+                "Provider returned an invalid JSON payload for \(endpoint): \(decodeError.localizedDescription)",
+            fixIt: openClawFix
+                ?? "Check that the endpoint serves OpenAI/Anthropic-compatible JSON and retry.",
+            statusCode: statusCode,
+            contentType: contentType,
+            bodyPreview: preview,
+            endpoint: endpoint
+        )
+    }
+
+    private static func classifyTransportFailure(url: URL?, error: Error) -> RemoteProviderFailureDetails {
+        let endpoint = url?.absoluteString ?? "<unknown>"
+        let nsError = error as NSError
+
+        if nsError.domain == NSURLErrorDomain {
+            return RemoteProviderFailureDetails(
+                failureClass: .networkUnreachable,
+                message: "Network request failed while connecting to \(endpoint): \(nsError.localizedDescription)",
+                fixIt: "Check DNS/network access and ensure the host is reachable.",
+                statusCode: nil,
+                contentType: nil,
+                bodyPreview: nil,
+                endpoint: endpoint
+            )
+        }
+
+        return RemoteProviderFailureDetails(
+            failureClass: .unknown,
+            message: "Request to \(endpoint) failed: \(error.localizedDescription)",
+            fixIt: "Verify the endpoint and try again.",
+            statusCode: nil,
+            contentType: nil,
+            bodyPreview: nil,
+            endpoint: endpoint
+        )
+    }
+
+    private static func diagnosticsContext(for details: RemoteProviderFailureDetails) -> [String: String] {
+        var context: [String: String] = [
+            "endpoint": details.endpoint,
+            "failureClass": details.failureClass.rawValue,
+            "message": details.message,
+        ]
+        if let statusCode = details.statusCode {
+            context["statusCode"] = "\(statusCode)"
+        }
+        if let contentType = details.contentType {
+            context["contentType"] = contentType
+        }
+        if let bodyPreview = details.bodyPreview {
+            context["bodyPreview"] = bodyPreview
+        }
+        if let fixIt = details.fixIt {
+            context["fixIt"] = fixIt
+        }
+        return context
+    }
+
+    private static func emitModelsDiagnostic(
+        level: StartupDiagnosticsLevel,
+        event: String,
+        context: [String: String]
+    ) async {
+        await StartupDiagnostics.shared.emit(
+            level: level,
+            component: "remote-provider",
+            event: event,
+            context: context
+        )
+    }
+
+    private static func contentType(from response: HTTPURLResponse) -> String? {
+        if let value = response.value(forHTTPHeaderField: "Content-Type"), !value.isEmpty {
+            return value
+        }
+        return nil
+    }
+
+    private static func bodyPreview(from data: Data) -> String? {
+        guard !data.isEmpty else { return nil }
+        let raw = String(decoding: data.prefix(400), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return nil }
+        return StartupDiagnostics.truncateValue(raw, maxLength: 220)
+    }
+
+    private static func isLikelyHTML(contentType: String?, bodyPreview: String?) -> Bool {
+        let normalizedType = contentType?.lowercased() ?? ""
+        if normalizedType.contains("text/html") || normalizedType.contains("application/xhtml") {
+            return true
+        }
+
+        let trimmed = bodyPreview?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        if trimmed.hasPrefix("<!doctype html") || trimmed.hasPrefix("<html") || trimmed.hasPrefix("<head")
+            || trimmed.hasPrefix("<body")
+        {
+            return true
+        }
+        if trimmed.hasPrefix("<") {
+            return true
+        }
+        return false
+    }
+
+    private static func openClawEndpointFixIt(for url: URL) -> String? {
+        let host = url.host?.lowercased() ?? ""
+        let path = url.path.lowercased()
+        let localHosts: Set<String> = ["127.0.0.1", "localhost", "::1"]
+        let looksLikeOpenClawRoute =
+            path.hasPrefix("/health")
+            || path.hasPrefix("/ws")
+            || path.hasPrefix("/mcp")
+            || path.hasPrefix("/channels")
+            || path.hasPrefix("/system")
+            || path.hasPrefix("/wizard")
+            || path.hasPrefix("/dashboard")
+            || path == "/"
+
+        if looksLikeOpenClawRoute || (localHosts.contains(host) && (url.port == 18789 || path == "/")) {
+            return
+                "This endpoint looks like an OpenClaw gateway UI/control route. Configure the provider with its model API base URL (for example .../v1) and retry."
+        }
+        return nil
     }
 
     /// Extract a human-readable error message from API error response data

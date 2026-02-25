@@ -147,6 +147,11 @@ private struct ProviderCard: View {
     private var isConnecting: Bool {
         state?.isConnecting ?? false
     }
+    private var failedHealthState: ProviderHealthState? {
+        guard provider.enabled, !isConnected, !isConnecting, state?.lastError != nil else { return nil }
+        let healthState = state?.healthState ?? .unknownFailure
+        return healthState == .ready ? .unknownFailure : healthState
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -271,14 +276,31 @@ private struct ProviderCard: View {
 
             // Error message
             if let error = state?.lastError, !isConnected {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.errorColor)
-                    Text(error)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.errorColor)
-                        .lineLimit(2)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.errorColor)
+                        Text(error)
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.errorColor)
+                            .lineLimit(2)
+                    }
+                    if let failedHealthState {
+                        Text("Status: \(failedHealthState.label)")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(healthColor(for: failedHealthState))
+                    }
+                    if let fixIt = state?.healthFixIt, !fixIt.isEmpty {
+                        HStack(spacing: 6) {
+                            Image(systemName: "wrench.and.screwdriver.fill")
+                                .font(.system(size: 10))
+                            Text(fixIt)
+                                .font(.system(size: 11))
+                                .lineLimit(3)
+                        }
+                        .foregroundColor(theme.warningColor)
+                    }
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -324,8 +346,8 @@ private struct ProviderCard: View {
             return theme.successColor
         } else if isConnecting {
             return theme.accentColor
-        } else if state?.lastError != nil {
-            return theme.errorColor
+        } else if let failedHealthState {
+            return healthColor(for: failedHealthState)
         } else {
             return theme.secondaryText
         }
@@ -362,17 +384,30 @@ private struct ProviderCard: View {
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(Capsule().fill(theme.accentColor.opacity(0.12)))
-        } else if state?.lastError != nil {
+        } else if let failedHealthState {
             HStack(spacing: 4) {
                 Image(systemName: "exclamationmark.circle.fill")
                     .font(.system(size: 8))
-                Text("Error")
+                Text(failedHealthState.label)
                     .font(.system(size: 10, weight: .medium))
             }
-            .foregroundColor(theme.errorColor)
+            .foregroundColor(healthColor(for: failedHealthState))
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(Capsule().fill(theme.errorColor.opacity(0.12)))
+            .background(Capsule().fill(healthColor(for: failedHealthState).opacity(0.12)))
+        }
+    }
+
+    private func healthColor(for healthState: ProviderHealthState) -> Color {
+        switch healthState {
+        case .misconfiguredEndpoint, .authFailed:
+            return theme.errorColor
+        case .gatewayUnavailable, .networkUnreachable:
+            return theme.warningColor
+        case .unknownFailure:
+            return theme.warningColor
+        case .ready:
+            return theme.successColor
         }
     }
 

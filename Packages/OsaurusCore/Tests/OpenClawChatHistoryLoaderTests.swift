@@ -118,4 +118,40 @@ struct OpenClawChatHistoryLoaderTests {
         #expect(turns.count == 1)
         #expect(turns[0].content == "plain string content")
     }
+
+    @Test @MainActor
+    func loadHistory_formatsCompleteTaskControlBlockToArtifact() async throws {
+        let connection = OpenClawGatewayConnection { method, _ in
+            #expect(method == "chat.history")
+            return try encodeJSON([
+                "sessionKey": "agent:main:complete",
+                "messages": [
+                    [
+                        "role": "assistant",
+                        "content": [
+                            [
+                                "type": "text",
+                                "text": """
+                                ---COMPLETE_TASK_START---
+                                {"summary":"done","success":true,"artifact":"# Final Answer\\n- point one\\n- point two"}
+                                ---COMPLETE_TASK_END---
+                                """
+                            ]
+                        ]
+                    ]
+                ]
+            ])
+        }
+
+        let turns = try await OpenClawChatHistoryLoader.loadHistory(
+            sessionKey: "agent:main:complete",
+            connection: connection
+        )
+
+        #expect(turns.count == 1)
+        #expect(turns[0].role == .assistant)
+        #expect(turns[0].content.contains("# Final Answer"))
+        #expect(!turns[0].content.contains("---COMPLETE_TASK_START---"))
+        #expect(!turns[0].content.contains("---COMPLETE_TASK_END---"))
+    }
 }

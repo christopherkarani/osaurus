@@ -13,8 +13,11 @@ struct OpenClawConfigurationTests {
         let configuration = OpenClawConfiguration(
             isEnabled: true,
             gatewayPort: 19191,
+            gatewayURL: "wss://gateway.example.com/ws",
+            gatewayHealthURL: "https://gateway.example.com/health",
             bindMode: .lan,
             autoStartGateway: false,
+            autoSyncMCPBridge: false,
             installPath: "/tmp/openclaw",
             lastKnownVersion: "1.2.3"
         )
@@ -34,8 +37,11 @@ struct OpenClawConfigurationTests {
 
         #expect(decoded.isEnabled == true)
         #expect(decoded.gatewayPort == 18789)
+        #expect(decoded.gatewayURL == nil)
+        #expect(decoded.gatewayHealthURL == nil)
         #expect(decoded.bindMode == .loopback)
         #expect(decoded.autoStartGateway == true)
+        #expect(decoded.autoSyncMCPBridge == true)
         #expect(decoded.installPath == "~/.openclaw")
         #expect(decoded.lastKnownVersion == nil)
     }

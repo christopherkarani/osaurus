@@ -48,9 +48,42 @@ public struct ConfigGetResult: Codable, Sendable {
         case hash
     }
 
+    private struct DynamicCodingKey: CodingKey {
+        let stringValue: String
+        let intValue: Int?
+
+        init?(stringValue: String) {
+            self.stringValue = stringValue
+            self.intValue = nil
+        }
+
+        init?(intValue: Int) {
+            self.stringValue = "\(intValue)"
+            self.intValue = intValue
+        }
+    }
+
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        config = try container.decodeIfPresent([String: OpenClawProtocol.AnyCodable].self, forKey: .config)
+        if let nestedConfig = try container.decodeIfPresent([String: OpenClawProtocol.AnyCodable].self, forKey: .config) {
+            config = nestedConfig
+        } else {
+            // Legacy gateways may return a flattened config payload at the root,
+            // with hash metadata alongside config keys.
+            let dynamic = try decoder.container(keyedBy: DynamicCodingKey.self)
+            var flattened: [String: OpenClawProtocol.AnyCodable] = [:]
+            for key in dynamic.allKeys {
+                switch key.stringValue {
+                case CodingKeys.config.rawValue, CodingKeys.baseHash.rawValue, CodingKeys.hash.rawValue:
+                    continue
+                default:
+                    if let value = try dynamic.decodeIfPresent(OpenClawProtocol.AnyCodable.self, forKey: key) {
+                        flattened[key.stringValue] = value
+                    }
+                }
+            }
+            config = flattened.isEmpty ? nil : flattened
+        }
 
         let explicitBaseHash = try container.decodeIfPresent(String.self, forKey: .baseHash)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -178,6 +211,7 @@ public struct OpenClawSessionListItem: Codable, Sendable, Identifiable {
     public let derivedTitle: String?
     public let lastMessagePreview: String?
     public let updatedAt: Double?
+    public let modelProvider: String?
     public let model: String?
     public let contextTokens: Int?
 
@@ -760,6 +794,11 @@ public actor OpenClawGatewayConnection {
     public func configGet() async throws -> [String: OpenClawProtocol.AnyCodable] {
         let data = try await requestRaw(method: "config.get", params: nil)
         if let raw = try? decodeJSONDictionary(method: "config.get", data: data) {
+            // `config.get` may return either `{ ...config }` or `{ config: {...}, ...meta }`.
+            // Prefer the nested config object when present so callers always see config keys at root.
+            if let nested = raw["config"]?.value as? [String: OpenClawProtocol.AnyCodable] {
+                return nested
+            }
             return raw
         }
         let typed = try decodePayload(method: "config.get", data: data, as: TalkConfigResult.self)

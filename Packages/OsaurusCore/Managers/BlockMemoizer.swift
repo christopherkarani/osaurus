@@ -20,6 +20,7 @@ final class BlockMemoizer {
     private var lastContentLen = 0
     private var lastThinkingLen = 0
     private var lastVersion = -1
+    private var lastSuppressAssistantText = false
     private let maxBlocks = 80
 
     /// Maps each block's turnId to its visual group's header turnId.
@@ -30,7 +31,8 @@ final class BlockMemoizer {
         from turns: [ChatTurn],
         streamingTurnId: UUID?,
         agentName: String,
-        version: Int = 0
+        version: Int = 0,
+        suppressAssistantText: Bool = false
     ) -> [ContentBlock] {
         let count = turns.count
         let lastId = turns.last?.id
@@ -40,20 +42,26 @@ final class BlockMemoizer {
         // Fast path: nothing changed
         if count == lastCount && lastId == lastTurnId
             && contentLen == lastContentLen && thinkingLen == lastThinkingLen
-            && version == lastVersion && !cached.isEmpty
+            && version == lastVersion && suppressAssistantText == lastSuppressAssistantText
+            && !cached.isEmpty
         {
             return limited(streaming: streamingTurnId != nil)
         }
 
+        // When suppressAssistantText changes, force a full rebuild
+        let suppressionChanged = suppressAssistantText != lastSuppressAssistantText
+
         // Incremental: only last turn's content changed during streaming
         let canIncrement =
-            streamingTurnId != nil
+            !suppressionChanged
+            && streamingTurnId != nil
             && count == lastCount && lastId == lastTurnId
             && lastId != nil && !cached.isEmpty
 
         // Append: one or more turns added at the end; previous last turn still matches
         let canAppend =
-            !canIncrement
+            !suppressionChanged
+            && !canIncrement
             && count > lastCount && !cached.isEmpty
             && lastCount >= 1 && turns[lastCount - 1].id == lastTurnId
 
@@ -65,7 +73,8 @@ final class BlockMemoizer {
                 at: count - 1,
                 in: turns,
                 streamingTurnId: streamingTurnId,
-                agentName: agentName
+                agentName: agentName,
+                suppressAssistantText: suppressAssistantText
             )
         } else if canAppend {
             // Regenerate from the previous last turn onwards — it may have been
@@ -74,14 +83,16 @@ final class BlockMemoizer {
                 at: lastCount - 1,
                 in: turns,
                 streamingTurnId: streamingTurnId,
-                agentName: agentName
+                agentName: agentName,
+                suppressAssistantText: suppressAssistantText
             )
         } else {
             // Full rebuild (first load, reset, or structural change)
             blocks = ContentBlock.generateBlocks(
                 from: turns,
                 streamingTurnId: streamingTurnId,
-                agentName: agentName
+                agentName: agentName,
+                suppressAssistantText: suppressAssistantText
             )
         }
 
@@ -92,6 +103,7 @@ final class BlockMemoizer {
         lastContentLen = contentLen
         lastThinkingLen = thinkingLen
         lastVersion = version
+        lastSuppressAssistantText = suppressAssistantText
         cachedGroupHeaderMap = Self.buildGroupHeaderMap(from: cached)
 
         return limited(streaming: streamingTurnId != nil)
@@ -107,7 +119,8 @@ final class BlockMemoizer {
         at turnIndex: Int,
         in turns: [ChatTurn],
         streamingTurnId: UUID?,
-        agentName: String
+        agentName: String,
+        suppressAssistantText: Bool = false
     ) -> [ContentBlock] {
         let turnId = turns[turnIndex].id
 
@@ -117,7 +130,8 @@ final class BlockMemoizer {
             return ContentBlock.generateBlocks(
                 from: turns,
                 streamingTurnId: streamingTurnId,
-                agentName: agentName
+                agentName: agentName,
+                suppressAssistantText: suppressAssistantText
             )
         }
 
@@ -133,7 +147,8 @@ final class BlockMemoizer {
             from: turnsToGenerate,
             streamingTurnId: streamingTurnId,
             agentName: agentName,
-            previousTurn: previousTurn
+            previousTurn: previousTurn,
+            suppressAssistantText: suppressAssistantText
         )
 
         return stablePrefix + freshBlocks
@@ -155,6 +170,7 @@ final class BlockMemoizer {
         lastContentLen = 0
         lastThinkingLen = 0
         lastVersion = -1
+        lastSuppressAssistantText = false
     }
 
     // MARK: - Group Header Map

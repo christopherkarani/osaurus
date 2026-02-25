@@ -17,6 +17,7 @@ struct OnboardingAPISetupView: View {
     let onBack: () -> Void
 
     @Environment(\.theme) private var theme
+    @ObservedObject private var remoteProviderManager = RemoteProviderManager.shared
     @State private var selectedProvider: ProviderPreset? = nil
     @State private var apiKey: String = ""
     @State private var isTesting = false
@@ -39,6 +40,11 @@ struct OnboardingAPISetupView: View {
     private enum TestResult {
         case success
         case error(String)
+    }
+
+    struct ProviderConnectionSummary {
+        let text: String
+        let color: Color
     }
 
     private var canTest: Bool {
@@ -140,7 +146,10 @@ struct OnboardingAPISetupView: View {
             // Provider cards
             VStack(spacing: 12) {
                 ForEach(Array(Self.onboardingPresets.enumerated()), id: \.element.id) { index, provider in
-                    OnboardingProviderCard(preset: provider) {
+                    OnboardingProviderCard(
+                        preset: provider,
+                        summary: providerConnectionSummary(for: provider)
+                    ) {
                         withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
                             selectedProvider = provider
                         }
@@ -511,6 +520,42 @@ struct OnboardingAPISetupView: View {
         isSaving = false
         onComplete()
     }
+
+    private func providerConnectionSummary(for preset: ProviderPreset) -> ProviderConnectionSummary? {
+        guard preset != .custom else { return nil }
+        guard let config = configuredProvider(for: preset) else { return nil }
+        let state = remoteProviderManager.providerStates[config.id]
+
+        if state?.isConnecting == true {
+            return ProviderConnectionSummary(text: "Connecting…", color: theme.accentColor)
+        }
+        if state?.isConnected == true {
+            let count = state?.discoveredModels.count ?? 0
+            let label = count == 1 ? "1 model" : "\(count) models"
+            return ProviderConnectionSummary(text: "Connected · \(label)", color: theme.successColor)
+        }
+        return ProviderConnectionSummary(text: "Configured", color: theme.secondaryText)
+    }
+
+    private func configuredProvider(for preset: ProviderPreset) -> RemoteProvider? {
+        let target = preset.configuration
+        return remoteProviderManager.configuration.providers.first { provider in
+            provider.providerType == target.providerType
+                && provider.providerProtocol == target.providerProtocol
+                && provider.host.caseInsensitiveCompare(target.host) == .orderedSame
+                && normalizeBasePath(provider.basePath) == normalizeBasePath(target.basePath)
+                && provider.port == target.port
+        }
+    }
+
+    private func normalizeBasePath(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "/" }
+        if trimmed.hasPrefix("/") {
+            return trimmed
+        }
+        return "/\(trimmed)"
+    }
 }
 
 // MARK: - Protocol Toggle
@@ -559,6 +604,7 @@ private struct OnboardingProtocolToggle: View {
 
 private struct OnboardingProviderCard: View {
     let preset: ProviderPreset
+    let summary: OnboardingAPISetupView.ProviderConnectionSummary?
     let action: () -> Void
 
     @Environment(\.theme) private var theme
@@ -598,6 +644,17 @@ private struct OnboardingProviderCard: View {
                         Text(displayDescription)
                             .font(theme.font(size: 13))
                             .foregroundColor(theme.secondaryText)
+
+                        if let summary {
+                            HStack(spacing: 5) {
+                                Circle()
+                                    .fill(summary.color)
+                                    .frame(width: 6, height: 6)
+                                Text(summary.text)
+                                    .font(theme.font(size: 11, weight: .medium))
+                                    .foregroundColor(summary.color)
+                            }
+                        }
                     }
 
                     Spacer()

@@ -47,6 +47,8 @@ struct FloatingInputCard: View {
     var cumulativeTokens: Int? = nil
     /// Hide context indicator in empty states
     var hideContextIndicator: Bool = false
+    /// Whether the selected model's provider is ready (has API key if needed)
+    var modelReady: Bool = true
 
     // Observe managers for reactive updates
     @ObservedObject private var toolRegistry = ToolRegistry.shared
@@ -61,6 +63,7 @@ struct FloatingInputCard: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var isDragOver = false
     @State private var showModelPicker = false
+    @State private var showWorkModelSheet = false
     @State private var showCapabilitiesPicker = false
     // Cache model options to prevent popover refresh during streaming
     @State private var cachedModelOptions: [ModelOption] = []
@@ -105,6 +108,10 @@ struct FloatingInputCard: View {
         let hasText = !localText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasImages = !pendingImages.isEmpty
         let hasContent = hasText || hasImages
+
+        if workInputState != nil {
+            guard selectedModel != nil, modelReady else { return false }
+        }
 
         // In work mode, allow sending during streaming (will queue for after completion)
         // but only if there isn't already a queued message
@@ -165,7 +172,7 @@ struct FloatingInputCard: View {
     var body: some View {
         VStack(spacing: 12) {
             // Model and tool selector chips (always visible)
-            if (modelOptions.count > 1 || hasTools || hasSkills
+            if (!modelOptions.isEmpty || hasTools || hasSkills
                 || displayContextTokens > 0) && !showVoiceOverlay
             {
                 selectorRow
@@ -627,8 +634,8 @@ struct FloatingInputCard: View {
 
     private var selectorRow: some View {
         HStack(spacing: 10) {
-            // Model selector (when multiple models available)
-            if modelOptions.count > 1 {
+            // Model selector (when models available)
+            if !modelOptions.isEmpty {
                 modelSelectorChip
             }
 
@@ -718,12 +725,16 @@ struct FloatingInputCard: View {
     }
 
     private var modelSelectorChip: some View {
-        SelectorChip(isActive: showModelPicker) {
-            showModelPicker.toggle()
+        SelectorChip(isActive: showModelPicker || showWorkModelSheet) {
+            if workInputState != nil {
+                showWorkModelSheet = true
+            } else {
+                showModelPicker.toggle()
+            }
         } content: {
             HStack(spacing: 6) {
                 Circle()
-                    .fill(Color.green)
+                    .fill(modelReady ? Color.green : Color.red)
                     .frame(width: 6, height: 6)
 
                 // Model name with metadata badges
@@ -771,6 +782,12 @@ struct FloatingInputCard: View {
                 selectedModel: $selectedModel,
                 agentId: agentId,
                 onDismiss: dismissModelPicker
+            )
+        }
+        .sheet(isPresented: $showWorkModelSheet) {
+            WorkModelSelectorSheet(
+                selectedModel: $selectedModel,
+                currentModels: modelOptions
             )
         }
         .onChange(of: showModelPicker) { _, isShowing in
@@ -822,15 +839,23 @@ struct FloatingInputCard: View {
         let toolText = enabledToolCount == 1 ? "1 tool" : "\(enabledToolCount) tools"
         let skillText = enabledSkillCount == 1 ? "1 skill" : "\(enabledSkillCount) skills"
 
+        let baseDescription: String
         if enabledToolCount > 0 && enabledSkillCount > 0 {
-            return "\(toolText), \(skillText)"
+            baseDescription = "\(toolText), \(skillText)"
         } else if enabledToolCount > 0 {
-            return toolText
+            baseDescription = toolText
         } else if enabledSkillCount > 0 {
-            return skillText
+            baseDescription = skillText
         } else {
-            return "Abilities"
+            baseDescription = "Abilities"
         }
+
+        if workInputState != nil {
+            return baseDescription == "Abilities"
+                ? "Local abilities"
+                : "Local \(baseDescription)"
+        }
+        return baseDescription
     }
 
     private var capabilitiesSelectorChip: some View {
@@ -851,6 +876,11 @@ struct FloatingInputCard: View {
                     .foregroundColor(theme.tertiaryText)
             }
         }
+        .help(
+            workInputState != nil
+                ? "This controls Osaurus local abilities. OpenClaw runtime tools are separate."
+                : "Configure enabled tools and skills."
+        )
         .popover(isPresented: $showCapabilitiesPicker, arrowEdge: .top) {
             CapabilitiesSelectorView(agentId: effectiveAgentId, isWorkMode: workInputState != nil)
         }

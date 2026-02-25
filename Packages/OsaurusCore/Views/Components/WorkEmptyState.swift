@@ -6,12 +6,8 @@
 import SwiftUI
 
 struct WorkEmptyState: View {
-    let hasModels: Bool
-    let selectedModel: String?
     let agents: [Agent]
     let activeAgentId: UUID
-    let onOpenModelManager: () -> Void
-    let onUseFoundation: (() -> Void)?
     let onQuickAction: (String) -> Void
     let onSelectAgent: (UUID) -> Void
 
@@ -34,7 +30,7 @@ struct WorkEmptyState: View {
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 0) {
                     Spacer(minLength: 20)
-                    if hasModels { readyState } else { noModelsState }
+                    readyState
                     Spacer(minLength: 20)
                 }
                 .frame(maxWidth: .infinity, minHeight: geometry.size.height)
@@ -99,71 +95,6 @@ struct WorkEmptyState: View {
             }
         }
         .frame(maxWidth: 440)
-    }
-
-    // MARK: - No Models State
-
-    private var noModelsState: some View {
-        VStack(spacing: 28) {
-            AnimatedOrb(color: theme.accentColor, size: .medium, seed: "work")
-                .frame(width: 88, height: 88)
-                .opacity(hasAppeared ? 1 : 0)
-                .scaleEffect(hasAppeared ? 1 : 0.85)
-                .animation(theme.springAnimation(), value: hasAppeared)
-
-            VStack(spacing: 12) {
-                Text("Work")
-                    .font(theme.font(size: CGFloat(theme.titleSize) + 2, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                    .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : 20)
-                    .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
-
-                Text("Add a model to get started")
-                    .font(theme.font(size: CGFloat(theme.bodySize)))
-                    .foregroundColor(theme.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 320)
-                    .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : 15)
-                    .animation(theme.springAnimation().delay(0.17), value: hasAppeared)
-            }
-
-            Button(action: onOpenModelManager) {
-                HStack(spacing: 8) {
-                    Image(systemName: "plus.circle.fill")
-                    Text("Add Model")
-                }
-                .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
-                .foregroundColor(.white)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
-                .background(
-                    LinearGradient(
-                        colors: [theme.accentColor, theme.accentColor.opacity(0.85)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .clipShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .opacity(hasAppeared ? 1 : 0)
-            .scaleEffect(hasAppeared ? 1 : 0.95)
-            .animation(theme.springAnimation().delay(0.25), value: hasAppeared)
-
-            if let useFoundation = onUseFoundation {
-                Button(action: useFoundation) {
-                    Text("Use Apple Intelligence")
-                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                        .foregroundColor(theme.accentColor)
-                }
-                .buttonStyle(.plain)
-                .opacity(hasAppeared ? 1 : 0)
-                .animation(theme.springAnimation().delay(0.3), value: hasAppeared)
-            }
-        }
-        .padding(.horizontal, 40)
     }
 }
 

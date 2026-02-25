@@ -596,6 +596,7 @@ private struct AgentDetailView: View {
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var scheduleManager = ScheduleManager.shared
     @ObservedObject private var watcherManager = WatcherManager.shared
+    @ObservedObject private var modelCatalog = ModelCatalogService.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -713,11 +714,17 @@ private struct AgentDetailView: View {
             loadAgentData()
             selectedModel = currentAgent.defaultModel
             loadModelOptions()
+            Task {
+                await modelCatalog.refreshIfNeeded()
+            }
             // Defer the flag so initial .onChange triggers are ignored
             DispatchQueue.main.async {
                 isInitialLoadComplete = true
             }
             withAnimation { hasAppeared = true }
+        }
+        .onChange(of: modelCatalog.options) { _, _ in
+            loadModelOptions()
         }
         .themedAlert(
             "Delete Agent",
@@ -1510,38 +1517,9 @@ private struct AgentDetailView: View {
     }
 
     private func loadModelOptions() {
-        Task {
-            var options: [ModelOption] = []
-
-            if AppConfiguration.shared.foundationModelAvailable {
-                options.append(.foundation())
-            }
-
-            let localModels = await Task.detached(priority: .userInitiated) {
-                ModelManager.discoverLocalModels()
-            }.value
-            for model in localModels {
-                options.append(.fromMLXModel(model))
-            }
-
-            let remoteModels = await MainActor.run {
-                RemoteProviderManager.shared.cachedAvailableModels()
-            }
-            for providerInfo in remoteModels {
-                for modelId in providerInfo.models {
-                    options.append(
-                        .fromRemoteModel(
-                            modelId: modelId,
-                            providerName: providerInfo.providerName,
-                            providerId: providerInfo.providerId
-                        )
-                    )
-                }
-            }
-
-            await MainActor.run {
-                modelOptions = options
-            }
+        modelOptions = modelCatalog.currentOptions(excludingOpenClawSelections: true)
+        if let selectedModel, !modelOptions.contains(where: { $0.id == selectedModel }) {
+            self.selectedModel = nil
         }
     }
 

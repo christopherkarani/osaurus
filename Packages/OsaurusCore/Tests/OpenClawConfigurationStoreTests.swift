@@ -31,8 +31,11 @@ struct OpenClawConfigurationStoreTests {
         let config = OpenClawConfiguration(
             isEnabled: true,
             gatewayPort: 19001,
+            gatewayURL: "ws://192.168.1.44:19001/ws",
+            gatewayHealthURL: "http://192.168.1.44:19001/health",
             bindMode: .lan,
             autoStartGateway: false,
+            autoSyncMCPBridge: false,
             installPath: "/custom/path",
             lastKnownVersion: "9.9.9"
         )

@@ -8,26 +8,78 @@
 import AppKit
 import SwiftUI
 
+extension IssueTrackerPanel {
+    enum StepStatus: Equatable {
+        case pending
+        case running
+        case completed
+        case failed
+    }
+
+    struct StepItem: Identifiable, Equatable {
+        let id: String
+        let title: String
+        let subtitle: String?
+        let status: StepStatus
+        let duration: TimeInterval?
+    }
+
+    struct WrittenFileItem: Identifiable, Equatable {
+        let id: String
+        let path: String
+        let toolName: String
+        let timestamp: Date
+        let status: ActivityStatus
+    }
+
+    enum ActionLevel: Equatable {
+        case info
+        case success
+        case warning
+        case error
+    }
+
+    struct ActionItem: Identifiable, Equatable {
+        let id: String
+        let timestamp: Date
+        let title: String
+        let detail: String?
+        let level: ActionLevel
+    }
+
+    struct MemorySnapshot: Equatable {
+        let fileName: String
+        let content: String
+        let updatedAt: Date?
+        let isMissing: Bool
+    }
+}
+
 struct IssueTrackerPanel: View {
-    let issues: [Issue]
-    /// ID of the issue currently being executed
-    let activeIssueId: String?
-    /// ID of the issue currently selected for viewing
-    let selectedIssueId: String?
+    /// Ordered list of execution steps (tool calls, thinking, lifecycle)
+    let steps: [StepItem]
+    /// Loop progress fraction (0.0–1.0), nil when not in a loop
+    let loopProgress: Double?
+    /// Current loop iteration, nil when not looping
+    let loopIteration: Int?
+    /// Maximum loop iterations, nil when not looping
+    let loopMaxIterations: Int?
     /// Final artifact from task completion
     let finalArtifact: Artifact?
     /// All generated artifacts
     let artifacts: [Artifact]
     /// File operations for undo tracking
     let fileOperations: [WorkFileOperation]
+    /// Live OpenClaw action feed
+    let actionItems: [ActionItem]
+    /// Files written/edited by OpenClaw tool calls
+    let writtenFiles: [WrittenFileItem]
+    /// Current memory file snapshot from OpenClaw agent workspace
+    let memorySnapshot: MemorySnapshot?
+    /// Whether memory content is currently being refreshed
+    let memoryIsLoading: Bool
     /// Binding to control collapse state
     @Binding var isCollapsed: Bool
-    /// Called when user clicks to view an issue's details
-    let onIssueSelect: (Issue) -> Void
-    /// Called when user clicks to run/execute an issue
-    let onIssueRun: (Issue) -> Void
-    /// Called when user closes an issue
-    let onIssueClose: (String) -> Void
     /// Called when user wants to view an artifact
     let onArtifactView: (Artifact) -> Void
     /// Called when user wants to download an artifact
@@ -36,40 +88,35 @@ struct IssueTrackerPanel: View {
     let onUndoOperation: (UUID) -> Void
     /// Called when user wants to undo all file operations
     let onUndoAllOperations: () -> Void
+    /// Called when user wants to open/preview a runtime-written file path
+    let onWrittenFileView: (String) -> Void
+    /// Called when user wants to refresh memory snapshot
+    let onRefreshMemory: () -> Void
+    /// Called when user wants to view current memory snapshot content
+    let onViewMemory: () -> Void
 
     @Environment(\.theme) private var theme: ThemeProtocol
+    @Namespace private var stepFeedNamespace
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             headerView
 
-            if issues.isEmpty && finalArtifact == nil {
+            if steps.isEmpty && finalArtifact == nil {
                 emptyState
             } else {
                 ScrollView {
                     VStack(spacing: 0) {
-                        if !issues.isEmpty {
-                            LazyVStack(spacing: 8) {
-                                ForEach(sortedIssues) { issue in
-                                    IssueRow(
-                                        issue: issue,
-                                        isActive: issue.id == activeIssueId,
-                                        isSelected: issue.id == selectedIssueId,
-                                        onSelect: { onIssueSelect(issue) },
-                                        onRun: { onIssueRun(issue) },
-                                        onClose: { onIssueClose(issue.id) }
-                                    )
-                                }
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                        }
+                        progressDashboardSection
 
                         if let artifact = finalArtifact { resultSection(artifact: artifact) }
 
                         let additionalArtifacts = artifacts.filter { !$0.isFinalResult }
                         if !additionalArtifacts.isEmpty { artifactsSection(artifacts: additionalArtifacts) }
 
+                        if !writtenFiles.isEmpty { writtenFilesSection }
+                        if !actionItems.isEmpty { actionFeedSection }
+                        if memorySnapshot != nil || memoryIsLoading { memorySection }
                         if !fileOperations.isEmpty { changedFilesSection }
                     }
                 }
@@ -204,6 +251,261 @@ struct IssueTrackerPanel: View {
         }
     }
 
+    // MARK: - Progress Dashboard (Animated Feed)
+
+    private var progressDashboardSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Progress bar (only when looping)
+            if let iteration = loopIteration, let maxIterations = loopMaxIterations, maxIterations > 0 {
+                VStack(alignment: .leading, spacing: 6) {
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(theme.tertiaryBackground.opacity(0.5))
+                                .frame(height: 4)
+
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(theme.accentColor)
+                                .frame(width: max(0, geo.size.width * (loopProgress ?? 0)), height: 4)
+                                .animation(.easeInOut(duration: 0.3), value: loopProgress)
+                        }
+                    }
+                    .frame(height: 4)
+                    .padding(.horizontal, 12)
+
+                    HStack {
+                        Text("\(Int((loopProgress ?? 0) * 100))%")
+                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .foregroundColor(theme.secondaryText)
+                        Spacer()
+                        Text("\(iteration)/\(maxIterations) iterations")
+                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                    .padding(.horizontal, 12)
+                }
+                .padding(.top, 10)
+                .padding(.bottom, 8)
+            }
+
+            // Animated step feed — chronological, newest at bottom, auto-scrolls
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 4) {
+                        ForEach(steps) { step in
+                            stepFeedRow(step: step)
+                                .id(step.id)
+                                .transition(
+                                    .asymmetric(
+                                        insertion: .move(edge: .bottom)
+                                            .combined(with: .opacity),
+                                        removal: .opacity
+                                    )
+                                )
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                }
+                .animation(.easeInOut(duration: 0.25), value: steps.count)
+                .onChange(of: steps.count) { _ in
+                    // Auto-scroll to the newest step
+                    if let lastId = steps.last?.id {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo(lastId, anchor: .bottom)
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 220)
+        }
+    }
+
+    private func stepFeedRow(step: StepItem) -> some View {
+        let isRunning = step.status == .running
+        let isFailed = step.status == .failed
+
+        return HStack(spacing: 8) {
+            MorphingStatusIcon(
+                state: stepIconState(for: step),
+                accentColor: stepIconColor(for: step),
+                size: isRunning ? 14 : 12
+            )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(step.title)
+                    .font(.system(size: isRunning ? 12 : 11, weight: isRunning ? .semibold : .regular))
+                    .foregroundColor(isRunning ? theme.primaryText : theme.secondaryText)
+                    .lineLimit(1)
+
+                if isRunning, let subtitle = step.subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            if isRunning {
+                Text("...")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText)
+            } else if let duration = step.duration {
+                Text(Self.formatDuration(duration))
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundColor(isFailed ? theme.errorColor.opacity(0.7) : theme.tertiaryText)
+            } else {
+                Text("--")
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText.opacity(0.5))
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, isRunning ? 8 : 5)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(isRunning ? theme.accentColor.opacity(0.08) : Color.clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(
+                    isRunning ? theme.accentColor.opacity(0.2) : Color.clear,
+                    lineWidth: 1
+                )
+        )
+        .shimmerEffect(isActive: isRunning, accentColor: theme.accentColor)
+    }
+
+    private func stepIconState(for step: StepItem) -> StatusIconState {
+        switch step.status {
+        case .pending: return .pending
+        case .running: return .active
+        case .completed: return .completed
+        case .failed: return .failed
+        }
+    }
+
+    private func stepIconColor(for step: StepItem) -> Color {
+        switch step.status {
+        case .pending: return theme.tertiaryText
+        case .running: return theme.accentColor
+        case .completed: return theme.successColor
+        case .failed: return theme.errorColor
+        }
+    }
+
+    static func formatDuration(_ seconds: TimeInterval) -> String {
+        if seconds < 0.1 { return "<0.1s" }
+        if seconds < 10 { return String(format: "%.1fs", seconds) }
+        if seconds < 60 { return "\(Int(seconds))s" }
+        let mins = Int(seconds) / 60
+        let secs = Int(seconds) % 60
+        return "\(mins)m \(secs)s"
+    }
+
+    private var writtenFilesSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionDivider
+
+            HStack(spacing: 8) {
+                Image(systemName: "doc.text.below.ecg")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                Text("Files Written")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Text("\(writtenFiles.count)")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(theme.tertiaryBackground.opacity(0.6)))
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+
+            VStack(spacing: 6) {
+                ForEach(writtenFiles) { file in
+                    WrittenFileRow(file: file, onView: { onWrittenFileView(file.path) })
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
+        }
+    }
+
+    private var actionFeedSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionDivider
+
+            HStack(spacing: 8) {
+                Image(systemName: "list.bullet.rectangle.portrait")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                Text("Action Feed")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+
+            VStack(spacing: 6) {
+                ForEach(actionItems) { item in
+                    ActionFeedRow(item: item)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
+        }
+    }
+
+    private var memorySection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionDivider
+
+            HStack(spacing: 8) {
+                Image(systemName: "brain.head.profile")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                Text("Memory")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Spacer()
+
+                Button(action: onRefreshMemory) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.plain)
+                .help("Refresh memory file")
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+
+            if memoryIsLoading {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .scaleEffect(0.75)
+                    Text("Refreshing memory…")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 12)
+            } else if let snapshot = memorySnapshot {
+                MemoryRow(snapshot: snapshot, onView: onViewMemory)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
+            }
+        }
+    }
+
     // MARK: - Changed Files Section
 
     private var changedFilesSection: some View {
@@ -297,16 +599,16 @@ struct IssueTrackerPanel: View {
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
 
-            // Progress indicator
-            if !issues.isEmpty {
+            if !steps.isEmpty {
+                let completed = steps.filter { $0.status == .completed || $0.status == .failed }.count
                 HStack(spacing: 4) {
-                    Text("\(completedCount)")
+                    Text("\(completed)")
                         .font(.system(size: 12, weight: .semibold, design: .rounded))
                         .foregroundColor(theme.successColor)
                     Text("/")
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
-                    Text("\(issues.count)")
+                    Text("\(steps.count)")
                         .font(.system(size: 12, weight: .medium, design: .rounded))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -320,7 +622,6 @@ struct IssueTrackerPanel: View {
 
             Spacer()
 
-            // Collapse button
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     isCollapsed = true
@@ -338,7 +639,6 @@ struct IssueTrackerPanel: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 14)
         .overlay(alignment: .bottom) {
-            // Subtle bottom divider
             Rectangle()
                 .fill(theme.primaryBorder.opacity(0.1))
                 .frame(height: 1)
@@ -360,224 +660,6 @@ struct IssueTrackerPanel: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: - Computed Properties
-
-    /// Stable sorting: status first, then priority, then creation date
-    private var sortedIssues: [Issue] {
-        issues.sorted { lhs, rhs in
-            // Active issue always first
-            if (lhs.id == activeIssueId) != (rhs.id == activeIssueId) {
-                return lhs.id == activeIssueId
-            }
-            // Then by status (in_progress > open > blocked > closed)
-            let statusOrder: [IssueStatus] = [.inProgress, .open, .blocked, .closed]
-            let lhsOrder = statusOrder.firstIndex(of: lhs.status) ?? 4
-            let rhsOrder = statusOrder.firstIndex(of: rhs.status) ?? 4
-            if lhsOrder != rhsOrder {
-                return lhsOrder < rhsOrder
-            }
-            // Then by priority
-            if lhs.priority != rhs.priority {
-                return lhs.priority < rhs.priority
-            }
-            // Then by creation date
-            return lhs.createdAt < rhs.createdAt
-        }
-    }
-
-    private var completedCount: Int {
-        issues.filter { $0.status == .closed }.count
-    }
-}
-
-// MARK: - Issue Row
-
-private struct IssueRow: View {
-    let issue: Issue
-    let isActive: Bool
-    let isSelected: Bool
-    let onSelect: () -> Void
-    let onRun: () -> Void
-    let onClose: () -> Void
-
-    @Environment(\.theme) private var theme: ThemeProtocol
-    @State private var isHovered = false
-
-    /// Display text - use description (full text) if available, otherwise title
-    private var displayText: String {
-        if let description = issue.description, !description.isEmpty {
-            return description
-        }
-        return issue.title
-    }
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            // Status indicator
-            statusIndicator
-                .frame(width: 16, height: 16)
-                .padding(.top, 1)
-
-            // Content
-            VStack(alignment: .leading, spacing: 3) {
-                // Type + status label
-                HStack(spacing: 6) {
-                    if issue.type != .task {
-                        typeBadge
-                    }
-
-                    if isActive {
-                        Text("Running")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(theme.accentColor)
-                    } else if issue.status == .closed {
-                        Text("Done")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(theme.successColor)
-                    }
-                }
-
-                // Text content (max 4 lines)
-                Text(displayText)
-                    .font(.system(size: 12, weight: isActive || isSelected ? .medium : .regular))
-                    .foregroundColor(isActive || isSelected ? theme.primaryText : theme.secondaryText)
-                    .lineLimit(4)
-                    .lineSpacing(2)
-            }
-
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(backgroundView)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(borderColor, lineWidth: isActive || isSelected ? 1 : 0)
-        )
-        .overlay(alignment: .topTrailing) {
-            // Actions on hover
-            if isHovered && issue.status != .closed {
-                actionButtons
-            }
-        }
-        .contentShape(Rectangle())
-        .onHover { isHovered = $0 }
-        .onTapGesture { onSelect() }
-    }
-
-    // MARK: - Status Indicator
-
-    private var statusIndicator: some View {
-        MorphingStatusIcon(state: statusIconState, accentColor: statusIconColor, size: 14)
-    }
-
-    private var statusIconState: StatusIconState {
-        switch issue.status {
-        case .open:
-            return .pending
-        case .inProgress:
-            return isActive ? .active : .pending
-        case .blocked:
-            return .pending
-        case .closed:
-            return .completed
-        }
-    }
-
-    private var statusIconColor: Color {
-        switch issue.status {
-        case .open:
-            return theme.tertiaryText
-        case .inProgress:
-            return theme.accentColor
-        case .blocked:
-            return theme.warningColor
-        case .closed:
-            return theme.successColor
-        }
-    }
-
-    // MARK: - Type Badge
-
-    private var typeBadge: some View {
-        Text(issue.type.displayName)
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundColor(typeColor)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(
-                Capsule()
-                    .fill(typeColor.opacity(0.12))
-            )
-    }
-
-    private var typeColor: Color {
-        switch issue.type {
-        case .bug: return theme.errorColor
-        case .discovery: return theme.warningColor
-        case .task: return theme.secondaryText
-        }
-    }
-
-    // MARK: - Action Buttons
-
-    private var actionButtons: some View {
-        HStack(spacing: 4) {
-            if issue.status == .open && !isActive {
-                Button(action: onRun) {
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 8))
-                        .foregroundColor(theme.successColor)
-                        .frame(width: 20, height: 20)
-                        .background(Circle().fill(theme.primaryBackground))
-                        .overlay(Circle().stroke(theme.successColor.opacity(0.3), lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-                .help("Run")
-            }
-
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-                    .frame(width: 20, height: 20)
-                    .background(Circle().fill(theme.primaryBackground))
-                    .overlay(Circle().stroke(theme.primaryBorder.opacity(0.3), lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .help("Close")
-        }
-        .padding(6)
-    }
-
-    // MARK: - Background
-
-    @ViewBuilder
-    private var backgroundView: some View {
-        if isActive {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(theme.accentColor.opacity(0.08))
-        } else if isSelected {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(theme.accentColor.opacity(0.05))
-        } else if isHovered {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(theme.tertiaryBackground.opacity(0.4))
-        } else {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color.clear)
-        }
-    }
-
-    private var borderColor: Color {
-        if isActive {
-            return theme.accentColor.opacity(0.4)
-        } else if isSelected {
-            return theme.accentColor.opacity(0.25)
-        }
-        return Color.clear
-    }
 }
 
 // MARK: - Artifact Preview Card
@@ -711,6 +793,202 @@ private struct ArtifactRow: View {
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
     }
+}
+
+// MARK: - Written File Row
+
+private struct WrittenFileRow: View {
+    let file: IssueTrackerPanel.WrittenFileItem
+    let onView: () -> Void
+
+    @Environment(\.theme) private var theme: ThemeProtocol
+    @State private var isHovered = false
+
+    private var statusColor: Color {
+        switch file.status {
+        case .failed:
+            return theme.errorColor
+        case .running:
+            return theme.warningColor
+        case .completed:
+            return theme.successColor
+        case .pending:
+            return theme.tertiaryText
+        }
+    }
+
+    private var filename: String {
+        let value = (file.path as NSString).lastPathComponent
+        return value.isEmpty ? file.path : value
+    }
+
+    var body: some View {
+        Button(action: onView) {
+            HStack(spacing: 8) {
+                Image(systemName: "doc.text")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(statusColor)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(filename)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                    Text(file.path)
+                        .font(.system(size: 9))
+                        .foregroundColor(theme.tertiaryText)
+                        .lineLimit(1)
+                    Text(file.toolName)
+                        .font(.system(size: 9))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Image(systemName: "arrow.up.forward.square")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(theme.accentColor.opacity(isHovered ? 1 : 0.65))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(theme.tertiaryBackground.opacity(isHovered ? 0.45 : 0.3))
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+    }
+}
+
+// MARK: - Action Feed Row
+
+private struct ActionFeedRow: View {
+    let item: IssueTrackerPanel.ActionItem
+    @Environment(\.theme) private var theme: ThemeProtocol
+
+    private var accent: Color {
+        switch item.level {
+        case .info:
+            return theme.secondaryText
+        case .success:
+            return theme.successColor
+        case .warning:
+            return theme.warningColor
+        case .error:
+            return theme.errorColor
+        }
+    }
+
+    private var timeLabel: String {
+        Self.timeFormatter.string(from: item.timestamp)
+    }
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Circle()
+                .fill(accent)
+                .frame(width: 6, height: 6)
+                .padding(.top, 6)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(item.title)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                    Spacer(minLength: 6)
+                    Text(timeLabel)
+                        .font(.system(size: 9, weight: .regular, design: .monospaced))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                if let detail = item.detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(2)
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(theme.tertiaryBackground.opacity(0.25))
+        )
+    }
+}
+
+// MARK: - Memory Row
+
+private struct MemoryRow: View {
+    let snapshot: IssueTrackerPanel.MemorySnapshot
+    let onView: () -> Void
+    @Environment(\.theme) private var theme: ThemeProtocol
+    @State private var isHovered = false
+
+    private var previewText: String {
+        if snapshot.isMissing {
+            return "Memory file has not been created yet. It will appear after OpenClaw writes memory."
+        }
+        let trimmed = snapshot.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Memory file is currently empty." }
+        return String(trimmed.prefix(180))
+    }
+
+    var body: some View {
+        Button(action: onView) {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 6) {
+                    Image(systemName: "doc.plaintext")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                    Text(snapshot.fileName)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Spacer()
+                    if snapshot.isMissing {
+                        Text("Not created yet")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                    }
+                }
+
+                Text(previewText)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(4)
+
+                if let updatedAt = snapshot.updatedAt {
+                    Text("Updated \(Self.relativeFormatter.localizedString(for: updatedAt, relativeTo: Date()))")
+                        .font(.system(size: 9))
+                        .foregroundColor(theme.tertiaryText)
+                }
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(theme.tertiaryBackground.opacity(isHovered ? 0.45 : 0.3))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(theme.primaryBorder.opacity(0.12), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+    }
+
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter
+    }()
 }
 
 // MARK: - File Operation Group

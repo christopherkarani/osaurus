@@ -1,0 +1,11 @@
+{
+  "generatedAtUtc": "2026-02-24T04:03:27Z",
+  "target": "6749713257",
+  "message": "PR-E2E-02 outbound proof 2026-02-24T04:03:27Z",
+  "status": "failed",
+  "reason": "openclaw message send failed",
+  "preLastOutboundAt": "null",
+  "preStatusArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/channels-status-pre-outbound-20260224T040327Z.json",
+  "sendStdoutArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/telegram-send-20260224T040327Z.json",
+  "sendStderrArtifact": "/Users/chriskarani/CodingProjects/Jarvis/osaurus/.claude/plans/artifacts/openclaw-production/e2e/telegram-send-20260224T040327Z.err.log"
+}

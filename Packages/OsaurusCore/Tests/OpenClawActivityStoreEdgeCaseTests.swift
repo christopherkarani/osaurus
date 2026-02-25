@@ -129,6 +129,47 @@ struct OpenClawActivityStoreEdgeCaseTests {
         #expect(store.items.count == 0)
     }
 
+    @Test @MainActor
+    func toolStart_invalidOrBlankToolNames_areNormalized() async throws {
+        let store = OpenClawActivityStore()
+
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "tool",
+            seq: 1,
+            data: [
+                "phase": "start",
+                "toolCallId": "tool-blank",
+                "name": "   ",
+                "args": [:]
+            ]
+        ))
+
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "tool",
+            seq: 2,
+            data: [
+                "phase": "start",
+                "toolCallId": "tool-garbage",
+                "name": "</think> <|tool_calls_section_begin|>",
+                "args": [:]
+            ]
+        ))
+
+        #expect(store.items.count == 2)
+
+        guard case .toolCall(let firstTool) = store.items[0].kind else {
+            Issue.record("First item should be a tool call")
+            return
+        }
+        #expect(firstTool.name == "invalid_tool_name")
+
+        guard case .toolCall(let secondTool) = store.items[1].kind else {
+            Issue.record("Second item should be a tool call")
+            return
+        }
+        #expect(secondTool.name == "invalid_tool_name")
+    }
+
     // MARK: - Unknown Stream Tests
 
     @Test @MainActor
@@ -326,6 +367,90 @@ struct OpenClawActivityStoreEdgeCaseTests {
         ))
 
         #expect(store.items.count == 5)
+    }
+
+    @Test @MainActor
+    func timelineItemsForFocusedRun_scopesToActiveRun() async throws {
+        let store = OpenClawActivityStore()
+
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "lifecycle",
+            runId: "run-1",
+            seq: 1,
+            data: ["phase": "start"]
+        ))
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "tool",
+            runId: "run-1",
+            seq: 2,
+            data: [
+                "phase": "start",
+                "toolCallId": "tool-1",
+                "name": "read",
+                "args": ["path": "/tmp/a.txt"]
+            ]
+        ))
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "lifecycle",
+            runId: "run-1",
+            seq: 3,
+            data: ["phase": "end"]
+        ))
+
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "lifecycle",
+            runId: "run-2",
+            seq: 4,
+            data: ["phase": "start"]
+        ))
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "thinking",
+            runId: "run-2",
+            seq: 5,
+            data: ["text": "Run 2 thinking"]
+        ))
+
+        let timeline = store.timelineItemsForFocusedRun(limit: 20)
+        #expect(timeline.count == 2)
+        #expect(timeline.allSatisfy { $0.runId == "run-2" })
+    }
+
+    @Test @MainActor
+    func activityItems_captureRunIdAcrossStreams() async throws {
+        let store = OpenClawActivityStore()
+
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "lifecycle",
+            runId: "run-9",
+            seq: 1,
+            data: ["phase": "start"]
+        ))
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "thinking",
+            runId: "run-9",
+            seq: 2,
+            data: ["text": "Analyze request"]
+        ))
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "tool",
+            runId: "run-9",
+            seq: 3,
+            data: [
+                "phase": "start",
+                "toolCallId": "tool-9",
+                "name": "glob",
+                "args": ["pattern": "*.swift"]
+            ]
+        ))
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "compaction",
+            runId: "run-9",
+            seq: 4,
+            data: ["phase": "start"]
+        ))
+
+        #expect(store.items.count == 4)
+        #expect(store.items.allSatisfy { $0.runId == "run-9" })
     }
 
     @Test @MainActor

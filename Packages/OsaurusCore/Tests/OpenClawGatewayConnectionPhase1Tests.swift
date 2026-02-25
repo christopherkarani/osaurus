@@ -54,6 +54,41 @@ private actor OpenClawGapReconnectGate {
     }
 }
 
+private actor OpenClawListenerGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func open() {
+        guard !isOpen else { return }
+        isOpen = true
+        let continuations = waiters
+        waiters.removeAll()
+        for continuation in continuations {
+            continuation.resume()
+        }
+    }
+}
+
+private actor OpenClawListenerSequenceRecorder {
+    private var sequences: [Int] = []
+
+    func append(_ sequence: Int?) {
+        guard let sequence else { return }
+        sequences.append(sequence)
+    }
+
+    func all() -> [Int] {
+        sequences
+    }
+}
+
 struct OpenClawGatewayConnectionPhase1Tests {
 
     @Test
@@ -149,6 +184,131 @@ struct OpenClawGatewayConnectionPhase1Tests {
     }
 
     @Test
+    func configGetFull_acceptsLegacyHashFieldAsBaseHash() async throws {
+        let connection = OpenClawGatewayConnection { method, _ in
+            #expect(method == "config.get")
+            let payload: [String: Any] = [
+                "config": [
+                    "agents": [
+                        "defaults": [
+                            "models": [
+                                "anthropic/claude-sonnet-4-6": [:]
+                            ]
+                        ]
+                    ]
+                ],
+                "hash": "legacy-config-hash"
+            ]
+            return try JSONSerialization.data(withJSONObject: payload)
+        }
+
+        let result = try await connection.configGetFull()
+        #expect(result.baseHash == "legacy-config-hash")
+        let config = try #require(result.config)
+        let agents = config["agents"]?.value as? [String: OpenClawProtocol.AnyCodable]
+        #expect(agents != nil)
+    }
+
+    @Test
+    func configGet_unwrapsConfigEnvelopeWhenPresent() async throws {
+        let connection = OpenClawGatewayConnection { method, _ in
+            #expect(method == "config.get")
+            let payload: [String: Any] = [
+                "config": [
+                    "models": [
+                        "providers": [
+                            "moonshot": [
+                                "baseUrl": "https://api.moonshot.ai/v1"
+                            ]
+                        ]
+                    ]
+                ],
+                "hash": "config-hash"
+            ]
+            return try JSONSerialization.data(withJSONObject: payload)
+        }
+
+        let config = try await connection.configGet()
+        let models = config["models"]?.value as? [String: OpenClawProtocol.AnyCodable]
+        let providers = models?["providers"]?.value as? [String: OpenClawProtocol.AnyCodable]
+        #expect(providers?["moonshot"] != nil)
+        #expect(config["hash"] == nil)
+    }
+
+    @Test
+    func configGetFull_acceptsFlattenedConfigPayloadWithLegacyHashField() async throws {
+        let connection = OpenClawGatewayConnection { method, _ in
+            #expect(method == "config.get")
+            let payload: [String: Any] = [
+                "models": [
+                    "providers": [
+                        "kimi-coding": [
+                            "baseUrl": "https://api.kimi.com/coding",
+                            "api": "anthropic-messages"
+                        ]
+                    ]
+                ],
+                "hash": "flattened-config-hash"
+            ]
+            return try JSONSerialization.data(withJSONObject: payload)
+        }
+
+        let result = try await connection.configGetFull()
+        #expect(result.baseHash == "flattened-config-hash")
+        let config = try #require(result.config)
+        let models = config["models"]?.value as? [String: OpenClawProtocol.AnyCodable]
+        let providers = models?["providers"]?.value as? [String: OpenClawProtocol.AnyCodable]
+        #expect(providers?["kimi-coding"] != nil)
+    }
+
+    @Test
+    func configPatch_decodesLegacyBooleanRestartField() async throws {
+        let connection = OpenClawGatewayConnection { method, params in
+            #expect(method == "config.patch")
+            #expect(params?["raw"]?.value as? String == "{\"models\":{}}")
+            #expect(params?["baseHash"]?.value as? String == "hash-legacy")
+            let payload: [String: Any] = [
+                "ok": true,
+                "path": "/tmp/openclaw.json",
+                "restart": false
+            ]
+            return try JSONSerialization.data(withJSONObject: payload)
+        }
+
+        let result = try await connection.configPatch(raw: "{\"models\":{}}", baseHash: "hash-legacy")
+        #expect(result.ok == true)
+        #expect(result.path == "/tmp/openclaw.json")
+        #expect(result.restart == false)
+    }
+
+    @Test
+    func configPatch_decodesStructuredRestartMetadata() async throws {
+        let connection = OpenClawGatewayConnection { method, params in
+            #expect(method == "config.patch")
+            #expect(params?["raw"]?.value as? String == "{\"models\":{}}")
+            #expect(params?["baseHash"]?.value as? String == "hash-new")
+            let payload: [String: Any] = [
+                "ok": true,
+                "path": "/tmp/openclaw.json",
+                "restart": [
+                    "ok": true,
+                    "pid": 4242,
+                    "signal": "SIGUSR1",
+                    "delayMs": 2000,
+                    "reason": "config.patch",
+                    "mode": "emit"
+                ]
+            ]
+            return try JSONSerialization.data(withJSONObject: payload)
+        }
+
+        let result = try await connection.configPatch(raw: "{\"models\":{}}", baseHash: "hash-new")
+        #expect(result.ok == true)
+        #expect(result.path == "/tmp/openclaw.json")
+        #expect(result.restart == true)
+    }
+
+    @Test
     func subscribeToEvents_filtersByRunId() async throws {
         let connection = OpenClawGatewayConnection()
         let eventBox = OpenClawGatewayEventBox()
@@ -227,6 +387,45 @@ struct OpenClawGatewayConnectionPhase1Tests {
         } else {
             Issue.record("Expected payload dictionary on buffered event frame")
         }
+    }
+
+    @Test
+    func subscribeToEvents_matchesRunIdFromEventMeta() async throws {
+        let connection = OpenClawGatewayConnection()
+        let eventBox = OpenClawGatewayEventBox()
+        let stream = await connection.subscribeToEvents(runId: "meta-run")
+
+        let consumer = Task {
+            for await frame in stream {
+                await eventBox.store(frame)
+                break
+            }
+        }
+
+        let metaFrame = makeEventFrame(
+            event: "runtime.delta",
+            payload: [
+                "state": "delta",
+                "message": [
+                    "role": "assistant",
+                    "content": [["type": "text", "text": "from-meta"]]
+                ]
+            ],
+            seq: 7,
+            eventMeta: [
+                "schemaVersion": 1,
+                "channel": "chat",
+                "runId": "meta-run"
+            ]
+        )
+        await connection._testEmitPush(.event(metaFrame))
+
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        let matched = await eventBox.get()
+        consumer.cancel()
+
+        #expect(matched?.seq == 7)
+        #expect(matched?.eventmeta?["runId"]?.value as? String == "meta-run")
     }
 
     @Test
@@ -454,5 +653,89 @@ struct OpenClawGatewayConnectionPhase1Tests {
                 call.params?["runId"]?.value as? String == "run-reconnect-gap"
             }
         )
+    }
+
+    // MARK: - Event Buffer Overflow
+
+    @Test
+    func eventDispatch_doesNotBlockOnSlowListener() async {
+        let connection = OpenClawGatewayConnection()
+        let gate = OpenClawListenerGate()
+
+        _ = await connection.addEventListener { _ in
+            await gate.wait()
+        }
+
+        let frame = makeEventFrame(
+            event: "agent.event",
+            payload: makeAgentPayload(stream: "assistant", runId: "slow-listener-run", seq: 1),
+            seq: 1
+        )
+
+        let clock = ContinuousClock()
+        let start = clock.now
+        await connection._testEmitPush(.event(frame))
+        let elapsed = start.duration(to: clock.now)
+
+        #expect(
+            elapsed < .milliseconds(200),
+            "Push handling should not block on slow listeners. Elapsed: \(elapsed)"
+        )
+
+        await gate.open()
+    }
+
+    @Test
+    func eventDispatch_preservesPerListenerOrdering() async {
+        let connection = OpenClawGatewayConnection()
+        let recorder = OpenClawListenerSequenceRecorder()
+
+        _ = await connection.addEventListener { push in
+            guard case let .event(frame) = push else { return }
+            await recorder.append(frame.seq)
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+
+        for seq in 1...3 {
+            await connection._testEmitPush(
+                .event(
+                    makeEventFrame(
+                        event: "agent.event",
+                        payload: makeAgentPayload(stream: "assistant", runId: "ordered-run", seq: seq),
+                        seq: seq
+                    )
+                )
+            )
+        }
+
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        #expect(await recorder.all() == [1, 2, 3])
+    }
+
+    @Test
+    func eventBuffer_dropsOldestFramesWhenOverflowing() async {
+        let connection = OpenClawGatewayConnection()
+
+        // Push 130 frames (maxBufferedEventFrames = 128), all for the same run.
+        for seq in 1...130 {
+            let frame = makeEventFrame(
+                event: "agent.event",
+                payload: makeAgentPayload(stream: "assistant", runId: "overflow-run", seq: seq),
+                seq: seq
+            )
+            await connection._testEmitPush(.event(frame))
+        }
+
+        // Subscribe — should only replay the 128 most-recent frames (seq 3–130).
+        let stream = await connection.subscribeToEvents(runId: "overflow-run")
+        var buffered: [EventFrame] = []
+        var iterator = stream.makeAsyncIterator()
+        while buffered.count < 128, let frame = await iterator.next() {
+            buffered.append(frame)
+        }
+
+        #expect(buffered.count == 128, "Expected 128 buffered frames, got \(buffered.count)")
+        #expect(buffered.first?.seq == 3, "Expected first seq 3 (oldest 2 dropped), got \(String(describing: buffered.first?.seq))")
+        #expect(buffered.last?.seq == 130, "Expected last seq 130, got \(String(describing: buffered.last?.seq))")
     }
 }

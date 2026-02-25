@@ -60,7 +60,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         case .agents: "Agents"
         case .plugins: "Plugins"
         case .tools: "Tools"
-        case .skills: "Skills"
+        case .skills: "Skills (Local)"
         case .schedules: "Schedules"
         case .watchers: "Watchers"
         case .voice: "Voice"

@@ -1642,6 +1642,138 @@ struct OpenClawManagerTests {
     }
 
     @Test
+    func addProvider_kimiCodingSeedsDefaultModelsWhenDiscoveryIsDisabled() async throws {
+        let manager = OpenClawManager.shared
+
+        actor PatchRecorder {
+            var raw: String?
+            func record(raw: String) { self.raw = raw }
+            func payload() -> String? { raw }
+        }
+        let recorder = PatchRecorder()
+
+        OpenClawManager._testSetGatewayHooks(
+            .init(
+                channelsStatus: { [] },
+                modelsList: { [] },
+                health: { [:] },
+                configGetFull: {
+                    ConfigGetResult(config: nil, baseHash: "base-hash-kimi-coding")
+                },
+                configPatch: { raw, _ in
+                    await recorder.record(raw: raw)
+                    return ConfigPatchResult(ok: true, path: nil, restart: false)
+                }
+            )
+        )
+        defer { OpenClawManager._testSetGatewayHooks(nil) }
+
+        let configuredModelCount = try await manager.addProvider(
+            id: "kimi-coding",
+            baseUrl: "https://api.kimi.com/coding",
+            apiCompatibility: "anthropic-messages",
+            apiKey: "sk-kimi-coding-test",
+            seedModelsFromEndpoint: false,
+            requireSeededModels: false
+        )
+
+        #expect(configuredModelCount == 1)
+
+        let rawPatch = try #require(await recorder.payload())
+        let patchData = try #require(rawPatch.data(using: .utf8))
+        let jsonObject = try JSONSerialization.jsonObject(with: patchData)
+        let json = try #require(jsonObject as? [String: Any])
+        let modelsSection = json["models"] as? [String: Any]
+        let providers = modelsSection?["providers"] as? [String: Any]
+        let kimiCoding = providers?["kimi-coding"] as? [String: Any]
+        let seeded = kimiCoding?["models"] as? [[String: Any]]
+        let seededIDs = Set((seeded ?? []).compactMap { $0["id"] as? String })
+
+        #expect((kimiCoding?["apiKey"] as? String) == "sk-kimi-coding-test")
+        #expect((kimiCoding?["api"] as? String) == "anthropic-messages")
+        #expect((kimiCoding?["baseUrl"] as? String) == "https://api.kimi.com/coding")
+        #expect(seededIDs.contains("k2p5"))
+        #expect(seededIDs.contains("kimi-k2-thinking") == false)
+
+        let agents = json["agents"] as? [String: Any]
+        let defaults = agents?["defaults"] as? [String: Any]
+        let allowlist = defaults?["models"] as? [String: Any]
+        let k2p5 = allowlist?["kimi-coding/k2p5"] as? [String: Any]
+
+        #expect(k2p5?["alias"] as? String == "Kimi K2.5")
+        #expect(allowlist?["kimi-coding/kimi-k2-thinking"] == nil)
+    }
+
+    @Test
+    func migrateLegacyKimiCodingProviderEndpointIfNeeded_rewritesLegacyMoonshotAnthropicBaseUrl() async throws {
+        let manager = OpenClawManager.shared
+
+        actor PatchRecorder {
+            var raw: String?
+            var calls = 0
+            func record(raw: String) {
+                self.raw = raw
+                calls += 1
+            }
+            func snapshot() -> (String?, Int) { (raw, calls) }
+        }
+        let recorder = PatchRecorder()
+
+        let legacyConfig: [String: OpenClawProtocol.AnyCodable] = [
+            "models": OpenClawProtocol.AnyCodable([
+                "providers": OpenClawProtocol.AnyCodable([
+                    "kimi-coding": OpenClawProtocol.AnyCodable([
+                        "baseUrl": OpenClawProtocol.AnyCodable("https://api.moonshot.ai/anthropic"),
+                        "api": OpenClawProtocol.AnyCodable("anthropic-messages"),
+                        "apiKey": OpenClawProtocol.AnyCodable("sk-kimi-coding-test"),
+                        "models": OpenClawProtocol.AnyCodable([
+                            OpenClawProtocol.AnyCodable([
+                                "id": OpenClawProtocol.AnyCodable("k2p5"),
+                                "name": OpenClawProtocol.AnyCodable("Kimi K2.5"),
+                                "reasoning": OpenClawProtocol.AnyCodable(true)
+                            ])
+                        ])
+                    ])
+                ])
+            ])
+        ]
+
+        OpenClawManager._testSetGatewayHooks(
+            .init(
+                channelsStatus: { [] },
+                modelsList: { [] },
+                health: { [:] },
+                configGetFull: {
+                    ConfigGetResult(config: legacyConfig, baseHash: "base-hash-kimi-legacy")
+                },
+                configPatch: { raw, _ in
+                    await recorder.record(raw: raw)
+                    return ConfigPatchResult(ok: true, path: nil, restart: false)
+                }
+            )
+        )
+        defer { OpenClawManager._testSetGatewayHooks(nil) }
+
+        let migrated = try await manager.migrateLegacyKimiCodingProviderEndpointIfNeeded()
+        #expect(migrated == true)
+
+        let (rawPatch, callCount) = await recorder.snapshot()
+        #expect(callCount == 1)
+
+        let rawPatchValue = try #require(rawPatch)
+        let patchData = try #require(rawPatchValue.data(using: .utf8))
+        let jsonObject = try JSONSerialization.jsonObject(with: patchData)
+        let json = try #require(jsonObject as? [String: Any])
+        let modelsSection = json["models"] as? [String: Any]
+        let providers = modelsSection?["providers"] as? [String: Any]
+        let kimiCoding = providers?["kimi-coding"] as? [String: Any]
+
+        #expect((kimiCoding?["baseUrl"] as? String) == "https://api.kimi.com/coding")
+        #expect((kimiCoding?["api"] as? String) == "anthropic-messages")
+        #expect((kimiCoding?["apiKey"] as? String) == "sk-kimi-coding-test")
+    }
+
+    @Test
     func syncMCPProvidersToOpenClaw_redactsSensitiveValuesInErrorState() async throws {
         let manager = OpenClawManager.shared
         let tempDir = FileManager.default.temporaryDirectory
@@ -2400,6 +2532,38 @@ struct OpenClawManagerTests {
             ]
         )
         #expect(manager.providerReadinessReason(forModelId: "openclaw-model:missing") == .noModels)
+    }
+
+    @Test
+    func providerReadinessReason_acceptsProviderQualifiedModelReferences() async {
+        let manager = OpenClawManager.shared
+        manager._testSetProviderState(
+            availableModels: [
+                OpenClawProtocol.ModelChoice(
+                    id: "moonshotai/kimi-k2",
+                    name: "Kimi K2",
+                    provider: "openrouter",
+                    contextwindow: 128_000,
+                    reasoning: true
+                )
+            ],
+            configuredProviders: [
+                OpenClawManager.ProviderInfo(
+                    id: "openrouter",
+                    name: "OpenRouter",
+                    modelCount: 1,
+                    hasApiKey: true,
+                    needsKey: true,
+                    readinessReason: .ready
+                )
+            ]
+        )
+
+        #expect(
+            manager.providerReadinessReason(
+                forModelId: "openclaw-model:openrouter/moonshotai/kimi-k2"
+            ) == .ready
+        )
     }
 
     @Test

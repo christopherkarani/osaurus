@@ -37,6 +37,20 @@ actor OpenClawModelService: ModelService {
         case rewritten
     }
 
+    private struct AuthFailureDebugSnapshot {
+        let sessionKey: String
+        let modelRef: String?
+        let providerId: String?
+        let providerAPI: String?
+        let providerBaseURL: String?
+        let providerHasAPIKey: Bool?
+        let hasEnvKimi: Bool
+        let hasEnvMoonshot: Bool
+        let hasConfiguredKimiCodingProvider: Bool
+        let hasConfiguredMoonshotProvider: Bool
+        let hint: String?
+    }
+
     struct ChatEventPayload: Decodable {
         var runId: String?
         let state: String
@@ -61,6 +75,10 @@ actor OpenClawModelService: ModelService {
 
     static let sessionPrefix = "openclaw:"
     static let modelPrefix = "openclaw-model:"
+#if DEBUG
+    nonisolated(unsafe) static var lifecycleFinalizationGraceNanosecondsOverride: UInt64?
+#endif
+    private static let defaultLifecycleFinalizationGraceNanoseconds: UInt64 = 2_500_000_000
 
     nonisolated let id = "openclaw"
 
@@ -116,59 +134,149 @@ actor OpenClawModelService: ModelService {
         let service = self
 
         return AsyncThrowingStream { continuation in
-            Task {
-                var previousChatTextSnapshot = ""
+            let producerTask = Task {
+                var previousAssistantSnapshot = ""
+                var hasObservedAgentLifecycleStart = false
+                var sawChatFinal = false
+                var lifecycleFallbackTask: Task<Void, Never>?
+
+                func cancelLifecycleFallback() {
+                    lifecycleFallbackTask?.cancel()
+                    lifecycleFallbackTask = nil
+                }
+
+                func scheduleLifecycleFallback() {
+                    cancelLifecycleFallback()
+                    lifecycleFallbackTask = Task {
+                        try? await Task.sleep(nanoseconds: Self.lifecycleFinalizationGraceNanoseconds)
+                        guard !Task.isCancelled else { return }
+                        continuation.finish()
+                    }
+                }
+
+                defer { cancelLifecycleFallback() }
+
                 for await frame in eventStream {
                     if Task.isCancelled {
                         continuation.finish()
                         return
                     }
 
-                    if let chat = Self.decodeChatEvent(frame),
-                        chat.runId == runId,
-                        chat.state == "delta"
-                    {
-                        let payload = Self.extractChatTextPayload(chat.message)
-
-                        // Preferred path: explicit incremental delta from gateway.
-                        if let explicitDelta = payload.delta, !explicitDelta.isEmpty {
-                            continuation.yield(explicitDelta)
-                            if let snapshot = payload.snapshot, !snapshot.isEmpty {
-                                previousChatTextSnapshot = snapshot
-                            } else {
-                                previousChatTextSnapshot += explicitDelta
+                    if let chat = Self.decodeChatEvent(frame), chat.runId == runId {
+                        // Short runs may only carry assistant text in `chat.final`.
+                        // Consume both `delta` and terminal chat payload text.
+                        if chat.state == "delta" || chat.state == "final" || chat.state == "aborted" {
+                            if chat.state == "final" || chat.state == "aborted" {
+                                sawChatFinal = true
                             }
-                        } else if let snapshot = payload.snapshot, !snapshot.isEmpty {
-                            let previousSnapshot = previousChatTextSnapshot
-                            switch Self.normalizeSnapshotTransition(
-                                snapshot,
-                                previousSnapshot: &previousChatTextSnapshot
-                            ) {
-                            case .append(let delta):
-                                if !delta.isEmpty {
-                                    continuation.yield(delta)
+
+                            let payload = Self.extractChatTextPayload(chat.message)
+
+                            // Preferred path: explicit incremental delta from gateway.
+                            if let explicitDelta = payload.delta, !explicitDelta.isEmpty {
+                                continuation.yield(explicitDelta)
+                                if let snapshot = payload.snapshot, !snapshot.isEmpty {
+                                    previousAssistantSnapshot = snapshot
+                                } else {
+                                    previousAssistantSnapshot += explicitDelta
                                 }
-                            case .unchanged:
-                                break
-                            case .regressed:
-                                await service.emitNonPrefixSnapshotTelemetry(
-                                    event: "chat.delta.snapshot_regressed",
-                                    runId: runId,
-                                    previousSnapshot: previousSnapshot,
-                                    nextSnapshot: snapshot
-                                )
-                            case .rewritten:
-                                await service.emitNonPrefixSnapshotTelemetry(
-                                    event: "chat.delta.snapshot_rewritten",
-                                    runId: runId,
-                                    previousSnapshot: previousSnapshot,
-                                    nextSnapshot: snapshot
-                                )
+                            } else if let snapshot = payload.snapshot, !snapshot.isEmpty {
+                                let previousSnapshot = previousAssistantSnapshot
+                                switch Self.normalizeSnapshotTransition(
+                                    snapshot,
+                                    previousSnapshot: &previousAssistantSnapshot
+                                ) {
+                                case .append(let delta):
+                                    if !delta.isEmpty {
+                                        continuation.yield(delta)
+                                    }
+                                case .unchanged:
+                                    break
+                                case .regressed:
+                                    await service.emitNonPrefixSnapshotTelemetry(
+                                        event: "chat.\(chat.state).snapshot_regressed",
+                                        runId: runId,
+                                        previousSnapshot: previousSnapshot,
+                                        nextSnapshot: snapshot
+                                    )
+                                case .rewritten:
+                                    await service.emitNonPrefixSnapshotTelemetry(
+                                        event: "chat.\(chat.state).snapshot_rewritten",
+                                        runId: runId,
+                                        previousSnapshot: previousSnapshot,
+                                        nextSnapshot: snapshot
+                                    )
+                                }
+                            }
+
+                            if sawChatFinal && hasObservedAgentLifecycleStart {
+                                scheduleLifecycleFallback()
                             }
                         }
                     }
 
-                    if let terminal = Self.terminalState(for: frame, runId: runId) {
+                    if let agent = Self.decodeAgentEvent(frame), agent.runId == runId {
+                        let stream = Self.normalizedString(agent.stream)?.lowercased()
+                            ?? Self.decodeEventMeta(frame).stream
+                        if stream == "lifecycle" {
+                            let phase = (agent.data?["phase"]?.value as? String)?.lowercased()
+                                ?? Self.decodeEventMeta(frame).phase
+                                ?? ""
+                            if phase == "start" {
+                                hasObservedAgentLifecycleStart = true
+                            }
+                        }
+                        if let payload = Self.extractAgentAssistantTextPayload(agent) {
+                            // Agent assistant updates are often where OpenClaw emits
+                            // post-tool response text in Work mode.
+                            if let explicitDelta = payload.delta, !explicitDelta.isEmpty {
+                                continuation.yield(explicitDelta)
+                                if let snapshot = payload.snapshot, !snapshot.isEmpty {
+                                    previousAssistantSnapshot = snapshot
+                                } else {
+                                    previousAssistantSnapshot += explicitDelta
+                                }
+                            } else if let snapshot = payload.snapshot, !snapshot.isEmpty {
+                                let previousSnapshot = previousAssistantSnapshot
+                                switch Self.normalizeSnapshotTransition(
+                                    snapshot,
+                                    previousSnapshot: &previousAssistantSnapshot
+                                ) {
+                                case .append(let delta):
+                                    if !delta.isEmpty {
+                                        continuation.yield(delta)
+                                    }
+                                case .unchanged:
+                                    break
+                                case .regressed:
+                                    await service.emitNonPrefixSnapshotTelemetry(
+                                        event: "agent.assistant.snapshot_regressed",
+                                        runId: runId,
+                                        previousSnapshot: previousSnapshot,
+                                        nextSnapshot: snapshot
+                                    )
+                                case .rewritten:
+                                    await service.emitNonPrefixSnapshotTelemetry(
+                                        event: "agent.assistant.snapshot_rewritten",
+                                        runId: runId,
+                                        previousSnapshot: previousSnapshot,
+                                        nextSnapshot: snapshot
+                                    )
+                                }
+                            }
+                        }
+
+                        if sawChatFinal && hasObservedAgentLifecycleStart {
+                            scheduleLifecycleFallback()
+                        }
+                    }
+
+                    if let terminal = Self.terminalState(
+                        for: frame,
+                        runId: runId,
+                        preferAgentLifecycle: hasObservedAgentLifecycleStart
+                    ) {
+                        cancelLifecycleFallback()
                         switch terminal {
                         case .success:
                             continuation.finish()
@@ -185,6 +293,10 @@ actor OpenClawModelService: ModelService {
                     }
                 }
                 continuation.finish()
+            }
+
+            continuation.onTermination = { @Sendable _ in
+                producerTask.cancel()
             }
         }
     }
@@ -292,14 +404,24 @@ actor OpenClawModelService: ModelService {
         if let normalizedPrimary,
             !Self.isGenericGatewayFailureMessage(normalizedPrimary)
         {
-            return normalizedPrimary
+            return await augmentAuthenticationFailureMessage(
+                normalizedPrimary,
+                sessionKey: sessionKey
+            )
         }
 
         if let historyMessage = await historyDerivedErrorMessage(sessionKey: sessionKey) {
-            return historyMessage
+            return await augmentAuthenticationFailureMessage(
+                historyMessage,
+                sessionKey: sessionKey
+            )
         }
 
-        return normalizedPrimary ?? "unknown error"
+        let fallback = normalizedPrimary ?? "unknown error"
+        return await augmentAuthenticationFailureMessage(
+            fallback,
+            sessionKey: sessionKey
+        )
     }
 
     private func historyDerivedErrorMessage(sessionKey: String) async -> String? {
@@ -360,6 +482,208 @@ actor OpenClawModelService: ModelService {
 
     private static func normalizedGatewayErrorMessage(_ raw: String?) -> String? {
         normalizedString(raw)
+    }
+
+    private static var lifecycleFinalizationGraceNanoseconds: UInt64 {
+#if DEBUG
+        lifecycleFinalizationGraceNanosecondsOverride ?? defaultLifecycleFinalizationGraceNanoseconds
+#else
+        defaultLifecycleFinalizationGraceNanoseconds
+#endif
+    }
+
+    private func augmentAuthenticationFailureMessage(
+        _ message: String,
+        sessionKey: String
+    ) async -> String {
+        guard Self.isAuthenticationFailureMessage(message),
+            let debugSnapshot = await authFailureDebugSnapshot(sessionKey: sessionKey)
+        else {
+            return message
+        }
+        return Self.appendAuthDebugDetails(message, snapshot: debugSnapshot)
+    }
+
+    private func authFailureDebugSnapshot(sessionKey: String) async -> AuthFailureDebugSnapshot? {
+        guard !sessionKey.isEmpty else { return nil }
+
+        var sessionModelRef: String?
+        var sessionProviderId: String?
+        if let sessions = try? await connection.sessionsList(
+            limit: 200,
+            includeTitles: false,
+            includeLastMessage: false,
+            includeGlobal: true,
+            includeUnknown: true
+        ) {
+            if let session = sessions.first(where: { $0.key == sessionKey }) {
+                sessionProviderId = Self.normalizedString(session.modelProvider)?.lowercased()
+                sessionModelRef = Self.modelReference(
+                    model: session.model,
+                    providerId: sessionProviderId
+                )
+            }
+        }
+
+        let providerId = sessionProviderId ?? Self.providerId(fromModelReference: sessionModelRef)
+
+        var providerAPI: String?
+        var providerBaseURL: String?
+        var providerHasAPIKey: Bool?
+        var hasEnvKimi = false
+        var hasEnvMoonshot = false
+        var hasConfiguredKimiCodingProvider = false
+        var hasConfiguredMoonshotProvider = false
+
+        if let config = try? await connection.configGet() {
+            if let envSection = config["env"]?.value as? [String: OpenClawProtocol.AnyCodable] {
+                hasEnvKimi = envSection["KIMI_API_KEY"] != nil || envSection["KIMICODE_API_KEY"] != nil
+                hasEnvMoonshot = envSection["MOONSHOT_API_KEY"] != nil
+            }
+
+            if let modelsSection = config["models"]?.value as? [String: OpenClawProtocol.AnyCodable],
+                let providersSection = modelsSection["providers"]?.value as? [String: OpenClawProtocol.AnyCodable]
+            {
+                hasConfiguredKimiCodingProvider = providersSection["kimi-coding"] != nil
+                hasConfiguredMoonshotProvider = providersSection["moonshot"] != nil
+
+                if let providerId,
+                    let providerConfig = providersSection[providerId]?.value as? [String: OpenClawProtocol.AnyCodable]
+                {
+                    providerAPI = Self.normalizedString(providerConfig["api"]?.value as? String)
+                    providerBaseURL = Self.normalizedString(providerConfig["baseUrl"]?.value as? String)
+                    let apiKeyValue = Self.normalizedString(providerConfig["apiKey"]?.value as? String)
+                    providerHasAPIKey = apiKeyValue != nil
+                }
+            }
+        }
+
+        let hint = Self.authenticationFailureHint(
+            providerId: providerId,
+            modelRef: sessionModelRef,
+            hasEnvKimi: hasEnvKimi,
+            providerHasAPIKey: providerHasAPIKey,
+            hasConfiguredKimiCodingProvider: hasConfiguredKimiCodingProvider,
+            hasConfiguredMoonshotProvider: hasConfiguredMoonshotProvider
+        )
+
+        return AuthFailureDebugSnapshot(
+            sessionKey: sessionKey,
+            modelRef: sessionModelRef,
+            providerId: providerId,
+            providerAPI: providerAPI,
+            providerBaseURL: providerBaseURL,
+            providerHasAPIKey: providerHasAPIKey,
+            hasEnvKimi: hasEnvKimi,
+            hasEnvMoonshot: hasEnvMoonshot,
+            hasConfiguredKimiCodingProvider: hasConfiguredKimiCodingProvider,
+            hasConfiguredMoonshotProvider: hasConfiguredMoonshotProvider,
+            hint: hint
+        )
+    }
+
+    private static func isAuthenticationFailureMessage(_ message: String) -> Bool {
+        let normalized = message.lowercased()
+        return normalized.contains("401")
+            || normalized.contains("invalid authentication")
+            || normalized.contains("authentication failed")
+            || normalized.contains("unauthorized")
+            || normalized.contains("invalid api key")
+    }
+
+    private static func providerId(fromModelReference modelRef: String?) -> String? {
+        guard let modelRef = normalizedString(modelRef),
+            let slashIndex = modelRef.firstIndex(of: "/"),
+            slashIndex > modelRef.startIndex
+        else {
+            return nil
+        }
+
+        let prefix = modelRef[..<slashIndex].trimmingCharacters(in: .whitespacesAndNewlines)
+        return prefix.isEmpty ? nil : prefix.lowercased()
+    }
+
+    private static func modelReference(model: String?, providerId: String?) -> String? {
+        guard let model = normalizedString(model) else { return nil }
+        guard !model.contains("/") else { return model }
+        guard let providerId = normalizedString(providerId)?.lowercased(), !providerId.isEmpty else {
+            return model
+        }
+        return "\(providerId)/\(model)"
+    }
+
+    private static func authenticationFailureHint(
+        providerId: String?,
+        modelRef: String?,
+        hasEnvKimi: Bool,
+        providerHasAPIKey: Bool?,
+        hasConfiguredKimiCodingProvider: Bool,
+        hasConfiguredMoonshotProvider: Bool
+    ) -> String? {
+        let normalizedProvider = providerId?.lowercased()
+        let normalizedModel = modelRef?.lowercased() ?? ""
+
+        if normalizedProvider == nil,
+            normalizedModel.contains("kimi")
+        {
+            if hasConfiguredKimiCodingProvider == false && hasConfiguredMoonshotProvider == false {
+                return "No Kimi provider is configured for this session model. Add `kimi-coding` (`https://api.kimi.com/coding`) or `moonshot` (`https://api.moonshot.ai/v1`), then start a new OpenClaw session."
+            }
+            return "Session model is unqualified (`\(modelRef ?? "kimi")`). Use a provider-qualified model such as `moonshot/kimi-k2.5` or `kimi-coding/k2p5`, then start a new OpenClaw session."
+        }
+
+        if normalizedProvider == "moonshot",
+            normalizedModel.contains("kimi")
+        {
+            return "If this key is from Kimi Code, switch to provider `kimi-coding` and model `k2p5` with base URL `https://api.kimi.com/coding` (`anthropic-messages`)."
+        }
+
+        if normalizedProvider == "kimi-coding",
+            normalizedModel.contains("thinking")
+        {
+            return "For Kimi Coding keys, prefer model `kimi-coding/k2p5`. If you need thinking variants, use Moonshot (`moonshot/kimi-k2-thinking`) with a Moonshot key."
+        }
+
+        if normalizedProvider == "kimi-coding",
+            hasEnvKimi == false,
+            providerHasAPIKey != true
+        {
+            return "No Kimi key detected for `kimi-coding`. Configure `KIMI_API_KEY` (or set provider apiKey)."
+        }
+
+        return nil
+    }
+
+    private static func appendAuthDebugDetails(
+        _ message: String,
+        snapshot: AuthFailureDebugSnapshot
+    ) -> String {
+        var details: [String] = ["session=\(snapshot.sessionKey)"]
+        if let modelRef = snapshot.modelRef {
+            details.append("model=\(modelRef)")
+        }
+        if let providerId = snapshot.providerId {
+            details.append("provider=\(providerId)")
+        }
+        if let providerAPI = snapshot.providerAPI {
+            details.append("api=\(providerAPI)")
+        }
+        if let providerBaseURL = snapshot.providerBaseURL {
+            details.append("baseUrl=\(providerBaseURL)")
+        }
+        if let providerHasAPIKey = snapshot.providerHasAPIKey {
+            details.append("hasProviderApiKey=\(providerHasAPIKey)")
+        }
+        details.append("hasEnvKimi=\(snapshot.hasEnvKimi)")
+        details.append("hasEnvMoonshot=\(snapshot.hasEnvMoonshot)")
+        details.append("configuredKimiCoding=\(snapshot.hasConfiguredKimiCodingProvider)")
+        details.append("configuredMoonshot=\(snapshot.hasConfiguredMoonshotProvider)")
+
+        let joinedDetails = details.joined(separator: " ")
+        if let hint = snapshot.hint, !hint.isEmpty {
+            return "\(message) [auth-debug \(joinedDetails) hint=\(hint)]"
+        }
+        return "\(message) [auth-debug \(joinedDetails)]"
     }
 
     private static func isGenericGatewayFailureMessage(_ message: String) -> Bool {
@@ -428,6 +752,18 @@ actor OpenClawModelService: ModelService {
             snapshot: snapshotPieces.isEmpty ? nil : snapshotPieces.joined(),
             delta: deltaPieces.isEmpty ? nil : deltaPieces.joined()
         )
+    }
+
+    private static func extractAgentAssistantTextPayload(_ payload: AgentEventPayload) -> ChatTextPayload? {
+        let stream = normalizedString(payload.stream)?.lowercased()
+        guard stream == "assistant" else { return nil }
+        let data = payload.data ?? [:]
+        // Preserve whitespace/newline tokens from agent assistant stream.
+        // Trimming here collapses streamed formatting and glues words together.
+        let snapshot = nonEmptyRawString(data["text"]?.value as? String)
+        let delta = nonEmptyRawString(data["delta"]?.value as? String)
+        guard snapshot != nil || delta != nil else { return nil }
+        return ChatTextPayload(snapshot: snapshot, delta: delta)
     }
 
     private static func normalizeSnapshotTransition(
@@ -519,11 +855,25 @@ actor OpenClawModelService: ModelService {
         return value
     }
 
-    private static func terminalState(for frame: EventFrame, runId: String) -> TerminalState? {
+    private static func nonEmptyRawString(_ value: String?) -> String? {
+        guard let value, !value.isEmpty else { return nil }
+        return value
+    }
+
+    private static func terminalState(
+        for frame: EventFrame,
+        runId: String,
+        preferAgentLifecycle: Bool = false
+    ) -> TerminalState? {
         if let chat = decodeChatEvent(frame), chat.runId == runId {
             switch chat.state {
             case "final", "aborted":
-                return .success
+                // Work-mode runs can continue emitting `agent` stream events after
+                // `chat.final`. Once agent events are observed, treat lifecycle end
+                // as authoritative to avoid dropping late assistant updates.
+                if !preferAgentLifecycle {
+                    return .success
+                }
             case "error":
                 return .failure(chat.errorMessage)
             default:
@@ -556,4 +906,10 @@ actor OpenClawModelService: ModelService {
 
         return nil
     }
+
+#if DEBUG
+    static func _testSetLifecycleFinalizationGraceNanoseconds(_ value: UInt64?) {
+        lifecycleFinalizationGraceNanosecondsOverride = value
+    }
+#endif
 }
