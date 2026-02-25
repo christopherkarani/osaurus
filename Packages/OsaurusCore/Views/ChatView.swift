@@ -7,6 +7,7 @@
 
 import AppKit
 import Combine
+import OpenClawProtocol
 import SwiftUI
 
 @MainActor
@@ -62,53 +63,23 @@ final class ChatSession: ObservableObject {
 
     private var currentTask: Task<Void, Never>?
     // nonisolated(unsafe) allows deinit to access these for cleanup
-    nonisolated(unsafe) private var remoteModelsObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var modelCatalogCancellable: AnyCancellable?
     nonisolated(unsafe) private var modelSelectionCancellable: AnyCancellable?
     /// Flag to prevent auto-persist during initial load or programmatic resets
     private var isLoadingModel: Bool = false
 
-    nonisolated(unsafe) private var localModelsObserver: NSObjectProtocol?
-    nonisolated(unsafe) private var openClawModelsObserver: NSObjectProtocol?
-    nonisolated(unsafe) private var openClawConnectionObserver: NSObjectProtocol?
-
-    // MARK: - App-level Model Options Cache
-    private static var cachedModelOptions: [ModelOption]?
-    private static var cacheValid = false
-    private static let openClawProviderId = UUID(uuidString: "00000000-0000-0000-0000-00000000c1a0")!
-
     init() {
-        if let cached = Self.cachedModelOptions, Self.cacheValid {
-            modelOptions = cached
-            hasAnyModel = !cached.isEmpty
-            isDiscoveringModels = false
-        } else {
-            modelOptions = []
-            hasAnyModel = false
-        }
+        let catalog = ModelCatalogService.shared
+        let initialOptions = catalog.currentOptions()
+        modelOptions = initialOptions
+        hasAnyModel = !initialOptions.isEmpty
+        isDiscoveringModels = initialOptions.isEmpty
 
-        // Listen for remote provider model changes
-        remoteModelsObserver = NotificationCenter.default.addObserver(
-            forName: .remoteProviderModelsChanged,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                Self.cacheValid = false
-                await self?.refreshModelOptions()
+        modelCatalogCancellable = catalog.$options
+            .receive(on: RunLoop.main)
+            .sink { [weak self] updatedOptions in
+                self?.applyModelOptions(updatedOptions)
             }
-        }
-
-        // Listen for local model changes (download completed, deleted)
-        localModelsObserver = NotificationCenter.default.addObserver(
-            forName: .localModelsChanged,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                Self.cacheValid = false
-                await self?.refreshModelOptions()
-            }
-        }
 
         // Auto-persist model selection changes
         modelSelectionCancellable =
@@ -124,51 +95,17 @@ final class ChatSession: ObservableObject {
                 AgentManager.shared.updateDefaultModel(for: pid, model: model)
             }
 
-        openClawModelsObserver = NotificationCenter.default.addObserver(
-            forName: .openClawModelsChanged,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                Self.cacheValid = false
-                await self?.refreshModelOptions()
-            }
-        }
-
-        openClawConnectionObserver = NotificationCenter.default.addObserver(
-            forName: .openClawConnectionChanged,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                Self.cacheValid = false
-                await self?.refreshModelOptions()
-            }
-        }
-
-        // Only load models if cache wasn't valid (first window or after invalidation)
-        if !Self.cacheValid {
-            Task { [weak self] in
-                await self?.refreshModelOptions()
-            }
+        Task { [weak self] in
+            await catalog.refreshIfNeeded()
+            guard let self else { return }
+            self.applyModelOptions(catalog.currentOptions())
         }
     }
 
     deinit {
         print("[ChatSession] deinit")
         currentTask?.cancel()
-        if let observer = remoteModelsObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        if let observer = localModelsObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        if let observer = openClawModelsObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        if let observer = openClawConnectionObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
+        modelCatalogCancellable = nil
         modelSelectionCancellable = nil
     }
 
@@ -235,112 +172,41 @@ final class ChatSession: ObservableObject {
     }
 
     func pendingOpenClawModelId() -> String? {
-        Self.extractOpenClawModelId(from: selectedModel)
-    }
-
-    /// Build rich model options from all sources
-    private static func buildModelOptions() async -> [ModelOption] {
-        var options: [ModelOption] = []
-
-        // Add foundation model first if available (use cached value)
-        if AppConfiguration.shared.foundationModelAvailable {
-            options.append(.foundation())
+        guard let modelId = Self.extractOpenClawModelId(from: selectedModel) else {
+            return nil
         }
-
-        // Add local MLX models with rich metadata
-        // Run in detached task to avoid blocking main thread with file I/O
-        let localModels = await Task.detached(priority: .userInitiated) {
-            ModelManager.discoverLocalModels()
-        }.value
-
-        for model in localModels {
-            options.append(.fromMLXModel(model))
-        }
-
-        // Add remote provider models - must access on MainActor
-        let remoteModels = await MainActor.run {
-            RemoteProviderManager.shared.cachedAvailableModels()
-        }
-
-        for providerInfo in remoteModels {
-            for modelId in providerInfo.models {
-                options.append(
-                    .fromRemoteModel(
-                        modelId: modelId,
-                        providerName: providerInfo.providerName,
-                        providerId: providerInfo.providerId
-                    )
-                )
-            }
-        }
-
-        let gatewayModels = await MainActor.run { () -> [String] in
-            guard OpenClawManager.shared.isConnected else { return [] }
-            return OpenClawManager.shared.availableModels
-        }
-        for modelId in gatewayModels {
-            options.append(
-                .fromRemoteModel(
-                    modelId: openClawSelectionModelIdentifier(modelId: modelId),
-                    providerName: "OpenClaw Gateway",
-                    providerId: openClawProviderId
-                )
-            )
-        }
-
-        // Cache the result for subsequent windows
-        cachedModelOptions = options
-        cacheValid = true
-
-        return options
+        return OpenClawManager.shared.canonicalModelReference(for: modelId)
     }
 
     /// Pre-warm the full model cache (local + remote) at app launch
     public static func prewarmModelCache() async {
-        _ = await buildModelOptions()
+        await ModelCatalogService.shared.prewarmModelCache()
     }
 
     /// Quick prewarm with just local models (no network wait)
     /// Call this early at launch so first window has something to show immediately
     public static func prewarmLocalModelsOnly() {
-        Task {
-            // Run discovery in background
-            let localModels = await Task.detached(priority: .userInitiated) {
-                ModelManager.discoverLocalModels()
-            }.value
-
-            await MainActor.run {
-                var options: [ModelOption] = []
-
-                // Foundation model (instant check)
-                if AppConfiguration.shared.foundationModelAvailable {
-                    options.append(.foundation())
-                }
-
-                for model in localModels {
-                    options.append(.fromMLXModel(model))
-                }
-
-                // Cache what we have - remote models will be added by prewarmModelCache later
-                cachedModelOptions = options
-                cacheValid = true
-            }
-        }
+        ModelCatalogService.shared.prewarmLocalModelsOnly()
     }
 
     /// Invalidate model cache to force rediscovery
     /// Call this when models change outside of normal notification flow (e.g., after onboarding)
     public static func invalidateModelCache() {
-        cacheValid = false
-        cachedModelOptions = nil
+        ModelCatalogService.shared.invalidateCache()
     }
 
     func refreshModelOptions() async {
-        let newOptions = await Self.buildModelOptions()
+        await ModelCatalogService.shared.refresh()
+        let newOptions = ModelCatalogService.shared.currentOptions()
+        applyModelOptions(newOptions)
+    }
+
+    private func applyModelOptions(_ newOptions: [ModelOption]) {
         let newOptionIds = newOptions.map { $0.id }
         let optionsChanged = modelOptions.map({ $0.id }) != newOptionIds
 
         isDiscoveringModels = false
+        hasAnyModel = !newOptions.isEmpty
 
         guard optionsChanged else { return }
 
@@ -363,7 +229,6 @@ final class ChatSession: ObservableObject {
         isLoadingModel = true
         selectedModel = newSelected
         isLoadingModel = false
-        hasAnyModel = !newOptions.isEmpty
     }
 
     /// Check if the currently selected model supports images (VLM)
@@ -379,6 +244,13 @@ final class ChatSession: ObservableObject {
     var selectedModelOption: ModelOption? {
         guard let model = selectedModel else { return nil }
         return modelOptions.first { $0.id == model }
+    }
+
+    /// Whether the selected model can execute right now.
+    /// Currently used to surface OpenClaw provider-key readiness in Chat mode.
+    var selectedModelReady: Bool {
+        guard let model = selectedModel else { return true }
+        return OpenClawManager.shared.isProviderReady(forModelId: model)
     }
 
     /// Flattened content blocks for efficient LazyVStack rendering
@@ -1481,7 +1353,8 @@ struct ChatView: View {
                                 onStop: { observedSession.stop() },
                                 focusTrigger: focusTrigger,
                                 agentId: windowState.agentId,
-                                windowId: windowState.windowId
+                                windowId: windowState.windowId,
+                                modelReady: observedSession.selectedModelReady
                             )
                         } else {
                             // No models empty state

@@ -7,46 +7,66 @@ import AppKit
 import SwiftUI
 
 struct OpenClawSetupWizardSheet: View {
-    enum Step: Int, CaseIterable {
-        case environment
-        case configuration
-        case completion
-
-        var title: String {
-            switch self {
-            case .environment: "Environment"
-            case .configuration: "Gateway"
-            case .completion: "Complete"
-            }
-        }
-    }
-
     @ObservedObject var manager: OpenClawManager
     @ObservedObject private var themeManager = ThemeManager.shared
 
     @Environment(\.dismiss) private var dismiss
 
-    @State private var step: Step = .environment
-    @State private var draftConfig = OpenClawConfiguration()
-    @State private var authToken: String = ""
-    @State private var portText = "18789"
-    @State private var statusText: String?
-    @State private var isWorking = false
+    private enum StepStatus: Equatable {
+        case pending, running, done, failed(String)
+
+        var isComplete: Bool {
+            if case .done = self { return true }
+            return false
+        }
+
+        var isFailed: Bool {
+            if case .failed = self { return true }
+            return false
+        }
+    }
+
+    @State private var nodeStatus: StepStatus = .pending
+    @State private var cliStatus: StepStatus = .pending
+    @State private var gatewayStatus: StepStatus = .pending
+    @State private var connectionStatus: StepStatus = .pending
+    @State private var providerStatus: StepStatus = .pending
+    @State private var showProviderSetup = false
+    @State private var progressText = ""
+    @State private var isRunning = false
+    @State private var hasRun = false
+    @State private var ollamaDetected = false
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    private var infrastructureDone: Bool {
+        nodeStatus.isComplete && cliStatus.isComplete &&
+        gatewayStatus.isComplete && connectionStatus.isComplete
+    }
+
+    private var allDone: Bool {
+        infrastructureDone && providerStatus.isComplete
+    }
+
+    private var anyFailed: Bool {
+        nodeStatus.isFailed || cliStatus.isFailed ||
+        gatewayStatus.isFailed || connectionStatus.isFailed ||
+        providerStatus.isFailed
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            stepIndicator
             content
             footer
         }
-        .frame(width: 540, height: 620)
+        .frame(width: 500, height: showProviderSetup ? 640 : 540)
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
-        .onAppear(perform: setupInitialState)
+        .onAppear { Task { await syncCurrentState() } }
     }
+
+    // MARK: - Header
 
     private var header: some View {
         HStack(spacing: 12) {
@@ -63,16 +83,14 @@ struct OpenClawSetupWizardSheet: View {
                 Text("OpenClaw Setup")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(theme.primaryText)
-                Text("Configure and connect your local OpenClaw gateway")
+                Text("One click to install, start, and connect.")
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
             }
 
             Spacer()
 
-            Button {
-                dismiss()
-            } label: {
+            Button { dismiss() } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(theme.secondaryText)
@@ -87,91 +105,148 @@ struct OpenClawSetupWizardSheet: View {
         .background(theme.secondaryBackground)
     }
 
-    private var stepIndicator: some View {
-        HStack(spacing: 12) {
-            ForEach(Step.allCases, id: \.self) { item in
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(item.rawValue <= step.rawValue ? theme.accentColor : theme.tertiaryBackground)
-                        .frame(width: 8, height: 8)
-                    Text(item.title)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(item == step ? theme.primaryText : theme.tertiaryText)
-                }
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 12)
-        .background(theme.primaryBackground)
-    }
+    // MARK: - Content
 
-    @ViewBuilder
     private var content: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                switch step {
-                case .environment:
-                    environmentStep
-                case .configuration:
-                    configurationStep
-                case .completion:
-                    completionStep
-                }
+            VStack(alignment: .leading, spacing: 12) {
+                stepRow("Node.js", description: nodeDescription, status: nodeStatus)
+                stepRow("OpenClaw CLI", description: cliDescription, status: cliStatus)
+                stepRow("Gateway", description: gatewayDescription, status: gatewayStatus)
+                stepRow("Connection", description: "WebSocket to gateway", status: connectionStatus)
+                providerStepRow
 
-                if let statusText, !statusText.isEmpty {
-                    Text(statusText)
+                if !progressText.isEmpty {
+                    Text(progressText)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
                         .padding(.top, 4)
+                        .animation(.easeInOut, value: progressText)
+                }
+
+                if !infrastructureDone {
+                    HeaderPrimaryButton(
+                        hasRun && anyFailed ? "Retry Setup" : "Set Up OpenClaw",
+                        icon: hasRun && anyFailed ? "arrow.clockwise" : "wand.and.stars"
+                    ) {
+                        Task { await runSetup() }
+                    }
+                    .disabled(isRunning)
+                    .padding(.top, 8)
+                }
+
+                if showProviderSetup {
+                    OpenClawProviderSetupView(manager: manager)
+                        .environment(\.theme, themeManager.currentTheme)
+                        .padding(.top, 4)
+                        .onChange(of: manager.availableModels.count) { newCount in
+                            if newCount > 0 {
+                                providerStatus = .done
+                            }
+                        }
                 }
             }
             .padding(24)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private var footer: some View {
-        HStack(spacing: 10) {
-            if step != .environment {
-                HeaderSecondaryButton("Back", icon: "chevron.left") {
-                    moveBackward()
-                }
+    private var providerStepRow: some View {
+        HStack(spacing: 12) {
+            stepIcon(providerStatus)
+                .frame(width: 28, height: 28)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Providers")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                Text(providerSubtitle)
+                    .font(.system(size: 12))
+                    .foregroundColor(providerSubtitleColor)
+                    .animation(.easeInOut, value: providerStatus)
             }
 
             Spacer()
 
-            switch step {
-            case .environment:
-                HeaderSecondaryButton("Recheck", icon: "arrow.clockwise") {
-                    Task { await runEnvironmentCheck() }
-                }
-                HeaderPrimaryButton(environmentPrimaryActionTitle, icon: environmentPrimaryActionIcon) {
-                    if environmentReady {
-                        moveForward()
-                    } else if canInstallCLIFromWizard {
-                        Task { await installCLI() }
-                    } else {
-                        statusText = environmentBlockerMessage
+            if infrastructureDone && !providerStatus.isComplete {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showProviderSetup.toggle()
                     }
+                } label: {
+                    Text(showProviderSetup ? "Hide" : "Configure")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(theme.accentColor.opacity(0.1))
+                        )
                 }
-                .disabled(isWorking || (!environmentReady && !canInstallCLIFromWizard))
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.secondaryBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(stepBorderColor(providerStatus), lineWidth: 1)
+                )
+        )
+        .animation(.easeInOut(duration: 0.2), value: providerStatus)
+    }
 
-            case .configuration:
-                HeaderPrimaryButton("Test Connection", icon: "bolt.horizontal.fill") {
-                    Task { await testConnection() }
-                }
-                .disabled(isWorking)
-                HeaderPrimaryButton("Next", icon: "chevron.right") {
-                    saveDraft()
-                    moveForward()
-                }
-                .disabled(isWorking)
+    private var providerSubtitle: String {
+        switch providerStatus {
+        case .pending:
+            if infrastructureDone {
+                return ollamaDetected
+                    ? "Ollama detected \u{2014} add it to get started"
+                    : "Add a provider to use Work mode"
+            }
+            return "LLM provider (e.g. OpenRouter, Ollama)"
+        case .running: return "Configuring…"
+        case .done: return "\(manager.availableModels.count) models available"
+        case .failed(let msg): return msg
+        }
+    }
 
-            case .completion:
-                HeaderPrimaryButton("Done", icon: "checkmark") {
-                    saveDraft()
-                    dismiss()
-                }
+    private var providerSubtitleColor: Color {
+        switch providerStatus {
+        case .failed: return theme.errorColor
+        case .done: return theme.successColor
+        case .pending where infrastructureDone && ollamaDetected:
+            return theme.successColor
+        default: return theme.secondaryText
+        }
+    }
+
+    private var gatewayDescription: String {
+        if manager.usesCustomGatewayEndpoint {
+            return "Custom gateway endpoint"
+        }
+        return "Local gateway process on port \(manager.configuration.gatewayPort)"
+    }
+
+    // MARK: - Footer
+
+    private var footer: some View {
+        HStack {
+            if infrastructureDone && !providerStatus.isComplete {
+                Text("A provider is needed for Work mode")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+            }
+
+            Spacer()
+            HeaderPrimaryButton(
+                infrastructureDone ? "Done" : "Skip",
+                icon: infrastructureDone ? "checkmark" : nil
+            ) {
+                dismiss()
             }
         }
         .padding(.horizontal, 24)
@@ -179,149 +254,313 @@ struct OpenClawSetupWizardSheet: View {
         .background(theme.secondaryBackground)
     }
 
-    private var environmentStep: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Step 1: Verify Environment")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+    // MARK: - Step Row
 
-            statusRow(
-                title: "Node.js",
-                isReady: nodeReady,
-                detail: nodeDetail
-            )
-            statusRow(
-                title: "OpenClaw CLI",
-                isReady: cliReady,
-                detail: cliDetail
-            )
+    private func stepRow(_ title: String, description: String, status: StepStatus) -> some View {
+        HStack(spacing: 12) {
+            stepIcon(status)
+                .frame(width: 28, height: 28)
 
-            if !environmentReady {
-                Text("If the CLI is missing, install it directly from this wizard.")
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                Text(stepSubtitle(description: description, status: status))
                     .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .foregroundColor(stepSubtitleColor(status))
+                    .animation(.easeInOut, value: status)
+            }
+
+            Spacer()
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.secondaryBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(stepBorderColor(status), lineWidth: 1)
+                )
+        )
+        .animation(.easeInOut(duration: 0.2), value: status)
+    }
+
+    @ViewBuilder
+    private func stepIcon(_ status: StepStatus) -> some View {
+        switch status {
+        case .pending:
+            Circle()
+                .stroke(theme.tertiaryBackground, lineWidth: 2)
+                .frame(width: 20, height: 20)
+        case .running:
+            ProgressView()
+                .progressViewStyle(CircularProgressViewStyle())
+                .scaleEffect(0.75)
+        case .done:
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 20))
+                .foregroundColor(theme.successColor)
+        case .failed:
+            Image(systemName: "xmark.circle.fill")
+                .font(.system(size: 20))
+                .foregroundColor(theme.errorColor)
+        }
+    }
+
+    private func stepSubtitle(description: String, status: StepStatus) -> String {
+        switch status {
+        case .pending: return description
+        case .running: return "Working…"
+        case .done: return "Ready"
+        case .failed(let msg): return msg
+        }
+    }
+
+    private func stepSubtitleColor(_ status: StepStatus) -> Color {
+        switch status {
+        case .failed: return theme.errorColor
+        case .done: return theme.successColor
+        default: return theme.secondaryText
+        }
+    }
+
+    private func stepBorderColor(_ status: StepStatus) -> Color {
+        switch status {
+        case .done: return theme.successColor.opacity(0.3)
+        case .failed: return theme.errorColor.opacity(0.3)
+        case .running: return theme.accentColor.opacity(0.4)
+        default: return theme.primaryBorder
+        }
+    }
+
+    // MARK: - Descriptions
+
+    private var nodeDescription: String {
+        switch manager.environmentStatus {
+        case .ready(let version, _): return version
+        case .missingNode: return "Not found — will install via Homebrew"
+        default: return "JavaScript runtime"
+        }
+    }
+
+    private var cliDescription: String {
+        switch manager.environmentStatus {
+        case .ready(_, let version): return "v\(version)"
+        case .missingCLI: return "Not installed — will install now"
+        case .incompatibleVersion(let found, let required): return "v\(found) found, requires v\(required)"
+        default: return "OpenClaw CLI"
+        }
+    }
+
+    // MARK: - State Sync
+
+    private func syncCurrentState() async {
+        await manager.checkEnvironment()
+        switch manager.environmentStatus {
+        case .ready:
+            nodeStatus = .done
+            cliStatus = .done
+        case .missingCLI:
+            nodeStatus = .done
+        default:
+            break
+        }
+        if manager.gatewayStatus == .running {
+            gatewayStatus = .done
+        }
+        if manager.isConnected {
+            connectionStatus = .done
+            if !manager.availableModels.isEmpty {
+                providerStatus = .done
             }
         }
     }
 
-    private var configurationStep: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Step 2: Configure Gateway")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+    // MARK: - One-Click Setup
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Gateway Port")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                TextField("18789", text: $portText)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 13, design: .monospaced))
-            }
+    private func runSetup() async {
+        isRunning = true
+        hasRun = true
+        defer { isRunning = false }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Bind Mode")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                Picker("Bind Mode", selection: $draftConfig.bindMode) {
-                    Text("Loopback").tag(OpenClawConfiguration.BindMode.loopback)
-                    Text("LAN").tag(OpenClawConfiguration.BindMode.lan)
-                }
-                .pickerStyle(.segmented)
-            }
+        // Reset any prior failures so steps re-run cleanly
+        if case .failed = nodeStatus { nodeStatus = .pending }
+        if case .failed = cliStatus { cliStatus = .pending }
+        if case .failed = gatewayStatus { gatewayStatus = .pending }
+        if case .failed = connectionStatus { connectionStatus = .pending }
+        if case .failed = providerStatus { providerStatus = .pending }
 
-            Toggle("Auto-start gateway on launch", isOn: $draftConfig.autoStartGateway)
-                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+        // Step 1: Node.js
+        if !nodeStatus.isComplete {
+            nodeStatus = .running
+            progressText = "Checking Node.js…"
+            await manager.checkEnvironment()
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Gateway Auth Token")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                HStack(spacing: 8) {
-                    TextField("Generated token", text: $authToken)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 12, design: .monospaced))
-                    HeaderSecondaryButton("Generate", icon: "dice.fill") {
-                        authToken = manager.generateAuthToken()
+            if case .missingNode = manager.environmentStatus {
+                progressText = "Installing Node.js via Homebrew…"
+                do {
+                    try await installNodeViaHomebrew()
+                    await manager.checkEnvironment()
+                    if case .missingNode = manager.environmentStatus {
+                        nodeStatus = .failed("Install failed. Install Node.js from nodejs.org.")
+                        progressText = ""
+                        return
                     }
-                    HeaderSecondaryButton("Copy", icon: "doc.on.doc") {
-                        copyToken()
+                    nodeStatus = .done
+                } catch {
+                    nodeStatus = .failed(error.localizedDescription)
+                    progressText = ""
+                    return
+                }
+            } else {
+                nodeStatus = .done
+            }
+        }
+
+        // Step 2: CLI
+        if !cliStatus.isComplete {
+            cliStatus = .running
+            progressText = "Checking OpenClaw CLI…"
+
+            let needsCLI: Bool
+            switch manager.environmentStatus {
+            case .missingCLI, .incompatibleVersion: needsCLI = true
+            default: needsCLI = false
+            }
+
+            if needsCLI {
+                progressText = "Installing OpenClaw CLI…"
+                do {
+                    try await manager.installCLI { message in
+                        Task { @MainActor in progressText = message }
                     }
+                    cliStatus = .done
+                } catch {
+                    cliStatus = .failed(error.localizedDescription)
+                    progressText = ""
+                    return
+                }
+            } else {
+                cliStatus = .done
+            }
+        }
+
+        // Ensure config and auth token are saved before starting the gateway
+        ensureDefaults()
+
+        // Step 3: Gateway
+        if !gatewayStatus.isComplete {
+            gatewayStatus = .running
+            if manager.usesCustomGatewayEndpoint {
+                progressText = "Using custom gateway endpoint…"
+                gatewayStatus = .done
+            } else {
+                progressText = "Starting gateway…"
+                do {
+                    try await manager.startGateway()
+                    gatewayStatus = .done
+                } catch {
+                    gatewayStatus = .failed(error.localizedDescription)
+                    progressText = ""
+                    return
                 }
             }
         }
+
+        // Step 4: Connection — sync the right token from gateway config files first,
+        // then connect. This handles stale keychain tokens, device-auth.json rotation,
+        // and fresh installs where only the plist token exists.
+        if !connectionStatus.isComplete {
+            connectionStatus = .running
+            progressText = "Connecting…"
+            do {
+                if manager.usesCustomGatewayEndpoint {
+                    try await manager.connect()
+                } else {
+                    try await manager.syncTokenFromGatewayConfig()
+                }
+                connectionStatus = .done
+                progressText = "OpenClaw is ready."
+            } catch {
+                connectionStatus = .failed(error.localizedDescription)
+                progressText = ""
+                return
+            }
+        }
+
+        // Auto-expand provider section when no providers are configured
+        if !providerStatus.isComplete {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showProviderSetup = true
+            }
+        }
+
+        // Probe for local Ollama after infrastructure is ready
+        await probeOllama()
+
+        progressText = ""
     }
 
-    private var completionStep: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Step 3: Complete")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-
-            statusRow(
-                title: "Gateway",
-                isReady: manager.gatewayStatus == .running,
-                detail: manager.gatewayStatus == .running ? "Running" : "Not running"
-            )
-            statusRow(
-                title: "Connection",
-                isReady: manager.isConnected,
-                detail: manager.isConnected ? "Connected" : "Disconnected"
-            )
-            statusRow(
-                title: "Channels",
-                isReady: !manager.channels.isEmpty,
-                detail: "\(manager.channels.count) discovered"
-            )
-
-            if manager.gatewayStatus != .running || !manager.isConnected {
-                HeaderPrimaryButton("Start & Connect", icon: "play.fill") {
-                    Task { await testConnection() }
-                }
-                .disabled(isWorking)
+    private func probeOllama() async {
+        guard let url = URL(string: "http://127.0.0.1:11434/api/tags") else { return }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 2
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            if let http = response as? HTTPURLResponse, http.statusCode == 200 {
+                await MainActor.run { ollamaDetected = true }
             }
+        } catch {
+            // Ollama not running
         }
     }
 
-    private var environmentReady: Bool {
-        Self.isNodeReady(manager.environmentStatus) && Self.isCLIReady(manager.environmentStatus)
+    private func ensureDefaults() {
+        var config = manager.configuration
+        config.isEnabled = true
+        manager.updateConfiguration(config)
+        if !manager.usesCustomGatewayEndpoint, OpenClawKeychain.getToken() == nil {
+            _ = OpenClawKeychain.saveToken(manager.generateAuthToken())
+        }
     }
 
-    private var canInstallCLIFromWizard: Bool {
-        Self.canInstallCLIFromWizard(manager.environmentStatus)
+    private func installNodeViaHomebrew() async throws {
+        try await Task.detached(priority: .utility) {
+            let brew: String
+            if FileManager.default.isExecutableFile(atPath: "/opt/homebrew/bin/brew") {
+                brew = "/opt/homebrew/bin/brew"
+            } else if FileManager.default.isExecutableFile(atPath: "/usr/local/bin/brew") {
+                brew = "/usr/local/bin/brew"
+            } else {
+                throw NSError(
+                    domain: "NodeInstaller", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Homebrew not found. Install Node.js from nodejs.org."]
+                )
+            }
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: brew)
+            process.arguments = ["install", "node"]
+            try process.run()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else {
+                throw NSError(
+                    domain: "NodeInstaller", code: Int(process.terminationStatus),
+                    userInfo: [NSLocalizedDescriptionKey: "brew install node failed (exit \(process.terminationStatus))"]
+                )
+            }
+        }.value
     }
 
-    private var environmentPrimaryActionTitle: String {
-        environmentReady ? "Next" : "Install CLI"
-    }
-
-    private var environmentPrimaryActionIcon: String {
-        environmentReady ? "chevron.right" : "arrow.down.circle.fill"
-    }
-
-    private var environmentBlockerMessage: String {
-        Self.environmentBlockerMessage(for: manager.environmentStatus)
-    }
-
-    private var nodeReady: Bool {
-        Self.isNodeReady(manager.environmentStatus)
-    }
-
-    private var cliReady: Bool {
-        Self.isCLIReady(manager.environmentStatus)
-    }
+    // MARK: - Static helpers (used by tests)
 
     static func isNodeReady(_ status: OpenClawEnvironmentStatus) -> Bool {
-        if case .missingNode = status { return false }
-        if case .error = status { return false }
-        return true
+        if case .ready = status { return true }
+        return false
     }
 
     static func isCLIReady(_ status: OpenClawEnvironmentStatus) -> Bool {
-        if case .missingCLI = status { return false }
-        if case .incompatibleVersion = status { return false }
-        if case .error = status { return false }
-        return true
+        if case .ready = status { return true }
+        return false
     }
 
     static func canInstallCLIFromWizard(_ status: OpenClawEnvironmentStatus) -> Bool {
@@ -340,131 +579,5 @@ struct OpenClawSetupWizardSheet: View {
         default:
             return "Environment check failed."
         }
-    }
-
-    private var nodeDetail: String {
-        switch manager.environmentStatus {
-        case .ready(let nodeVersion, _):
-            return "Detected \(nodeVersion)"
-        case .missingNode:
-            return "Not found in PATH"
-        default:
-            return "Unknown"
-        }
-    }
-
-    private var cliDetail: String {
-        switch manager.environmentStatus {
-        case .ready(_, let cliVersion):
-            return "Detected \(cliVersion)"
-        case .missingCLI:
-            return "Not installed"
-        case .incompatibleVersion(let found, let required):
-            return "Found \(found), requires \(required)"
-        default:
-            return "Unknown"
-        }
-    }
-
-    private func statusRow(title: String, isReady: Bool, detail: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: isReady ? "checkmark.circle.fill" : "xmark.circle.fill")
-                .foregroundColor(isReady ? theme.successColor : theme.errorColor)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                Text(detail)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-            }
-            Spacer()
-        }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.secondaryBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.primaryBorder, lineWidth: 1)
-                )
-        )
-    }
-
-    private func setupInitialState() {
-        draftConfig = manager.configuration
-        draftConfig.isEnabled = true
-        portText = "\(manager.configuration.gatewayPort)"
-        authToken = OpenClawKeychain.getToken() ?? manager.generateAuthToken()
-        Task { await runEnvironmentCheck() }
-    }
-
-    private func runEnvironmentCheck() async {
-        isWorking = true
-        defer { isWorking = false }
-        await manager.checkEnvironment()
-        if environmentReady {
-            statusText = "Environment looks good."
-        } else {
-            statusText = "Some requirements are missing."
-        }
-    }
-
-    private func installCLI() async {
-        isWorking = true
-        defer { isWorking = false }
-        do {
-            try await manager.installCLI { message in
-                Task { @MainActor in
-                    statusText = message
-                }
-            }
-            statusText = "CLI installed successfully."
-        } catch {
-            statusText = error.localizedDescription
-        }
-    }
-
-    private func testConnection() async {
-        isWorking = true
-        defer { isWorking = false }
-        saveDraft()
-
-        do {
-            try await manager.startGateway()
-            try await manager.connect()
-            statusText = "Connected to gateway."
-        } catch {
-            statusText = error.localizedDescription
-        }
-    }
-
-    private func saveDraft() {
-        if let parsedPort = Int(portText), parsedPort > 0 {
-            draftConfig.gatewayPort = parsedPort
-        }
-        draftConfig.isEnabled = true
-        manager.updateConfiguration(draftConfig)
-        if !authToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            _ = OpenClawKeychain.saveToken(authToken)
-        }
-    }
-
-    private func copyToken() {
-        let token = authToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !token.isEmpty else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(token, forType: .string)
-        statusText = "Token copied."
-    }
-
-    private func moveForward() {
-        guard let next = Step(rawValue: min(step.rawValue + 1, Step.allCases.count - 1)) else { return }
-        step = next
-    }
-
-    private func moveBackward() {
-        guard let previous = Step(rawValue: max(step.rawValue - 1, 0)) else { return }
-        step = previous
     }
 }

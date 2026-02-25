@@ -1,0 +1,747 @@
+loop_start_utc=2026-02-24T04:04:58Z
+seq_gap_refresh_iteration=1
+[0/1] Planning build
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/5] Write sources
+[3/5] Write swift-version--58304C5D6DBC2206.txt
+[5/7] Compiling OsaurusCore RemoteProviderService.swift
+[6/7] Emitting module OsaurusCore
+[7/12] Compiling OsaurusCore ChatEngine.swift
+[8/12] Compiling OsaurusCore RemoteProviderManager.swift
+[9/12] Compiling OsaurusCore ManagementView.swift
+[10/12] Compiling OsaurusCore OnboardingAPISetupView.swift
+[11/12] Compiling OsaurusCore RemoteProvidersView.swift
+[12/58] Compiling OsaurusCoreTests ServerConfigurationStoreTests.swift
+[13/58] Compiling OsaurusCoreTests ServerControllerConfigLoadingTests.swift
+[14/58] Compiling OsaurusCoreTests StartupDiagnosticsTests.swift
+[15/61] Compiling OsaurusCoreTests OpenClawConfigurationStoreTests.swift
+[16/61] Compiling OsaurusCoreTests OpenClawConfigurationTests.swift
+[17/61] Compiling OsaurusCoreTests OpenClawEnvironmentTests.swift
+[18/61] Compiling OsaurusCoreTests OpenClawEventProcessorTests.swift
+[19/61] Compiling OsaurusCoreTests OpenClawGatewayConnectionPhase3SkillsTests.swift
+[20/61] Compiling OsaurusCoreTests OpenClawGatewayConnectionReconnectionTests.swift
+[21/61] Compiling OsaurusCoreTests OpenClawInstallerTests.swift
+[22/61] Compiling OsaurusCoreTests WorkDatabaseTests.swift
+[23/61] Compiling OsaurusCoreTests WorkExecutionEngineOpenClawTests.swift
+[24/61] Compiling OsaurusCoreTests osaurusTests.swift
+[25/61] Compiling OsaurusCoreTests ModelRuntimeMappingTests.swift
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Tests/OpenClawActivityStoreLifecycleTests.swift:107:34: warning: variable 'thinkingActivity' was never mutated; consider changing to 'let' constant
+105 | 
+106 |         #expect(store.items.count == 1)
+107 |         guard case .thinking(var thinkingActivity) = store.items[0].kind else {
+    |                                  `- warning: variable 'thinkingActivity' was never mutated; consider changing to 'let' constant
+108 |             Issue.record("Expected thinking activity")
+109 |             return
+[26/61] Compiling OsaurusCoreTests OpenAIPromptBuilderTests.swift
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Tests/OpenClawActivityStoreLifecycleTests.swift:107:34: warning: variable 'thinkingActivity' was never mutated; consider changing to 'let' constant
+105 | 
+106 |         #expect(store.items.count == 1)
+107 |         guard case .thinking(var thinkingActivity) = store.items[0].kind else {
+    |                                  `- warning: variable 'thinkingActivity' was never mutated; consider changing to 'let' constant
+108 |             Issue.record("Expected thinking activity")
+109 |             return
+[27/61] Compiling OsaurusCoreTests OpenClawActivityStoreEdgeCaseTests.swift
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Tests/OpenClawActivityStoreLifecycleTests.swift:107:34: warning: variable 'thinkingActivity' was never mutated; consider changing to 'let' constant
+105 | 
+106 |         #expect(store.items.count == 1)
+107 |         guard case .thinking(var thinkingActivity) = store.items[0].kind else {
+    |                                  `- warning: variable 'thinkingActivity' was never mutated; consider changing to 'let' constant
+108 |             Issue.record("Expected thinking activity")
+109 |             return
+[28/61] Compiling OsaurusCoreTests OpenClawActivityStoreLifecycleTests.swift
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Tests/OpenClawActivityStoreLifecycleTests.swift:107:34: warning: variable 'thinkingActivity' was never mutated; consider changing to 'let' constant
+105 | 
+106 |         #expect(store.items.count == 1)
+107 |         guard case .thinking(var thinkingActivity) = store.items[0].kind else {
+    |                                  `- warning: variable 'thinkingActivity' was never mutated; consider changing to 'let' constant
+108 |             Issue.record("Expected thinking activity")
+109 |             return
+[29/61] Compiling OsaurusCoreTests OpenClawNotificationServiceTests.swift
+[30/61] Compiling OsaurusCoreTests OpenClawPhase3ViewLogicTests.swift
+[31/61] Compiling OsaurusCoreTests OpenClawSessionManagerTests.swift
+[32/61] Compiling OsaurusCoreTests OpenClawGatewayConnectionPhase1Tests.swift
+[33/61] Compiling OsaurusCoreTests OpenClawGatewayConnectionPhase3CronTests.swift
+[34/61] Compiling OsaurusCoreTests OpenClawGatewayConnectionPhase3PresenceTests.swift
+[35/61] Compiling OsaurusCoreTests ExecutionContextWorkModeTests.swift
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Tests/HTTPStreamingWriterTests.swift:111:14: warning: conformance of 'ChannelHandlerContext' to 'Sendable' is unavailable
+109 |         // EmbeddedChannel uses a single context for tests; the first handler context is sufficient
+110 |         return try self.pipeline.context(handlerType: NIOAsyncTestingHandler.self)
+111 |             .flatMapError { _ in
+    |              `- warning: conformance of 'ChannelHandlerContext' to 'Sendable' is unavailable
+112 |                 // Install a dummy handler to obtain a context
+113 |                 self.pipeline.addHandler(NIOAsyncTestingHandler()).flatMap {
+
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/.build/checkouts/swift-nio/Sources/NIOCore/ChannelPipeline.swift:2302:1: note: conformance of 'ChannelHandlerContext' to 'Sendable' has been explicitly marked unavailable here
+2300 | 
+2301 | @available(*, unavailable)
+2302 | extension ChannelHandlerContext: Sendable {}
+     | `- note: conformance of 'ChannelHandlerContext' to 'Sendable' has been explicitly marked unavailable here
+2303 | 
+2304 | extension ChannelHandlerContext {
+
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Tests/HTTPStreamingWriterTests.swift:113:68: warning: conformance of 'ChannelHandlerContext' to 'Sendable' is unavailable
+111 |             .flatMapError { _ in
+112 |                 // Install a dummy handler to obtain a context
+113 |                 self.pipeline.addHandler(NIOAsyncTestingHandler()).flatMap {
+    |                                                                    `- warning: conformance of 'ChannelHandlerContext' to 'Sendable' is unavailable
+114 |                     self.pipeline.context(handlerType: NIOAsyncTestingHandler.self)
+115 |                 }
+
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/.build/checkouts/swift-nio/Sources/NIOCore/ChannelPipeline.swift:2302:1: note: conformance of 'ChannelHandlerContext' to 'Sendable' has been explicitly marked unavailable here
+2300 | 
+2301 | @available(*, unavailable)
+2302 | extension ChannelHandlerContext: Sendable {}
+     | `- note: conformance of 'ChannelHandlerContext' to 'Sendable' has been explicitly marked unavailable here
+2303 | 
+2304 | extension ChannelHandlerContext {
+
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Tests/HTTPStreamingWriterTests.swift:117:14: warning: conformance of 'ChannelHandlerContext' to 'Sendable' is unavailable
+115 |                 }
+116 |             }
+117 |             .wait()
+    |              `- warning: conformance of 'ChannelHandlerContext' to 'Sendable' is unavailable
+118 |     }
+119 | }
+
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/.build/checkouts/swift-nio/Sources/NIOCore/ChannelPipeline.swift:2302:1: note: conformance of 'ChannelHandlerContext' to 'Sendable' has been explicitly marked unavailable here
+2300 | 
+2301 | @available(*, unavailable)
+2302 | extension ChannelHandlerContext: Sendable {}
+     | `- note: conformance of 'ChannelHandlerContext' to 'Sendable' has been explicitly marked unavailable here
+2303 | 
+2304 | extension ChannelHandlerContext {
+[36/61] Compiling OsaurusCoreTests HTTPHandlerChatStreamingTests.swift
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Tests/HTTPStreamingWriterTests.swift:111:14: warning: conformance of 'ChannelHandlerContext' to 'Sendable' is unavailable
+109 |         // EmbeddedChannel uses a single context for tests; the first handler context is sufficient
+110 |         return try self.pipeline.context(handlerType: NIOAsyncTestingHandler.self)
+111 |             .flatMapError { _ in
+    |              `- warning: conformance of 'ChannelHandlerContext' to 'Sendable' is unavailable
+112 |                 // Install a dummy handler to obtain a context
+113 |                 self.pipeline.addHandler(NIOAsyncTestingHandler()).flatMap {
+
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/.build/checkouts/swift-nio/Sources/NIOCore/ChannelPipeline.swift:2302:1: note: conformance of 'ChannelHandlerContext' to 'Sendable' has been explicitly marked unavailable here
+2300 | 
+2301 | @available(*, unavailable)
+2302 | extension ChannelHandlerContext: Sendable {}
+     | `- note: conformance of 'ChannelHandlerContext' to 'Sendable' has been explicitly marked unavailable here
+2303 | 
+2304 | extension ChannelHandlerContext {
+
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Tests/HTTPStreamingWriterTests.swift:113:68: warning: conformance of 'ChannelHandlerContext' to 'Sendable' is unavailable
+111 |             .flatMapError { _ in
+112 |                 // Install a dummy handler to obtain a context
+113 |                 self.pipeline.addHandler(NIOAsyncTestingHandler()).flatMap {
+    |                                                                    `- warning: conformance of 'ChannelHandlerContext' to 'Sendable' is unavailable
+114 |                     self.pipeline.context(handlerType: NIOAsyncTestingHandler.self)
+115 |                 }
+
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/.build/checkouts/swift-nio/Sources/NIOCore/ChannelPipeline.swift:2302:1: note: conformance of 'ChannelHandlerContext' to 'Sendable' has been explicitly marked unavailable here
+2300 | 
+2301 | @available(*, unavailable)
+2302 | extension ChannelHandlerContext: Sendable {}
+     | `- note: conformance of 'ChannelHandlerContext' to 'Sendable' has been explicitly marked unavailable here
+2303 | 
+2304 | extension ChannelHandlerContext {
+
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Tests/HTTPStreamingWriterTests.swift:117:14: warning: conformance of 'ChannelHandlerContext' to 'Sendable' is unavailable
+115 |                 }
+116 |             }
+117 |             .wait()
+    |              `- warning: conformance of 'ChannelHandlerContext' to 'Sendable' is unavailable
+118 |     }
+119 | }
+
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/.build/checkouts/swift-nio/Sources/NIOCore/ChannelPipeline.swift:2302:1: note: conformance of 'ChannelHandlerContext' to 'Sendable' has been explicitly marked unavailable here
+2300 | 
+2301 | @available(*, unavailable)
+2302 | extension ChannelHandlerContext: Sendable {}
+     | `- note: conformance of 'ChannelHandlerContext' to 'Sendable' has been explicitly marked unavailable here
+2303 | 
+2304 | extension ChannelHandlerContext {
+[37/61] Compiling OsaurusCoreTests HTTPStreamingWriterTests.swift
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Tests/HTTPStreamingWriterTests.swift:111:14: warning: conformance of 'ChannelHandlerContext' to 'Sendable' is unavailable
+109 |         // EmbeddedChannel uses a single context for tests; the first handler context is sufficient
+110 |         return try self.pipeline.context(handlerType: NIOAsyncTestingHandler.self)
+111 |             .flatMapError { _ in
+    |              `- warning: conformance of 'ChannelHandlerContext' to 'Sendable' is unavailable
+112 |                 // Install a dummy handler to obtain a context
+113 |                 self.pipeline.addHandler(NIOAsyncTestingHandler()).flatMap {
+
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/.build/checkouts/swift-nio/Sources/NIOCore/ChannelPipeline.swift:2302:1: note: conformance of 'ChannelHandlerContext' to 'Sendable' has been explicitly marked unavailable here
+2300 | 
+2301 | @available(*, unavailable)
+2302 | extension ChannelHandlerContext: Sendable {}
+     | `- note: conformance of 'ChannelHandlerContext' to 'Sendable' has been explicitly marked unavailable here
+2303 | 
+2304 | extension ChannelHandlerContext {
+
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Tests/HTTPStreamingWriterTests.swift:113:68: warning: conformance of 'ChannelHandlerContext' to 'Sendable' is unavailable
+111 |             .flatMapError { _ in
+112 |                 // Install a dummy handler to obtain a context
+113 |                 self.pipeline.addHandler(NIOAsyncTestingHandler()).flatMap {
+    |                                                                    `- warning: conformance of 'ChannelHandlerContext' to 'Sendable' is unavailable
+114 |                     self.pipeline.context(handlerType: NIOAsyncTestingHandler.self)
+115 |                 }
+
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/.build/checkouts/swift-nio/Sources/NIOCore/ChannelPipeline.swift:2302:1: note: conformance of 'ChannelHandlerContext' to 'Sendable' has been explicitly marked unavailable here
+2300 | 
+2301 | @available(*, unavailable)
+2302 | extension ChannelHandlerContext: Sendable {}
+     | `- note: conformance of 'ChannelHandlerContext' to 'Sendable' has been explicitly marked unavailable here
+2303 | 
+2304 | extension ChannelHandlerContext {
+
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Tests/HTTPStreamingWriterTests.swift:117:14: warning: conformance of 'ChannelHandlerContext' to 'Sendable' is unavailable
+115 |                 }
+116 |             }
+117 |             .wait()
+    |              `- warning: conformance of 'ChannelHandlerContext' to 'Sendable' is unavailable
+118 |     }
+119 | }
+
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/.build/checkouts/swift-nio/Sources/NIOCore/ChannelPipeline.swift:2302:1: note: conformance of 'ChannelHandlerContext' to 'Sendable' has been explicitly marked unavailable here
+2300 | 
+2301 | @available(*, unavailable)
+2302 | extension ChannelHandlerContext: Sendable {}
+     | `- note: conformance of 'ChannelHandlerContext' to 'Sendable' has been explicitly marked unavailable here
+2303 | 
+2304 | extension ChannelHandlerContext {
+[38/61] Compiling OsaurusCoreTests MCPHTTPHandlerTests.swift
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Tests/HTTPStreamingWriterTests.swift:111:14: warning: conformance of 'ChannelHandlerContext' to 'Sendable' is unavailable
+109 |         // EmbeddedChannel uses a single context for tests; the first handler context is sufficient
+110 |         return try self.pipeline.context(handlerType: NIOAsyncTestingHandler.self)
+111 |             .flatMapError { _ in
+    |              `- warning: conformance of 'ChannelHandlerContext' to 'Sendable' is unavailable
+112 |                 // Install a dummy handler to obtain a context
+113 |                 self.pipeline.addHandler(NIOAsyncTestingHandler()).flatMap {
+
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/.build/checkouts/swift-nio/Sources/NIOCore/ChannelPipeline.swift:2302:1: note: conformance of 'ChannelHandlerContext' to 'Sendable' has been explicitly marked unavailable here
+2300 | 
+2301 | @available(*, unavailable)
+2302 | extension ChannelHandlerContext: Sendable {}
+     | `- note: conformance of 'ChannelHandlerContext' to 'Sendable' has been explicitly marked unavailable here
+2303 | 
+2304 | extension ChannelHandlerContext {
+
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Tests/HTTPStreamingWriterTests.swift:113:68: warning: conformance of 'ChannelHandlerContext' to 'Sendable' is unavailable
+111 |             .flatMapError { _ in
+112 |                 // Install a dummy handler to obtain a context
+113 |                 self.pipeline.addHandler(NIOAsyncTestingHandler()).flatMap {
+    |                                                                    `- warning: conformance of 'ChannelHandlerContext' to 'Sendable' is unavailable
+114 |                     self.pipeline.context(handlerType: NIOAsyncTestingHandler.self)
+115 |                 }
+
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/.build/checkouts/swift-nio/Sources/NIOCore/ChannelPipeline.swift:2302:1: note: conformance of 'ChannelHandlerContext' to 'Sendable' has been explicitly marked unavailable here
+2300 | 
+2301 | @available(*, unavailable)
+2302 | extension ChannelHandlerContext: Sendable {}
+     | `- note: conformance of 'ChannelHandlerContext' to 'Sendable' has been explicitly marked unavailable here
+2303 | 
+2304 | extension ChannelHandlerContext {
+
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Tests/HTTPStreamingWriterTests.swift:117:14: warning: conformance of 'ChannelHandlerContext' to 'Sendable' is unavailable
+115 |                 }
+116 |             }
+117 |             .wait()
+    |              `- warning: conformance of 'ChannelHandlerContext' to 'Sendable' is unavailable
+118 |     }
+119 | }
+
+/Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/.build/checkouts/swift-nio/Sources/NIOCore/ChannelPipeline.swift:2302:1: note: conformance of 'ChannelHandlerContext' to 'Sendable' has been explicitly marked unavailable here
+2300 | 
+2301 | @available(*, unavailable)
+2302 | extension ChannelHandlerContext: Sendable {}
+     | `- note: conformance of 'ChannelHandlerContext' to 'Sendable' has been explicitly marked unavailable here
+2303 | 
+2304 | extension ChannelHandlerContext {
+[39/61] Compiling OsaurusCoreTests OpenClawActivityStoreStreamingTests.swift
+[40/61] Compiling OsaurusCoreTests OpenClawActivityStoreToolTests.swift
+[41/61] Compiling OsaurusCoreTests OpenClawChannelStatusTests.swift
+[42/61] Compiling OsaurusCoreTests OpenClawChatHistoryLoaderTests.swift
+[43/61] Compiling OsaurusCoreTests AnthropicAPITests.swift
+macro expansion #expect:2:7: warning: result of call to 'hasPrefix' is unused [#no-usage]
+`- /Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Tests/ChatEngineTests.swift:125:65: note: expanded code originates here
+123 |         let toolCalls = resp.choices.first?.message.tool_calls
+124 |         #expect(toolCalls?.first?.function.name == "get_weather")
+125 |         #expect((toolCalls?.first?.id ?? "").hasPrefix("call_"))
+    |         `- note: in expansion of macro 'expect' here
+    +--- macro expansion #expect ---------------------------------------
+    |1 | Testing.__checkFunctionCall((toolCalls?.first?.id ?? "").self,calling: {
+    |2 |   $0?.hasPrefix($1)
+    |  |       `- warning: result of call to 'hasPrefix' is unused [#no-usage]
+    |3 | },"call_",expression: .__fromFunctionCall(.__fromSyntaxNode(#"(toolCalls?.first?.id ?? "")"#),"hasPrefix",(nil,.__fromStringLiteral(#""call_""#, "call_"))),comments: [],isRequired: false,sourceLocation: Testing.SourceLocation.__here()).__expected()
+    +-------------------------------------------------------------------
+126 |     }
+127 | 
+[44/61] Compiling OsaurusCoreTests ChatEngineTestDoubles.swift
+macro expansion #expect:2:7: warning: result of call to 'hasPrefix' is unused [#no-usage]
+`- /Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Tests/ChatEngineTests.swift:125:65: note: expanded code originates here
+123 |         let toolCalls = resp.choices.first?.message.tool_calls
+124 |         #expect(toolCalls?.first?.function.name == "get_weather")
+125 |         #expect((toolCalls?.first?.id ?? "").hasPrefix("call_"))
+    |         `- note: in expansion of macro 'expect' here
+    +--- macro expansion #expect ---------------------------------------
+    |1 | Testing.__checkFunctionCall((toolCalls?.first?.id ?? "").self,calling: {
+    |2 |   $0?.hasPrefix($1)
+    |  |       `- warning: result of call to 'hasPrefix' is unused [#no-usage]
+    |3 | },"call_",expression: .__fromFunctionCall(.__fromSyntaxNode(#"(toolCalls?.first?.id ?? "")"#),"hasPrefix",(nil,.__fromStringLiteral(#""call_""#, "call_"))),comments: [],isRequired: false,sourceLocation: Testing.SourceLocation.__here()).__expected()
+    +-------------------------------------------------------------------
+126 |     }
+127 | 
+[45/61] Compiling OsaurusCoreTests ChatEngineTests.swift
+macro expansion #expect:2:7: warning: result of call to 'hasPrefix' is unused [#no-usage]
+`- /Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Tests/ChatEngineTests.swift:125:65: note: expanded code originates here
+123 |         let toolCalls = resp.choices.first?.message.tool_calls
+124 |         #expect(toolCalls?.first?.function.name == "get_weather")
+125 |         #expect((toolCalls?.first?.id ?? "").hasPrefix("call_"))
+    |         `- note: in expansion of macro 'expect' here
+    +--- macro expansion #expect ---------------------------------------
+    |1 | Testing.__checkFunctionCall((toolCalls?.first?.id ?? "").self,calling: {
+    |2 |   $0?.hasPrefix($1)
+    |  |       `- warning: result of call to 'hasPrefix' is unused [#no-usage]
+    |3 | },"call_",expression: .__fromFunctionCall(.__fromSyntaxNode(#"(toolCalls?.first?.id ?? "")"#),"hasPrefix",(nil,.__fromStringLiteral(#""call_""#, "call_"))),comments: [],isRequired: false,sourceLocation: Testing.SourceLocation.__here()).__expected()
+    +-------------------------------------------------------------------
+126 |     }
+127 | 
+[46/61] Compiling OsaurusCoreTests ChatSessionOpenClawModeTests.swift
+macro expansion #expect:2:7: warning: result of call to 'hasPrefix' is unused [#no-usage]
+`- /Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Tests/ChatEngineTests.swift:125:65: note: expanded code originates here
+123 |         let toolCalls = resp.choices.first?.message.tool_calls
+124 |         #expect(toolCalls?.first?.function.name == "get_weather")
+125 |         #expect((toolCalls?.first?.id ?? "").hasPrefix("call_"))
+    |         `- note: in expansion of macro 'expect' here
+    +--- macro expansion #expect ---------------------------------------
+    |1 | Testing.__checkFunctionCall((toolCalls?.first?.id ?? "").self,calling: {
+    |2 |   $0?.hasPrefix($1)
+    |  |       `- warning: result of call to 'hasPrefix' is unused [#no-usage]
+    |3 | },"call_",expression: .__fromFunctionCall(.__fromSyntaxNode(#"(toolCalls?.first?.id ?? "")"#),"hasPrefix",(nil,.__fromStringLiteral(#""call_""#, "call_"))),comments: [],isRequired: false,sourceLocation: Testing.SourceLocation.__here()).__expected()
+    +-------------------------------------------------------------------
+126 |     }
+127 | 
+[47/61] Compiling OsaurusCoreTests OpenClawSetupWizardSheetTests.swift
+[48/61] Compiling OsaurusCoreTests OpenClawTestHelpers.swift
+[49/61] Compiling OsaurusCoreTests SearchServiceTests.swift
+[50/61] Compiling OsaurusCoreTests MLXModelTests.swift
+[51/61] Compiling OsaurusCoreTests ModelManagerResolveTests.swift
+[52/61] Compiling OsaurusCoreTests ModelManagerTests.swift
+[53/61] Compiling OsaurusCoreTests ModelRuntimeFallbackTests.swift
+[54/61] Emitting module OsaurusCoreTests
+macro expansion #expect:2:7: warning: result of call to 'hasPrefix' is unused [#no-usage]
+`- /Users/chriskarani/CodingProjects/Jarvis/osaurus/Packages/OsaurusCore/Tests/ChatEngineTests.swift:125:65: note: expanded code originates here
+123 |         let toolCalls = resp.choices.first?.message.tool_calls
+124 |         #expect(toolCalls?.first?.function.name == "get_weather")
+125 |         #expect((toolCalls?.first?.id ?? "").hasPrefix("call_"))
+    |         `- note: in expansion of macro 'expect' here
+    +--- macro expansion #expect ---------------------------------------
+    |1 | Testing.__checkFunctionCall((toolCalls?.first?.id ?? "").self,calling: {
+    |2 |   $0?.hasPrefix($1)
+    |  |       `- warning: result of call to 'hasPrefix' is unused [#no-usage]
+    |3 | },"call_",expression: .__fromFunctionCall(.__fromSyntaxNode(#"(toolCalls?.first?.id ?? "")"#),"hasPrefix",(nil,.__fromStringLiteral(#""call_""#, "call_"))),comments: [],isRequired: false,sourceLocation: Testing.SourceLocation.__here()).__expected()
+    +-------------------------------------------------------------------
+126 |     }
+127 | 
+[55/61] Compiling OsaurusCoreTests OpenClawKeychainTests.swift
+[56/61] Compiling OsaurusCoreTests OpenClawLaunchAgentTests.swift
+[57/61] Compiling OsaurusCoreTests OpenClawLogViewerTests.swift
+[58/61] Compiling OsaurusCoreTests OpenClawMCPBridgeTests.swift
+[59/61] Compiling OsaurusCoreTests OpenClawManagerTests.swift
+[60/61] Compiling OsaurusCoreTests OpenClawModelServiceTests.swift
+[60/62] Write Objects.LinkFileList
+[61/62] Linking OsaurusCorePackageTests
+Build complete! (24.33s)
+Test Suite 'Selected tests' started at 2026-02-24 07:05:25.319.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-24 07:05:25.326.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-24 07:05:25.326.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-24 07:05:25.326.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() started.
+􁁛  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() passed after 0.013 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.013 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.013 seconds.
+seq_gap_refresh_iteration=2
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.25s)
+Test Suite 'Selected tests' started at 2026-02-24 07:05:26.388.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-24 07:05:26.395.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-24 07:05:26.395.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-24 07:05:26.395.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.008) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() started.
+􁁛  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() passed after 0.012 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.012 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.012 seconds.
+seq_gap_refresh_iteration=3
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.22s)
+Test Suite 'Selected tests' started at 2026-02-24 07:05:27.395.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-24 07:05:27.402.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-24 07:05:27.402.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-24 07:05:27.402.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.008) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() started.
+􁁛  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() passed after 0.012 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.013 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.013 seconds.
+seq_gap_refresh_iteration=4
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.22s)
+Test Suite 'Selected tests' started at 2026-02-24 07:05:28.409.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-24 07:05:28.416.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-24 07:05:28.416.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-24 07:05:28.417.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() started.
+􁁛  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() passed after 0.013 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.013 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.013 seconds.
+seq_gap_refresh_iteration=5
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.22s)
+Test Suite 'Selected tests' started at 2026-02-24 07:05:29.603.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-24 07:05:29.610.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-24 07:05:29.610.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-24 07:05:29.610.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() started.
+􁁛  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() passed after 0.012 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.012 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.012 seconds.
+seq_gap_refresh_iteration=6
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.22s)
+Test Suite 'Selected tests' started at 2026-02-24 07:05:30.623.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-24 07:05:30.630.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-24 07:05:30.630.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-24 07:05:30.630.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() started.
+􁁛  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() passed after 0.013 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.013 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.014 seconds.
+seq_gap_refresh_iteration=7
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.22s)
+Test Suite 'Selected tests' started at 2026-02-24 07:05:31.639.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-24 07:05:31.646.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-24 07:05:31.646.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-24 07:05:31.646.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() started.
+􁁛  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() passed after 0.014 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.014 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.014 seconds.
+seq_gap_refresh_iteration=8
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.22s)
+Test Suite 'Selected tests' started at 2026-02-24 07:05:32.655.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-24 07:05:32.662.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-24 07:05:32.662.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-24 07:05:32.662.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() started.
+􁁛  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() passed after 0.012 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.012 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.012 seconds.
+seq_gap_refresh_iteration=9
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.22s)
+Test Suite 'Selected tests' started at 2026-02-24 07:05:33.667.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-24 07:05:33.674.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-24 07:05:33.674.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-24 07:05:33.674.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() started.
+􁁛  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() passed after 0.014 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.014 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.014 seconds.
+seq_gap_refresh_iteration=10
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.22s)
+Test Suite 'Selected tests' started at 2026-02-24 07:05:34.671.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-24 07:05:34.678.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-24 07:05:34.678.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-24 07:05:34.678.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() started.
+􁁛  Test streamRunIntoTurn_sequenceGapTriggersConnectionRefresh() passed after 0.014 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.014 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.014 seconds.
+seq_gap_end_race_iteration=1
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.22s)
+Test Suite 'Selected tests' started at 2026-02-24 07:05:35.688.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-24 07:05:35.694.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-24 07:05:35.694.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-24 07:05:35.694.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() started.
+􁁛  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() passed after 0.006 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.006 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.006 seconds.
+seq_gap_end_race_iteration=2
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.22s)
+Test Suite 'Selected tests' started at 2026-02-24 07:05:36.681.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-24 07:05:36.688.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-24 07:05:36.688.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-24 07:05:36.688.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() started.
+􁁛  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() passed after 0.005 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.005 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.005 seconds.
+seq_gap_end_race_iteration=3
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.22s)
+Test Suite 'Selected tests' started at 2026-02-24 07:05:37.690.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-24 07:05:37.697.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-24 07:05:37.697.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-24 07:05:37.697.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() started.
+􁁛  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() passed after 0.005 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.006 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.006 seconds.
+seq_gap_end_race_iteration=4
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.22s)
+Test Suite 'Selected tests' started at 2026-02-24 07:05:38.688.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-24 07:05:38.696.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-24 07:05:38.696.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-24 07:05:38.696.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() started.
+􁁛  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() passed after 0.006 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.006 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.006 seconds.
+seq_gap_end_race_iteration=5
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.22s)
+Test Suite 'Selected tests' started at 2026-02-24 07:05:39.694.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-24 07:05:39.701.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-24 07:05:39.702.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-24 07:05:39.702.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() started.
+􁁛  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() passed after 0.005 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.005 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.006 seconds.
+seq_gap_end_race_iteration=6
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.22s)
+Test Suite 'Selected tests' started at 2026-02-24 07:05:40.695.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-24 07:05:40.702.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-24 07:05:40.702.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-24 07:05:40.702.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() started.
+􁁛  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() passed after 0.005 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.005 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.006 seconds.
+seq_gap_end_race_iteration=7
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.22s)
+Test Suite 'Selected tests' started at 2026-02-24 07:05:41.699.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-24 07:05:41.707.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-24 07:05:41.707.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-24 07:05:41.707.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() started.
+􁁛  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() passed after 0.005 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.006 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.006 seconds.
+seq_gap_end_race_iteration=8
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.22s)
+Test Suite 'Selected tests' started at 2026-02-24 07:05:42.710.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-24 07:05:42.718.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-24 07:05:42.718.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-24 07:05:42.718.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() started.
+􁁛  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() passed after 0.006 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.006 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.006 seconds.
+seq_gap_end_race_iteration=9
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.22s)
+Test Suite 'Selected tests' started at 2026-02-24 07:05:43.809.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-24 07:05:43.816.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-24 07:05:43.816.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-24 07:05:43.816.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() started.
+􁁛  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() passed after 0.006 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.006 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.006 seconds.
+seq_gap_end_race_iteration=10
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.22s)
+Test Suite 'Selected tests' started at 2026-02-24 07:05:44.831.
+Test Suite 'OsaurusCorePackageTests.xctest' started at 2026-02-24 07:05:44.838.
+Test Suite 'OsaurusCorePackageTests.xctest' passed at 2026-02-24 07:05:44.838.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-02-24 07:05:44.839.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.007) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 1400
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite OpenClawModelServiceTests started.
+􀟈  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() started.
+􁁛  Test streamRunIntoTurn_gapThenImmediateEnd_isDeterministicAcrossIterations() passed after 0.005 seconds.
+􁁛  Suite OpenClawModelServiceTests passed after 0.006 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.006 seconds.

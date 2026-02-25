@@ -15,14 +15,18 @@ import OpenClawProtocol
 func makeEventFrame(
     event: String = "agent.event",
     payload: [String: Any],
-    seq: Int = 1
+    seq: Int = 1,
+    eventMeta: [String: Any]? = nil
 ) -> EventFrame {
-    let dict: [String: Any] = [
+    var dict: [String: Any] = [
         "type": "event",
         "event": event,
         "payload": payload,
         "seq": seq
     ]
+    if let eventMeta {
+        dict["eventMeta"] = eventMeta
+    }
     let data = try! JSONSerialization.data(withJSONObject: dict)
     return try! JSONDecoder().decode(EventFrame.self, from: data)
 }
@@ -50,10 +54,24 @@ func makeAgentEventFrame(
     runId: String = "test-run-1",
     seq: Int = 1,
     ts: Double = 1708345600000,
-    data: [String: Any] = [:]
+    data: [String: Any] = [:],
+    includeEventMeta: Bool = false
 ) -> EventFrame {
     let payload = makeAgentPayload(
         stream: stream, runId: runId, seq: seq, ts: ts, data: data
     )
-    return makeEventFrame(payload: payload, seq: seq)
+    let eventMeta: [String: Any]? = {
+        guard includeEventMeta else { return nil }
+        var meta: [String: Any] = [
+            "schemaVersion": 1,
+            "channel": "agent",
+            "runId": runId,
+            "stream": stream
+        ]
+        if let phase = data["phase"] as? String, !phase.isEmpty {
+            meta["phase"] = phase
+        }
+        return meta
+    }()
+    return makeEventFrame(payload: payload, seq: seq, eventMeta: eventMeta)
 }

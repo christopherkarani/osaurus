@@ -123,3 +123,6 @@ ggml-*.metal
 
 .env
 Packages/**/Package.resolved
+
+# Git worktrees
+.worktrees/

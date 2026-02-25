@@ -21,22 +21,59 @@ public enum OpenClawLaunchAgent {
 
     nonisolated(unsafe) static var hooks: Hooks?
 
-    public static func install(port: Int, bindMode: OpenClawConfiguration.BindMode) async -> String? {
-        let result = await runGatewayCommand([
-            "install",
-            "--force",
-            "--port",
-            "\(port)",
-            "--bind",
-            bindMode.rawValue,
-            "--json",
-        ])
+    public static func install(port: Int, bindMode: OpenClawConfiguration.BindMode, token: String? = nil) async -> String? {
+        var args = ["install", "--force", "--port", "\(port)", "--bind", bindMode.rawValue, "--json"]
+        if let token, !token.isEmpty {
+            args += ["--token", token]
+        }
+        let result = await runGatewayCommand(args)
         return result.success ? nil : summarizeError(result)
     }
 
     public static func uninstall() async -> String? {
         let result = await runGatewayCommand(["uninstall", "--json"])
-        return result.success ? nil : summarizeError(result)
+        if result.success { return nil }
+        // Fallback: force-remove via launchctl bootout (handles lock-held / KeepAlive cases)
+        let uid = getuid()
+        let bootout = await runCommand([
+            "/bin/launchctl", "bootout", "gui/\(uid)/\(launchAgentLabel)",
+        ])
+        return bootout.success ? nil : summarizeError(result)
+    }
+
+    /// Kills any process currently listening on `port` via SIGTERM, then waits
+    /// up to `waitMs` milliseconds for the port to become free.
+    public static func killProcessOnPort(_ port: Int, waitMs: Int = 1500) async {
+        await Task.detached(priority: .utility) {
+            // lsof -ti :<port> prints the PID(s) listening on that port
+            let lsof = Process()
+            lsof.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+            lsof.arguments = ["-ti", ":\(port)"]
+            let pipe = Pipe()
+            lsof.standardOutput = pipe
+            lsof.standardError = Pipe()
+            guard (try? lsof.run()) != nil else { return }
+            lsof.waitUntilExit()
+            let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            for pidStr in output.split(whereSeparator: \.isNewline) {
+                if let pid = pid_t(pidStr.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                    kill(pid, SIGTERM)
+                }
+            }
+            // Wait for the port to be vacated
+            let deadline = Date().addingTimeInterval(Double(waitMs) / 1000)
+            while Date() < deadline {
+                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+                let check = Process()
+                check.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+                check.arguments = ["-ti", ":\(port)"]
+                check.standardOutput = Pipe()
+                check.standardError = Pipe()
+                guard (try? check.run()) != nil else { break }
+                check.waitUntilExit()
+                if check.terminationStatus != 0 { break }  // port is free
+            }
+        }.value
     }
 
     public static func isLoaded() async -> Bool {
@@ -101,8 +138,11 @@ public enum OpenClawLaunchAgent {
             process.arguments = Array(command.dropFirst())
 
             var env = ProcessInfo.processInfo.environment
-            if env["PATH"]?.isEmpty != false {
-                env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+            let extraPaths = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+            if let existing = env["PATH"], !existing.isEmpty {
+                env["PATH"] = extraPaths + ":" + existing
+            } else {
+                env["PATH"] = extraPaths
             }
             process.environment = env
 

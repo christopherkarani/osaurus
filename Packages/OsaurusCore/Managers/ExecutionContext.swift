@@ -74,26 +74,41 @@ public final class ExecutionContext: ObservableObject {
 
     /// Load model options. Call before `start(prompt:)`.
     public func prepare() async {
+        let preRefreshChatSelection = chatSession.selectedModel
         await chatSession.refreshModelOptions()
 
         if let work = workSession {
-            work.modelOptions = chatSession.modelOptions
-            work.selectedModel = chatSession.selectedModel
+            // Work mode model selection must remain OpenClaw-scoped. Do not
+            // overwrite WorkSession catalog state with ChatSession models.
+            await ModelCatalogService.shared.refreshIfNeeded()
+
+            // If a caller pre-seeded an OpenClaw identifier in chat selection,
+            // preserve it for Work; ignore non-OpenClaw model IDs.
+            let candidateSelection = preRefreshChatSelection ?? chatSession.selectedModel
+            if let candidateSelection,
+               candidateSelection.hasPrefix(OpenClawModelService.modelPrefix)
+                   || candidateSelection.hasPrefix(OpenClawModelService.sessionPrefix)
+            {
+                work.selectedModel = candidateSelection
+            }
         }
     }
 
     /// Begin execution with the given prompt.
-    public func start(prompt: String) async {
+    public func start(prompt: String) async throws {
         switch mode {
         case .chat:
             chatSession.send(prompt)
         case .work:
             await activateFolderContextIfNeeded()
-            do {
-                try await workSession?.dispatch(query: prompt)
-            } catch {
-                print("[ExecutionContext] Work dispatch failed: \(error.localizedDescription)")
+            guard let workSession else {
+                throw NSError(
+                    domain: "ExecutionContext",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Work session is unavailable."]
+                )
             }
+            try await workSession.dispatch(query: prompt)
         }
     }
 

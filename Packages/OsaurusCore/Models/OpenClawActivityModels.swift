@@ -13,6 +13,7 @@ import Foundation
 /// A single activity item in the OpenClaw agent event timeline
 public struct ActivityItem: Identifiable {
     public let id: UUID
+    public let runId: String
     public let timestamp: Date
     public var kind: ActivityKind
 }

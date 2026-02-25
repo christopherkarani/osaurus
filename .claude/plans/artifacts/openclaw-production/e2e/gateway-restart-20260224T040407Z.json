@@ -1,0 +1,11 @@
+{
+  "action": "restart",
+  "ok": true,
+  "result": "restarted",
+  "service": {
+    "label": "LaunchAgent",
+    "loaded": true,
+    "loadedText": "loaded",
+    "notLoadedText": "not loaded"
+  }
+}

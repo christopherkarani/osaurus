@@ -1761,7 +1761,7 @@ private struct CompactHeaderRow: View {
 
 // MARK: - Provider TextField
 
-private struct ProviderTextField: View {
+struct ProviderTextField: View {
     @ObservedObject private var themeManager = ThemeManager.shared
 
     let label: String
@@ -1822,7 +1822,7 @@ private struct ProviderTextField: View {
 
 // MARK: - Provider Secure Field
 
-private struct ProviderSecureField: View {
+struct ProviderSecureField: View {
     @ObservedObject private var themeManager = ThemeManager.shared
 
     let placeholder: String

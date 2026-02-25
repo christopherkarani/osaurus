@@ -9,9 +9,137 @@ import CoreText
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum WorkEmptyStateRoute: Equatable {
+    case openClawSetup
+    case openClawOnboardingRequired
+    case providerLoading
+    case providerNeeded
+    case workEmpty
+}
+
+enum WorkEmptyStateLogic {
+    static func route(
+        phase: OpenClawPhase,
+        requiresLocalOnboardingGate: Bool,
+        hasOpenClawModels: Bool,
+        hasCompletedInitialModelHydration: Bool,
+        isGatewayConnectionPending: Bool
+    ) -> WorkEmptyStateRoute {
+        switch phase {
+        case .connected, .connecting, .reconnecting:
+            break
+        case .notConfigured,
+             .checkingEnvironment,
+             .environmentBlocked,
+             .installingCLI,
+             .configured,
+             .startingGateway,
+             .gatewayRunning,
+             .gatewayFailed,
+             .connectionFailed:
+            return .openClawSetup
+        }
+
+        if requiresLocalOnboardingGate {
+            return .openClawOnboardingRequired
+        }
+
+        if hasOpenClawModels {
+            return .workEmpty
+        }
+
+        if !hasCompletedInitialModelHydration || isGatewayConnectionPending {
+            return .providerLoading
+        }
+
+        return .providerNeeded
+    }
+}
+
+enum WorkToolActivityPresentation {
+    static func displayName(_ rawName: String) -> String {
+        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return "invalid_tool_name"
+        }
+        let pattern = "^[A-Za-z0-9._:-]{1,80}$"
+        if trimmed.range(of: pattern, options: .regularExpression) != nil {
+            return trimmed
+        }
+        return "invalid_tool_name"
+    }
+
+    static func detail(for tool: ToolCallActivity) -> String? {
+        if let result = tool.result, !result.isEmpty {
+            if tool.status == .failed, let summarized = summarizeFailure(result) {
+                return summarized
+            }
+            return clean(result, limit: 140)
+        }
+        if !tool.argsSummary.isEmpty {
+            return clean(tool.argsSummary, limit: 140)
+        }
+        return nil
+    }
+
+    private static func summarizeFailure(_ value: String) -> String? {
+        let cleaned = clean(value, limit: 320)
+        if let missingPath = firstMatch(
+            in: cleaned,
+            pattern: #"ENOENT: no such file or directory, access '([^']+)'"#
+        ) {
+            return "Missing file: \(missingPath)"
+        }
+        if let status = firstMatch(
+            in: cleaned,
+            pattern: #"Web fetch failed \((\d{3})\)"#
+        ) {
+            return "Web fetch failed (HTTP \(status))"
+        }
+        if let status = firstMatch(
+            in: cleaned,
+            pattern: #""status"\s*:\s*"([A-Za-z0-9_-]+)""#
+        ),
+            status.lowercased() == "error"
+        {
+            if let errorMessage = firstMatch(
+                in: cleaned,
+                pattern: #""error"\s*:\s*"([^"]+)""#
+            ) {
+                return clean(errorMessage, limit: 160)
+            }
+        }
+        return clean(cleaned, limit: 160)
+    }
+
+    private static func clean(_ value: String, limit: Int) -> String {
+        let condensed = value
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard condensed.count > limit else {
+            return condensed
+        }
+        return String(condensed.prefix(limit))
+    }
+
+    private static func firstMatch(in text: String, pattern: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return nil
+        }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = regex.firstMatch(in: text, options: [], range: range),
+              match.numberOfRanges > 1,
+              let captureRange = Range(match.range(at: 1), in: text) else {
+            return nil
+        }
+        return String(text[captureRange])
+    }
+}
+
 struct WorkView: View {
     @ObservedObject var windowState: ChatWindowState
     @ObservedObject var session: WorkSession
+    @ObservedObject private var openClawManager = OpenClawManager.shared
 
     @State private var isPinnedToBottom: Bool = true
     @State private var scrollToBottomTrigger: Int = 0
@@ -20,11 +148,232 @@ struct WorkView: View {
     @State private var isProgressSidebarCollapsed: Bool = false
     @State private var selectedArtifact: Artifact?
     @State private var fileOperations: [WorkFileOperation] = []
+    @State private var memorySnapshot: IssueTrackerPanel.MemorySnapshot?
+    @State private var memoryIsLoading = false
+    @State private var lastMemoryRefreshAt: Date = .distantPast
 
     private let minProgressSidebarWidth: CGFloat = 200
     private let maxProgressSidebarWidth: CGFloat = 400
 
     private var theme: ThemeProtocol { windowState.theme }
+
+    private var openClawModelOptions: [ModelOption] {
+        session.modelOptions.filter { $0.id.hasPrefix(OpenClawModelService.modelPrefix) }
+    }
+
+    private var selectedModelReady: Bool {
+        guard let selected = session.selectedModel else { return true }
+        return openClawManager.isProviderReady(forModelId: selected)
+    }
+
+    private var focusedActivityItems: [ActivityItem] {
+        openClawManager.activityStore.timelineItemsForFocusedRun(limit: 80)
+    }
+
+    private var latestStreamingActivity: (text: String, isStreaming: Bool) {
+        ShimmerTextTickerLogic.latestStreamingActivity(from: focusedActivityItems)
+    }
+
+    private var shouldShowStreamingTicker: Bool {
+        guard session.isExecuting else { return false }
+        guard session.activeIssue?.id == session.selectedIssueId else { return false }
+        return true
+    }
+
+    private var sidebarStepItems: [IssueTrackerPanel.StepItem] {
+        focusedActivityItems.compactMap { item -> IssueTrackerPanel.StepItem? in
+            switch item.kind {
+            case .toolCall(let tool):
+                let humanName = Self.humanReadableToolName(tool.name)
+                let subtitle = tool.argsSummary.isEmpty ? nil : String(tool.argsSummary.prefix(80))
+                let status: IssueTrackerPanel.StepStatus = switch tool.status {
+                case .pending: .pending
+                case .running: .running
+                case .completed: .completed
+                case .failed: .failed
+                }
+                return IssueTrackerPanel.StepItem(
+                    id: item.id.uuidString,
+                    title: humanName,
+                    subtitle: subtitle,
+                    status: status,
+                    duration: tool.duration
+                )
+            case .thinking(let thinking):
+                let status: IssueTrackerPanel.StepStatus = thinking.isStreaming ? .running : .completed
+                return IssueTrackerPanel.StepItem(
+                    id: item.id.uuidString,
+                    title: "Reasoning...",
+                    subtitle: nil,
+                    status: status,
+                    duration: thinking.duration
+                )
+            case .lifecycle(let lifecycle):
+                switch lifecycle.phase {
+                case .started:
+                    return IssueTrackerPanel.StepItem(
+                        id: item.id.uuidString,
+                        title: "Run started",
+                        subtitle: nil,
+                        status: .completed,
+                        duration: nil
+                    )
+                case .ended:
+                    return IssueTrackerPanel.StepItem(
+                        id: item.id.uuidString,
+                        title: "Run completed",
+                        subtitle: nil,
+                        status: .completed,
+                        duration: nil
+                    )
+                case .error(let message):
+                    return IssueTrackerPanel.StepItem(
+                        id: item.id.uuidString,
+                        title: "Error",
+                        subtitle: String(message.prefix(80)),
+                        status: .failed,
+                        duration: nil
+                    )
+                }
+            case .assistant, .compaction:
+                return nil
+            }
+        }
+    }
+
+    static func humanReadableToolName(_ rawName: String) -> String {
+        let lowered = rawName.lowercased()
+        if lowered.contains("read") { return "Read file" }
+        if lowered.contains("write") { return "Write file" }
+        if lowered.contains("edit") { return "Edit file" }
+        if lowered.contains("bash") || lowered.contains("exec") { return "Run command" }
+        if lowered.contains("glob") { return "Search files" }
+        if lowered.contains("grep") || lowered.contains("search") { return "Search content" }
+        if lowered.contains("task") { return "Run task" }
+        return WorkToolActivityPresentation.displayName(rawName)
+    }
+
+    private var sidebarActionItems: [IssueTrackerPanel.ActionItem] {
+        let mapped = focusedActivityItems.compactMap { item -> IssueTrackerPanel.ActionItem? in
+            switch item.kind {
+            case .toolCall(let tool):
+                let level: IssueTrackerPanel.ActionLevel = switch tool.status {
+                case .failed: .error
+                case .completed: .success
+                case .running, .pending: .info
+                }
+                let detail = WorkToolActivityPresentation.detail(for: tool)
+                let displayName = WorkToolActivityPresentation.displayName(tool.name)
+                return IssueTrackerPanel.ActionItem(
+                    id: "tool-\(item.id.uuidString)",
+                    timestamp: item.timestamp,
+                    title: "Tool: \(displayName)",
+                    detail: detail,
+                    level: level
+                )
+
+            case .lifecycle(let lifecycle):
+                switch lifecycle.phase {
+                case .started:
+                    return IssueTrackerPanel.ActionItem(
+                        id: "lifecycle-\(item.id.uuidString)",
+                        timestamp: item.timestamp,
+                        title: "Run started",
+                        detail: "Run ID: \(lifecycle.runId)",
+                        level: .info
+                    )
+                case .ended:
+                    return IssueTrackerPanel.ActionItem(
+                        id: "lifecycle-\(item.id.uuidString)",
+                        timestamp: item.timestamp,
+                        title: "Run completed",
+                        detail: nil,
+                        level: .success
+                    )
+                case .error(let message):
+                    return IssueTrackerPanel.ActionItem(
+                        id: "lifecycle-\(item.id.uuidString)",
+                        timestamp: item.timestamp,
+                        title: "Run failed",
+                        detail: message,
+                        level: .error
+                    )
+                }
+
+            case .compaction(let compaction):
+                let title: String = switch compaction.phase {
+                case .started: "Compaction started"
+                case .ended: "Compaction completed"
+                case .willRetry: "Compaction retry scheduled"
+                }
+                let level: IssueTrackerPanel.ActionLevel = switch compaction.phase {
+                case .willRetry: .warning
+                case .started: .info
+                case .ended: .success
+                }
+                return IssueTrackerPanel.ActionItem(
+                    id: "compaction-\(item.id.uuidString)",
+                    timestamp: item.timestamp,
+                    title: title,
+                    detail: nil,
+                    level: level
+                )
+
+            case .thinking(let thinking):
+                guard let detail = summarizedTimelineText(thinking.text) else { return nil }
+                return IssueTrackerPanel.ActionItem(
+                    id: "thinking-\(item.id.uuidString)",
+                    timestamp: item.timestamp,
+                    title: thinking.isStreaming ? "Reasoning update" : "Reasoning complete",
+                    detail: detail,
+                    level: .info
+                )
+
+            case .assistant(let assistant):
+                let textDetail = summarizedTimelineText(assistant.text)
+                let mediaDetail: String?
+                if assistant.mediaUrls.isEmpty {
+                    mediaDetail = nil
+                } else {
+                    let label = assistant.mediaUrls.count == 1 ? "attachment" : "attachments"
+                    mediaDetail = "\(assistant.mediaUrls.count) media \(label)"
+                }
+                let detail = [textDetail, mediaDetail].compactMap { $0 }.joined(separator: " · ")
+                guard !detail.isEmpty else { return nil }
+                return IssueTrackerPanel.ActionItem(
+                    id: "assistant-\(item.id.uuidString)",
+                    timestamp: item.timestamp,
+                    title: assistant.isStreaming ? "Response drafting" : "Response update",
+                    detail: detail,
+                    level: .info
+                )
+            }
+        }
+
+        return Array(mapped.suffix(24).reversed())
+    }
+
+    private var sidebarWrittenFiles: [IssueTrackerPanel.WrittenFileItem] {
+        var byPath: [String: IssueTrackerPanel.WrittenFileItem] = [:]
+        for item in focusedActivityItems {
+            guard case .toolCall(let tool) = item.kind else { continue }
+            guard isFileMutationTool(tool.name) else { continue }
+            for path in extractedPaths(from: tool) {
+                let candidate = IssueTrackerPanel.WrittenFileItem(
+                    id: path,
+                    path: path,
+                    toolName: tool.name,
+                    timestamp: item.timestamp,
+                    status: tool.status
+                )
+                if let current = byPath[path], current.timestamp > candidate.timestamp {
+                    continue
+                }
+                byPath[path] = candidate
+            }
+        }
+        return byPath.values.sorted { $0.timestamp > $1.timestamp }
+    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -70,7 +419,7 @@ struct WorkView: View {
                             isContinuousVoiceMode: .constant(false),
                             voiceInputState: .constant(.idle),
                             showVoiceOverlay: .constant(false),
-                            modelOptions: session.modelOptions,
+                            modelOptions: openClawModelOptions,
                             isStreaming: session.isExecuting,
                             supportsImages: false,
                             estimatedContextTokens: session.estimatedContextTokens,
@@ -85,7 +434,8 @@ struct WorkView: View {
                             onResume: { Task { await session.resumeSelectedIssue() } },
                             canResume: session.canResumeSelectedIssue,
                             cumulativeTokens: session.cumulativeTokens,
-                            hideContextIndicator: session.currentTask == nil
+                            hideContextIndicator: session.currentTask == nil,
+                            modelReady: selectedModelReady
                         )
                     }
                 }
@@ -111,6 +461,36 @@ struct WorkView: View {
         }
         .onAppear {
             refreshFileOperations()
+            if openClawManager.isConnected {
+                Task {
+                    await openClawManager.refreshOnboardingState(force: true)
+                    try? await openClawManager.fetchConfiguredProviders()
+                    await refreshMemorySnapshot(force: true)
+                }
+            } else if openClawManager.gatewayStatus == .running {
+                Task {
+                    try? await openClawManager.connect()
+                    await openClawManager.refreshOnboardingState(force: true)
+                    try? await openClawManager.fetchConfiguredProviders()
+                    await refreshMemorySnapshot(force: true)
+                }
+            }
+        }
+        .onChange(of: openClawManager.connectionState) {
+            if openClawManager.isConnected {
+                Task {
+                    await openClawManager.refreshOnboardingState(force: true)
+                    await refreshMemorySnapshot(force: true)
+                }
+            } else {
+                memorySnapshot = nil
+            }
+        }
+        .onReceive(openClawManager.activityStore.$items) { _ in
+            session.applyOpenClawActivityItems(focusedActivityItems)
+        }
+        .onChange(of: openClawManager.activityStore.items.count) {
+            maybeRefreshMemoryFromActivity()
         }
         .onReceive(NotificationCenter.default.publisher(for: .workFileOperationsDidChange)) { _ in
             refreshFileOperations()
@@ -185,6 +565,180 @@ struct WorkView: View {
                 _ = try? await WorkFileOperationLog.shared.undoAll(issueId: issue.id)
             }
         }
+    }
+
+    private func summarizedTimelineText(_ text: String, limit: Int = 160) -> String? {
+        let condensed = text
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !condensed.isEmpty else { return nil }
+        return String(condensed.prefix(limit))
+    }
+
+    private func isFileMutationTool(_ name: String) -> Bool {
+        let lowered = name.lowercased()
+        return lowered.contains("write")
+            || lowered.contains("edit")
+            || lowered.contains("create")
+            || lowered.contains("delete")
+            || lowered.contains("move")
+            || lowered.contains("copy")
+            || lowered.contains("rename")
+            || lowered.contains("patch")
+    }
+
+    private func extractedPaths(from tool: ToolCallActivity) -> [String] {
+        let keys = [
+            "path", "filePath", "file_path", "filepath", "target", "targetPath",
+            "target_path", "source", "sourcePath", "source_path", "destination",
+            "destinationPath", "destination_path", "to", "from"
+        ]
+
+        var values: [String] = []
+        for key in keys {
+            if let direct = tool.args[key] {
+                values.append(direct)
+                continue
+            }
+            if let fallback = tool.args.first(where: { $0.key.lowercased() == key.lowercased() })?.value {
+                values.append(fallback)
+            }
+        }
+        if values.isEmpty, !tool.argsSummary.isEmpty {
+            values.append(tool.argsSummary)
+        }
+
+        var normalized: [String] = []
+        for value in values {
+            guard let candidate = normalizedPathCandidate(value) else { continue }
+            if !normalized.contains(candidate) {
+                normalized.append(candidate)
+            }
+        }
+        return normalized
+    }
+
+    private func normalizedPathCandidate(_ rawValue: String) -> String? {
+        var value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+
+        if let first = value.first, first == "\"" || first == "'" || first == "`" {
+            value.removeFirst()
+        }
+        if let last = value.last, last == "\"" || last == "'" || last == "`" {
+            value.removeLast()
+        }
+
+        guard !value.contains("://") else { return nil }
+        if value.hasPrefix("./") {
+            value.removeFirst(2)
+        }
+        guard value.count <= 280 else { return nil }
+        guard value.contains("/") || value.contains(".") || value.hasPrefix("~") else { return nil }
+        return value
+    }
+
+    private func maybeRefreshMemoryFromActivity() {
+        guard openClawManager.isConnected else { return }
+        guard Date().timeIntervalSince(lastMemoryRefreshAt) > 2 else { return }
+
+        let recentItems = openClawManager.activityStore.items.suffix(5)
+        let shouldRefresh = recentItems.contains { item in
+            guard case .toolCall(let tool) = item.kind else { return false }
+            let paths = extractedPaths(from: tool)
+            return paths.contains { path in
+                let lower = path.lowercased()
+                return lower == "memory.md" || lower.hasSuffix("/memory.md") || lower.contains("/memory/")
+            }
+        }
+        guard shouldRefresh else { return }
+
+        Task { await refreshMemorySnapshot(force: false) }
+    }
+
+    private func refreshMemorySnapshot(force: Bool) async {
+        guard openClawManager.isConnected else {
+            memorySnapshot = nil
+            memoryIsLoading = false
+            return
+        }
+        if !force, Date().timeIntervalSince(lastMemoryRefreshAt) < 1.5 {
+            return
+        }
+
+        memoryIsLoading = true
+        defer { memoryIsLoading = false }
+
+        do {
+            if let file = try await openClawManager.readAgentMemoryFile() {
+                let updatedAt = file.updatedAtMs.map { Date(timeIntervalSince1970: Double($0) / 1000.0) }
+                memorySnapshot = IssueTrackerPanel.MemorySnapshot(
+                    fileName: file.name,
+                    content: file.content ?? "",
+                    updatedAt: updatedAt,
+                    isMissing: file.missing
+                )
+            } else {
+                memorySnapshot = IssueTrackerPanel.MemorySnapshot(
+                    fileName: "MEMORY.md",
+                    content: "Memory file has not been created yet. It will appear after OpenClaw writes memory.",
+                    updatedAt: nil,
+                    isMissing: true
+                )
+            }
+            lastMemoryRefreshAt = Date()
+        } catch {
+            // Keep the last snapshot visible if refresh fails.
+            lastMemoryRefreshAt = Date()
+        }
+    }
+
+    private func viewRuntimeFile(path: String) {
+        guard let fileURL = resolvedRuntimeFileURL(path: path) else { return }
+        if let content = try? String(contentsOf: fileURL, encoding: .utf8) {
+            let filename = fileURL.lastPathComponent.isEmpty ? path : fileURL.lastPathComponent
+            selectedArtifact = Artifact(
+                taskId: session.currentTask?.id ?? "runtime",
+                filename: filename,
+                content: content,
+                contentType: Artifact.contentType(from: filename),
+                isFinalResult: false
+            )
+            return
+        }
+        NSWorkspace.shared.open(fileURL)
+    }
+
+    private func viewMemorySnapshot() {
+        guard let snapshot = memorySnapshot else { return }
+        selectedArtifact = Artifact(
+            taskId: session.currentTask?.id ?? "runtime",
+            filename: snapshot.fileName,
+            content: snapshot.content,
+            contentType: Artifact.contentType(from: snapshot.fileName),
+            isFinalResult: false
+        )
+    }
+
+    private func resolvedRuntimeFileURL(path: String) -> URL? {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if trimmed.hasPrefix("~") {
+            return URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath)
+        }
+        if trimmed.hasPrefix("/") {
+            return URL(fileURLWithPath: trimmed)
+        }
+
+        let relative = trimmed.hasPrefix("./") ? String(trimmed.dropFirst(2)) : trimmed
+        if let root = WorkFolderContextService.shared.currentContext?.rootPath {
+            return root.appendingPathComponent(relative)
+        }
+        return nil
     }
 
     /// Close this window via ChatWindowManager
@@ -285,26 +839,33 @@ struct WorkView: View {
 
     // MARK: - Empty State
 
+    @ViewBuilder
     private var agentEmptyState: some View {
-        WorkEmptyState(
-            hasModels: session.modelOptions.count > 0,
-            selectedModel: session.selectedModel,
-            agents: windowState.agents,
-            activeAgentId: windowState.agentId,
-            onOpenModelManager: {
-                AppDelegate.shared?.showManagementWindow(initialTab: .models)
-            },
-            onUseFoundation: windowState.foundationModelAvailable
-                ? {
-                    session.selectedModel = session.modelOptions.first?.id ?? "foundation"
-                } : nil,
-            onQuickAction: { prompt in
-                session.input = prompt
-            },
-            onSelectAgent: { newAgentId in
-                windowState.switchAgent(to: newAgentId)
-            }
+        let route = WorkEmptyStateLogic.route(
+            phase: openClawManager.phase,
+            requiresLocalOnboardingGate: openClawManager.isLocalOnboardingGateRequired,
+            hasOpenClawModels: !openClawModelOptions.isEmpty,
+            hasCompletedInitialModelHydration: session.hasCompletedInitialModelHydration,
+            isGatewayConnectionPending: openClawManager.isGatewayConnectionPending
         )
+
+        switch route {
+        case .openClawSetup:
+            WorkOpenClawSetupView()
+        case .openClawOnboardingRequired:
+            WorkOpenClawOnboardingView()
+        case .providerLoading:
+            WorkProviderLoadingView()
+        case .providerNeeded:
+            WorkProviderNeededView()
+        case .workEmpty:
+            WorkEmptyState(
+                agents: windowState.agents,
+                activeAgentId: windowState.agentId,
+                onQuickAction: { prompt in session.input = prompt },
+                onSelectAgent: { newAgentId in windowState.switchAgent(to: newAgentId) }
+            )
+        }
     }
 
     // MARK: - Task Execution View
@@ -330,8 +891,14 @@ struct WorkView: View {
                     noIssueSelectedView
                 }
 
-                if session.isExecuting {
-                    agentProcessingIndicator
+                if shouldShowStreamingTicker {
+                    let activity = latestStreamingActivity
+                    ShimmerTextTicker(
+                        text: activity.text,
+                        isStreaming: activity.isStreaming
+                    )
+                    .padding(.horizontal, Self.contentHorizontalPadding)
+                    .padding(.top, 12)
                 }
 
                 if let error = session.errorMessage { errorView(error: error) }
@@ -341,20 +908,25 @@ struct WorkView: View {
 
             if !isProgressSidebarCollapsed {
                 IssueTrackerPanel(
-                    issues: session.issues,
-                    activeIssueId: session.activeIssue?.id,
-                    selectedIssueId: session.selectedIssueId,
+                    steps: sidebarStepItems,
+                    loopProgress: session.loopState?.progress,
+                    loopIteration: session.loopState?.iteration,
+                    loopMaxIterations: session.loopState?.maxIterations,
                     finalArtifact: session.finalArtifact,
                     artifacts: session.artifacts,
                     fileOperations: fileOperations,
+                    actionItems: sidebarActionItems,
+                    writtenFiles: sidebarWrittenFiles,
+                    memorySnapshot: memorySnapshot,
+                    memoryIsLoading: memoryIsLoading,
                     isCollapsed: $isProgressSidebarCollapsed,
-                    onIssueSelect: { session.selectIssue($0) },
-                    onIssueRun: { issue in Task { await session.executeIssue(issue) } },
-                    onIssueClose: { issueId in Task { await session.closeIssue(issueId, reason: "Manually closed") } },
                     onArtifactView: { viewArtifact($0) },
                     onArtifactDownload: { downloadArtifact($0) },
                     onUndoOperation: { operationId in undoFileOperation(operationId) },
-                    onUndoAllOperations: { undoAllFileOperations() }
+                    onUndoAllOperations: { undoAllFileOperations() },
+                    onWrittenFileView: { path in viewRuntimeFile(path: path) },
+                    onRefreshMemory: { Task { await refreshMemorySnapshot(force: true) } },
+                    onViewMemory: { viewMemorySnapshot() }
                 )
                 .frame(width: progressSidebarWidth)
                 .padding(.vertical, 12)
@@ -489,8 +1061,11 @@ extension WorkView {
         let availableWidth = width - (Self.contentHorizontalPadding * 2)
         let contentWidth = min(availableWidth, Self.maxChatContentWidth)
 
-        let blocks = session.issueBlocks
+        let allBlocks = session.issueBlocks
         let groupHeaderMap = session.issueBlocksGroupHeaderMap
+
+        let isStreamingThisIssue = session.isExecuting && session.activeIssue?.id == session.selectedIssueId
+        let blocks = allBlocks
 
         return ZStack(alignment: .bottomTrailing) {
             MessageThreadView(
@@ -498,7 +1073,7 @@ extension WorkView {
                 groupHeaderMap: groupHeaderMap,
                 width: contentWidth,
                 agentName: agentName,
-                isStreaming: session.isExecuting && session.activeIssue?.id == session.selectedIssueId,
+                isStreaming: isStreamingThisIssue,
                 lastAssistantTurnId: blocks.last?.turnId,
                 autoScrollEnabled: false,
                 expandedBlocksStore: session.expandedBlocksStore,
@@ -564,34 +1139,7 @@ extension WorkView {
         .padding(.horizontal, Self.contentHorizontalPadding)
     }
 
-    // MARK: - Processing Indicator
-
-    private var agentProcessingIndicator: some View {
-        HStack(spacing: 8) {
-            // Animated pulsing dot
-            Circle()
-                .fill(theme.accentColor)
-                .frame(width: 6, height: 6)
-                .modifier(WorkPulseModifier())
-
-            Text("Working on it...")
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                .foregroundColor(theme.secondaryText)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(
-            Capsule()
-                .fill(theme.secondaryBackground.opacity(0.6))
-        )
-        .overlay(
-            Capsule()
-                .strokeBorder(theme.primaryBorder.opacity(0.2), lineWidth: 0.5)
-        )
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, Self.contentHorizontalPadding)
-        .padding(.top, 12)
-    }
+    // MARK: - Processing Indicator (moved to ShimmerTextTicker.swift)
 
     // MARK: - Error View
 
@@ -618,7 +1166,8 @@ extension WorkView {
                 Text(friendlyError.message)
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .regular))
                     .foregroundColor(theme.secondaryText)
-                    .lineLimit(2)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: 12)
@@ -649,6 +1198,25 @@ extension WorkView {
                 }
                 .buttonStyle(.plain)
             }
+
+            Button {
+                copyErrorMessage(error)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "doc.on.doc")
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
+                    Text("Copy Error")
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
+                }
+                .foregroundColor(theme.primaryText)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(theme.tertiaryBackground.opacity(0.55))
+                )
+            }
+            .buttonStyle(.plain)
 
             // Close button
             Button {
@@ -701,10 +1269,15 @@ extension WorkView {
         {
             return ("Server Error", "The service is temporarily unavailable. Please try again later.")
         } else {
-            // Generic fallback - show truncated original error
-            let truncated = error.count > 80 ? String(error.prefix(80)) + "..." : error
-            return ("Something Went Wrong", truncated)
+            return ("Something Went Wrong", error)
         }
+    }
+
+    private func copyErrorMessage(_ message: String) {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(trimmed, forType: .string)
     }
 
     // MARK: - Helpers
@@ -1554,7 +2127,7 @@ struct ArtifactViewerSheet: View {
 
 // MARK: - Work Pulse Modifier
 
-private struct WorkPulseModifier: ViewModifier {
+struct WorkPulseModifier: ViewModifier {
     @State private var isPulsing = false
 
     func body(content: Content) -> some View {

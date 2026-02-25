@@ -89,6 +89,8 @@ public struct MCPProviderState: Sendable {
     public var isConnected: Bool
     public var isConnecting: Bool
     public var lastError: String?
+    public var healthState: ProviderHealthState
+    public var healthFixIt: String?
     public var discoveredToolCount: Int
     public var discoveredToolNames: [String]
     public var lastConnectedAt: Date?
@@ -98,6 +100,8 @@ public struct MCPProviderState: Sendable {
         self.isConnected = false
         self.isConnecting = false
         self.lastError = nil
+        self.healthState = .unknownFailure
+        self.healthFixIt = nil
         self.discoveredToolCount = 0
         self.discoveredToolNames = []
         self.lastConnectedAt = nil

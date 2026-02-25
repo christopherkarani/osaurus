@@ -45,6 +45,13 @@ public enum RemoteProviderError: LocalizedError {
 public final class RemoteProviderManager: ObservableObject {
     public static let shared = RemoteProviderManager()
 
+    struct Hooks {
+        var connectOverride: (@Sendable (_ providerId: UUID) async throws -> Void)?
+    }
+
+    nonisolated(unsafe) static var hooks: Hooks?
+    nonisolated(unsafe) static var startupAutoConnectRetryDelaysOverrideNs: [UInt64]?
+
     /// Current configuration
     @Published public private(set) var configuration: RemoteProviderConfiguration
 
@@ -53,6 +60,9 @@ public final class RemoteProviderManager: ObservableObject {
 
     /// Active service instances keyed by provider ID
     private var services: [UUID: RemoteProviderService] = [:]
+    private static var startupAutoConnectRetryDelaysNs: [UInt64] {
+        startupAutoConnectRetryDelaysOverrideNs ?? [0, 500_000_000, 1_500_000_000]
+    }
 
     private init() {
         self.configuration = RemoteProviderConfigurationStore.load()
@@ -170,7 +180,20 @@ public final class RemoteProviderManager: ObservableObject {
         var state = providerStates[providerId] ?? RemoteProviderState(providerId: providerId)
         state.isConnecting = true
         state.lastError = nil
+        state.healthState = .unknownFailure
+        state.healthFixIt = nil
         providerStates[providerId] = state
+
+        await emitDiagnostic(
+            level: .info,
+            event: "remote.connect.begin",
+            context: [
+                "providerId": provider.id.uuidString,
+                "providerName": provider.name,
+                "providerType": provider.providerType.rawValue,
+                "baseURL": provider.baseURL?.absoluteString ?? "<invalid-url>",
+            ]
+        )
 
         do {
             // Fetch models from the provider
@@ -186,18 +209,33 @@ public final class RemoteProviderManager: ObservableObject {
             state.discoveredModels = models
             state.lastConnectedAt = Date()
             state.lastError = nil
+            state.healthState = .ready
+            state.healthFixIt = nil
             providerStates[providerId] = state
 
             print("[Osaurus] Remote Provider '\(provider.name)': Connected with \(models.count) models")
+            await emitDiagnostic(
+                level: .info,
+                event: "remote.connect.success",
+                context: [
+                    "providerId": provider.id.uuidString,
+                    "providerName": provider.name,
+                    "modelCount": "\(models.count)",
+                ]
+            )
 
             notifyStatusChanged()
             notifyModelsChanged()
 
         } catch {
+            let classified = classifyConnectionFailure(error, provider: provider)
+
             // Update state with error
             state.isConnecting = false
             state.isConnected = false
-            state.lastError = error.localizedDescription
+            state.lastError = classified.message
+            state.healthState = classified.healthState
+            state.healthFixIt = classified.fixIt
             state.discoveredModels = []
             providerStates[providerId] = state
 
@@ -206,10 +244,22 @@ public final class RemoteProviderManager: ObservableObject {
                 Task { await service.invalidateSession() }
             }
 
-            print("[Osaurus] Remote Provider '\(provider.name)': Connection failed - \(error)")
+            print("[Osaurus] Remote Provider '\(provider.name)': Connection failed - \(classified.message)")
+            await emitDiagnostic(
+                level: .error,
+                event: "remote.connect.failed",
+                context: [
+                    "providerId": provider.id.uuidString,
+                    "providerName": provider.name,
+                    "failureClass": classified.failureClass.rawValue,
+                    "healthState": classified.healthState.rawValue,
+                    "message": classified.message,
+                    "fixIt": classified.fixIt ?? "",
+                ]
+            )
 
             notifyStatusChanged()
-            throw error
+            throw RemoteProviderError.connectionFailed(classified.message)
         }
     }
 
@@ -224,6 +274,9 @@ public final class RemoteProviderManager: ObservableObject {
         if var state = providerStates[providerId] {
             state.isConnected = false
             state.isConnecting = false
+            state.lastError = nil
+            state.healthState = .unknownFailure
+            state.healthFixIt = nil
             state.discoveredModels = []
             providerStates[providerId] = state
         }
@@ -242,13 +295,100 @@ public final class RemoteProviderManager: ObservableObject {
         try await connect(providerId: providerId)
     }
 
-    /// Connect to all enabled providers on app launch
-    public func connectEnabledProviders() async {
-        for provider in configuration.enabledProviders {
-            do {
-                try await connect(providerId: provider.id)
-            } catch {
-                print("[Osaurus] Failed to auto-connect to '\(provider.name)': \(error)")
+    /// Connect to all enabled providers that are marked for auto-connect on app launch
+    public func connectEnabledProviders(isStartup: Bool = false) async {
+        for provider in configuration.autoConnectProviders {
+            if isStartup,
+               shouldDisableStartupAutoConnect(provider: provider, healthState: .misconfiguredEndpoint)
+            {
+                await emitDiagnostic(
+                    level: .warning,
+                    event: "remote.autoconnect.skipped",
+                    context: [
+                        "providerId": provider.id.uuidString,
+                        "providerName": provider.name,
+                        "reason": "openclaw-endpoint-sanity-failed",
+                    ]
+                )
+                await disableAutoConnectForProvider(
+                    provider,
+                    reason: "misconfigured-openclaw-endpoint"
+                )
+                continue
+            }
+
+            if isStartup,
+                providerStates[provider.id]?.healthState == .misconfiguredEndpoint
+            {
+                await emitDiagnostic(
+                    level: .warning,
+                    event: "remote.autoconnect.skipped",
+                    context: [
+                        "providerId": provider.id.uuidString,
+                        "providerName": provider.name,
+                        "reason": "previously-misconfigured-endpoint",
+                    ]
+                )
+                continue
+            }
+
+            let maxAttempts = isStartup ? Self.startupAutoConnectRetryDelaysNs.count : 1
+            for attempt in 1...maxAttempts {
+                if isStartup {
+                    let delay = Self.startupAutoConnectRetryDelaysNs[max(0, attempt - 1)]
+                    if delay > 0 {
+                        try? await Task.sleep(nanoseconds: delay)
+                    }
+                }
+
+                do {
+                    if let connectOverride = Self.hooks?.connectOverride {
+                        try await connectOverride(provider.id)
+                    } else {
+                        try await connect(providerId: provider.id)
+                    }
+                    break
+                } catch {
+                    let storedHealthState = providerStates[provider.id]?.healthState ?? .unknownFailure
+                    let inferredFailureClass = inferFailureClass(from: error.localizedDescription)
+                    let inferredHealthState = mapHealthState(inferredFailureClass)
+                    let healthState = storedHealthState == .unknownFailure ? inferredHealthState : storedHealthState
+                    await emitDiagnostic(
+                        level: .warning,
+                        event: "remote.autoconnect.retry",
+                        context: [
+                            "providerId": provider.id.uuidString,
+                            "providerName": provider.name,
+                            "attempt": "\(attempt)",
+                            "maxAttempts": "\(maxAttempts)",
+                            "healthState": healthState.rawValue,
+                            "error": error.localizedDescription,
+                        ]
+                    )
+
+                    print(
+                        "[Osaurus] Failed to auto-connect to '\(provider.name)' (attempt \(attempt)/\(maxAttempts)): \(error)"
+                    )
+
+                    if isStartup,
+                       shouldDisableStartupAutoConnect(provider: provider, healthState: healthState)
+                    {
+                        await disableAutoConnectForProvider(
+                            provider,
+                            reason: "misconfigured-openclaw-endpoint"
+                        )
+                        break
+                    }
+
+                    // Endpoint/config/auth failures should not loop noisily on startup.
+                    if healthState == .misconfiguredEndpoint || healthState == .authFailed {
+                        break
+                    }
+
+                    if attempt == maxAttempts {
+                        break
+                    }
+                }
             }
         }
     }
@@ -274,16 +414,7 @@ public final class RemoteProviderManager: ObservableObject {
 
     /// Get all available models across all connected providers (with prefixes)
     public func allAvailableModels() -> [String] {
-        var models: [String] = []
-        for (providerId, service) in services {
-            if let state = providerStates[providerId], state.isConnected {
-                Task {
-                    let prefixedModels = await service.getPrefixedModels()
-                    models.append(contentsOf: prefixedModels)
-                }
-            }
-        }
-        return models
+        cachedAvailableModels().flatMap(\.models)
     }
 
     /// Get all available models synchronously from cached state
@@ -359,137 +490,290 @@ public final class RemoteProviderManager: ObservableObject {
                 testHeaders["Authorization"] = "Bearer \(apiKey)"
             }
         }
+        var testProvider = tempProvider
+        testProvider.customHeaders = testHeaders
+        // Keep auth in explicit headers to avoid depending on Keychain during tests.
+        testProvider.authType = .none
 
-        // Anthropic uses /models endpoint (same as OpenAI-compatible providers)
-        if providerType == .anthropic {
-            return try await testAnthropicConnection(tempProvider: tempProvider, testHeaders: testHeaders)
-        }
-
-        // OpenAI-compatible and Gemini providers use /models endpoint
-        guard let url = tempProvider.url(for: "/models") else {
-            print("[Osaurus] Test Connection: Invalid URL")
-            throw RemoteProviderError.invalidURL
-        }
-
-        print("[Osaurus] Test Connection: Requesting \(url.absoluteString)")
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 30
-
-        // Add headers
-        for (key, value) in testHeaders {
-            // Don't log the full auth header for security
-            if key.lowercased() == "authorization" || key.lowercased() == "x-api-key"
-                || key.lowercased() == "x-goog-api-key"
-            {
-                print("[Osaurus] Test Connection: Adding header \(key)=***")
-            } else {
-                print("[Osaurus] Test Connection: Adding header \(key)=\(value)")
-            }
-            request.setValue(value, forHTTPHeaderField: key)
-        }
+        await emitDiagnostic(
+            level: .info,
+            event: "remote.test.begin",
+            context: [
+                "host": host,
+                "providerType": providerType.rawValue,
+                "basePath": basePath,
+            ]
+        )
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-
-            guard let httpResponse = response as? HTTPURLResponse else {
-                print("[Osaurus] Test Connection: Invalid response type")
-                throw RemoteProviderError.connectionFailed("Invalid response")
-            }
-
-            print("[Osaurus] Test Connection: HTTP \(httpResponse.statusCode)")
-
-            if httpResponse.statusCode >= 400 {
-                let errorMessage = extractErrorMessage(from: data, statusCode: httpResponse.statusCode)
-                print("[Osaurus] Test Connection: Error response: \(errorMessage)")
-                throw RemoteProviderError.connectionFailed(errorMessage)
-            }
-
-            // Parse models response based on provider type
-            if providerType == .gemini {
-                let modelsResponse = try JSONDecoder().decode(GeminiModelsResponse.self, from: data)
-                let models = (modelsResponse.models ?? [])
-                    .filter { model in
-                        guard let methods = model.supportedGenerationMethods else { return false }
-                        return methods.contains("generateContent")
-                    }
-                    .map { $0.modelId }
-                print("[Osaurus] Test Connection (Gemini): Success - found \(models.count) models")
-                return models
-            } else {
-                let modelsResponse = try JSONDecoder().decode(ModelsResponse.self, from: data)
-                print("[Osaurus] Test Connection: Success - found \(modelsResponse.data.count) models")
-                return modelsResponse.data.map { $0.id }
-            }
-        } catch let error as RemoteProviderError {
-            throw error
-        } catch {
-            print("[Osaurus] Test Connection: Network error: \(error)")
-            throw RemoteProviderError.connectionFailed(error.localizedDescription)
-        }
-    }
-
-    /// Extract a human-readable error message from API error response data
-    private func extractErrorMessage(from data: Data, statusCode: Int) -> String {
-        // Try to parse as JSON error response (OpenAI/xAI format)
-        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            // OpenAI/xAI format: {"error": {"message": "...", "type": "...", "code": "..."}}
-            if let error = json["error"] as? [String: Any] {
-                if let message = error["message"] as? String {
-                    // Include error code if available for more context
-                    if let code = error["code"] as? String {
-                        return "\(message) (code: \(code))"
-                    }
-                    return message
-                }
-            }
-            // Alternative format: {"message": "..."}
-            if let message = json["message"] as? String {
-                return message
-            }
-            // Alternative format: {"detail": "..."}
-            if let detail = json["detail"] as? String {
-                return detail
-            }
-        }
-
-        // Fallback to raw string if JSON parsing fails
-        if let rawMessage = String(data: data, encoding: .utf8), !rawMessage.isEmpty {
-            // Truncate very long error messages
-            let truncated = rawMessage.count > 200 ? String(rawMessage.prefix(200)) + "..." : rawMessage
-            return "HTTP \(statusCode): \(truncated)"
-        }
-
-        return "HTTP \(statusCode): Unknown error"
-    }
-
-    /// Test Anthropic connection by fetching models from the /models endpoint
-    private func testAnthropicConnection(tempProvider: RemoteProvider, testHeaders: [String: String]) async throws
-        -> [String]
-    {
-        guard let baseURL = tempProvider.url(for: "/models") else {
-            print("[Osaurus] Test Connection (Anthropic): Invalid URL")
-            throw RemoteProviderError.invalidURL
-        }
-
-        print("[Osaurus] Test Connection (Anthropic): Requesting \(baseURL.absoluteString)")
-
-        do {
-            let models = try await RemoteProviderService.fetchAnthropicModels(
-                baseURL: baseURL,
-                headers: testHeaders
+            let models = try await RemoteProviderService.fetchModels(from: testProvider)
+            await emitDiagnostic(
+                level: .info,
+                event: "remote.test.success",
+                context: [
+                    "host": host,
+                    "providerType": providerType.rawValue,
+                    "modelCount": "\(models.count)",
+                ]
             )
-            print("[Osaurus] Test Connection (Anthropic): Success - found \(models.count) models")
             return models
         } catch {
-            print("[Osaurus] Test Connection (Anthropic): Error: \(error)")
-            throw RemoteProviderError.connectionFailed(error.localizedDescription)
+            let classified = classifyConnectionFailure(error, provider: testProvider)
+            await emitDiagnostic(
+                level: .error,
+                event: "remote.test.failed",
+                context: [
+                    "host": host,
+                    "providerType": providerType.rawValue,
+                    "failureClass": classified.failureClass.rawValue,
+                    "healthState": classified.healthState.rawValue,
+                    "message": classified.message,
+                    "fixIt": classified.fixIt ?? "",
+                ]
+            )
+            throw RemoteProviderError.connectionFailed(classified.renderedMessage)
         }
     }
 
     // MARK: - Private Helpers
+
+    private struct ClassifiedConnectionFailure {
+        let failureClass: RemoteProviderFailureClass
+        let healthState: ProviderHealthState
+        let message: String
+        let fixIt: String?
+
+        var renderedMessage: String {
+            guard let fixIt, !fixIt.isEmpty else { return message }
+            if message.localizedCaseInsensitiveContains(fixIt) {
+                return message
+            }
+            return "\(message) \(fixIt)"
+        }
+    }
+
+    private func classifyConnectionFailure(_ error: Error, provider: RemoteProvider) -> ClassifiedConnectionFailure {
+        if let serviceError = error as? RemoteProviderServiceError {
+            switch serviceError {
+            case .discoveryFailed(let details):
+                return ClassifiedConnectionFailure(
+                    failureClass: details.failureClass,
+                    healthState: mapHealthState(details.failureClass),
+                    message: details.message,
+                    fixIt: details.fixIt
+                )
+            case .invalidURL:
+                return ClassifiedConnectionFailure(
+                    failureClass: .misconfiguredEndpoint,
+                    healthState: .misconfiguredEndpoint,
+                    message: "Invalid provider URL configuration.",
+                    fixIt: "Correct the provider host/path so it points to a model API endpoint (for example /v1/models)."
+                )
+            case .requestFailed(let message):
+                let inferred = inferFailureClass(from: message)
+                return ClassifiedConnectionFailure(
+                    failureClass: inferred,
+                    healthState: mapHealthState(inferred),
+                    message: message,
+                    fixIt: defaultFixIt(for: inferred, provider: provider)
+                )
+            case .invalidResponse:
+                return ClassifiedConnectionFailure(
+                    failureClass: .invalidResponse,
+                    healthState: .unknownFailure,
+                    message: "Provider returned an invalid response.",
+                    fixIt: "Verify the endpoint speaks the selected provider protocol and returns JSON."
+                )
+            case .streamingError(let message):
+                let inferred = inferFailureClass(from: message)
+                return ClassifiedConnectionFailure(
+                    failureClass: inferred,
+                    healthState: mapHealthState(inferred),
+                    message: message,
+                    fixIt: defaultFixIt(for: inferred, provider: provider)
+                )
+            case .noModelsAvailable:
+                return ClassifiedConnectionFailure(
+                    failureClass: .gatewayUnavailable,
+                    healthState: .gatewayUnavailable,
+                    message: "Connection succeeded but no models were discovered.",
+                    fixIt: "Ensure the upstream provider is serving models and your API key has model-list access."
+                )
+            case .notConnected:
+                return ClassifiedConnectionFailure(
+                    failureClass: .gatewayUnavailable,
+                    healthState: .gatewayUnavailable,
+                    message: "Provider is not connected.",
+                    fixIt: "Retry after confirming the provider endpoint is reachable."
+                )
+            }
+        }
+
+        if let managerError = error as? RemoteProviderError, case .connectionFailed(let message) = managerError {
+            let inferred = inferFailureClass(from: message)
+            return ClassifiedConnectionFailure(
+                failureClass: inferred,
+                healthState: mapHealthState(inferred),
+                message: message,
+                fixIt: defaultFixIt(for: inferred, provider: provider)
+            )
+        }
+
+        let fallbackClass = inferFailureClass(from: error.localizedDescription)
+        return ClassifiedConnectionFailure(
+            failureClass: fallbackClass,
+            healthState: mapHealthState(fallbackClass),
+            message: error.localizedDescription,
+            fixIt: defaultFixIt(for: fallbackClass, provider: provider)
+        )
+    }
+
+    private func mapHealthState(_ failureClass: RemoteProviderFailureClass) -> ProviderHealthState {
+        switch failureClass {
+        case .misconfiguredEndpoint:
+            return .misconfiguredEndpoint
+        case .authFailed:
+            return .authFailed
+        case .gatewayUnavailable:
+            return .gatewayUnavailable
+        case .networkUnreachable:
+            return .networkUnreachable
+        case .invalidResponse, .unknown:
+            return .unknownFailure
+        }
+    }
+
+    private func inferFailureClass(from rawMessage: String) -> RemoteProviderFailureClass {
+        let message = rawMessage.lowercased()
+        if message.contains("html") || message.contains("non-json") || message.contains("endpoint mismatch")
+            || message.contains("misconfigured")
+        {
+            return .misconfiguredEndpoint
+        }
+        if message.contains("unauthorized") || message.contains("forbidden") || message.contains("401")
+            || message.contains("403") || message.contains("authentication")
+        {
+            return .authFailed
+        }
+        if message.contains("timed out") || message.contains("timeout")
+            || message.contains("could not connect")
+            || message.contains("network")
+            || message.contains("dns")
+            || message.contains("offline")
+            || message.contains("connection refused")
+        {
+            return .networkUnreachable
+        }
+        if message.contains("bad gateway") || message.contains("unavailable") || message.contains("gateway")
+            || message.contains("503")
+            || message.contains("502")
+        {
+            return .gatewayUnavailable
+        }
+        return .unknown
+    }
+
+    private func defaultFixIt(for failureClass: RemoteProviderFailureClass, provider: RemoteProvider) -> String? {
+        switch failureClass {
+        case .misconfiguredEndpoint:
+            if looksLikeOpenClawControlEndpoint(provider) {
+                return
+                    "This looks like an OpenClaw UI/control endpoint. Use the provider's model API base URL (for example .../v1) instead."
+            }
+            return "Check host/path and ensure it targets a model API endpoint that returns JSON."
+        case .authFailed:
+            return "Update API key/token and retry."
+        case .gatewayUnavailable:
+            return "Ensure the upstream service is running and retry."
+        case .networkUnreachable:
+            return "Verify DNS/network connectivity and endpoint reachability."
+        case .invalidResponse, .unknown:
+            return nil
+        }
+    }
+
+    private func looksLikeOpenClawControlEndpoint(_ provider: RemoteProvider) -> Bool {
+        guard let modelsURL = provider.url(for: "/models") else { return false }
+        let host = modelsURL.host?.lowercased() ?? ""
+        let path = modelsURL.path.lowercased()
+        let localHosts: Set<String> = ["127.0.0.1", "localhost", "::1"]
+
+        if localHosts.contains(host), modelsURL.port == 18789 {
+            return true
+        }
+
+        let controlPath =
+            path.hasPrefix("/health")
+            || path.hasPrefix("/ws")
+            || path.hasPrefix("/mcp")
+            || path.hasPrefix("/channels")
+            || path.hasPrefix("/system")
+            || path.hasPrefix("/wizard")
+            || path.hasPrefix("/dashboard")
+            || path == "/models"
+        return localHosts.contains(host) && controlPath
+    }
+
+    private func shouldDisableStartupAutoConnect(
+        provider: RemoteProvider,
+        healthState: ProviderHealthState
+    ) -> Bool {
+        healthState == .misconfiguredEndpoint && looksLikeOpenClawControlEndpoint(provider)
+    }
+
+    private func disableAutoConnectForProvider(_ provider: RemoteProvider, reason: String) async {
+        guard var updated = configuration.provider(id: provider.id), updated.autoConnect else { return }
+        updated.autoConnect = false
+        configuration.update(updated)
+        RemoteProviderConfigurationStore.save(configuration)
+        await emitDiagnostic(
+            level: .warning,
+            event: "remote.autoconnect.disabled",
+            context: [
+                "providerId": provider.id.uuidString,
+                "providerName": provider.name,
+                "reason": reason,
+            ]
+        )
+        print("[Osaurus] Remote Provider '\(provider.name)': Auto-connect disabled (\(reason)).")
+    }
+
+    private func emitDiagnostic(
+        level: StartupDiagnosticsLevel,
+        event: String,
+        context: [String: String]
+    ) async {
+        await StartupDiagnostics.shared.emit(
+            level: level,
+            component: "remote-provider-manager",
+            event: event,
+            context: context
+        )
+    }
+
+#if DEBUG
+    static func _testSetHooks(_ hooks: Hooks?) {
+        self.hooks = hooks
+    }
+
+    static func _testSetStartupRetryDelaysNs(_ delays: [UInt64]?) {
+        startupAutoConnectRetryDelaysOverrideNs = delays
+    }
+
+    func _testSetConfiguration(_ configuration: RemoteProviderConfiguration) {
+        self.configuration = configuration
+        var states: [UUID: RemoteProviderState] = [:]
+        for provider in configuration.providers {
+            states[provider.id] = providerStates[provider.id] ?? RemoteProviderState(providerId: provider.id)
+        }
+        self.providerStates = states
+        self.services.removeAll()
+    }
+
+    func _testSetProviderState(_ state: RemoteProviderState, for providerId: UUID) {
+        providerStates[providerId] = state
+    }
+#endif
 
     private func notifyStatusChanged() {
         NotificationCenter.default.post(name: .remoteProviderStatusChanged, object: nil)

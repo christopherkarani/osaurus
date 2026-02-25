@@ -81,6 +81,19 @@ extension OpenClawActivityStore {
         isRunActive = false
         activeRunId = nil
     }
+
+    /// Returns timeline entries for the active run, or the most recent run if idle.
+    public func timelineItemsForFocusedRun(limit: Int = 40) -> [ActivityItem] {
+        guard limit > 0 else { return [] }
+        guard let focusedRunId = activeRunId ?? items.last?.runId else {
+            return Array(items.suffix(limit))
+        }
+        let scoped = items.filter { $0.runId == focusedRunId }
+        if scoped.isEmpty {
+            return Array(items.suffix(limit))
+        }
+        return Array(scoped.suffix(limit))
+    }
 }
 
 // MARK: - Event Routing
@@ -91,9 +104,14 @@ extension OpenClawActivityStore {
         // IMPORTANT: AnyCodable decoder stores dicts as [String: AnyCodable], NOT [String: Any].
         // Casting to [String: Any] silently returns nil. Must cast to [String: AnyCodable]
         // and unwrap each field via .value.
-        guard let payload = frame.payload?.value as? [String: OpenClawProtocol.AnyCodable],
-              let stream = payload["stream"]?.value as? String,
-              let runId = payload["runId"]?.value as? String else { return }
+        guard let payload = frame.payload?.value as? [String: OpenClawProtocol.AnyCodable] else { return }
+        let eventMeta = frame.eventmeta ?? [:]
+        let stream = (payload["stream"]?.value as? String)
+            ?? (eventMeta["stream"]?.value as? String)
+        let runId = (payload["runId"]?.value as? String)
+            ?? (eventMeta["runId"]?.value as? String)
+            ?? (eventMeta["runid"]?.value as? String)
+        guard let stream, let runId else { return }
 
         // ts can arrive as Double or Int depending on JSON decoder
         let ts: Double
@@ -104,12 +122,12 @@ extension OpenClawActivityStore {
         let data = payload["data"]?.value as? [String: OpenClawProtocol.AnyCodable] ?? [:]
         let timestamp = Date(timeIntervalSince1970: ts / 1000.0)
 
-        switch stream {
+        switch stream.lowercased() {
         case "lifecycle":  processLifecycle(runId: runId, data: data, at: timestamp)
         case "tool":       processTool(runId: runId, data: data, at: timestamp)
-        case "thinking":   processThinking(data: data, at: timestamp)
-        case "assistant":  processAssistant(data: data, at: timestamp)
-        case "compaction": processCompaction(data: data, at: timestamp)
+        case "thinking":   processThinking(runId: runId, data: data, at: timestamp)
+        case "assistant":  processAssistant(runId: runId, data: data, at: timestamp)
+        case "compaction": processCompaction(runId: runId, data: data, at: timestamp)
         default:           break  // Unknown streams silently ignored
         }
     }
@@ -129,24 +147,26 @@ extension OpenClawActivityStore {
             activeRunId = runId
             isRunActive = true
             items.append(ActivityItem(
-                id: UUID(), timestamp: timestamp,
+                id: UUID(), runId: runId, timestamp: timestamp,
                 kind: .lifecycle(LifecycleActivity(phase: .started, runId: runId))
             ))
 
         case "end":
             finalizeStreaming(at: timestamp)
+            activeRunId = runId
             isRunActive = false
             items.append(ActivityItem(
-                id: UUID(), timestamp: timestamp,
+                id: UUID(), runId: runId, timestamp: timestamp,
                 kind: .lifecycle(LifecycleActivity(phase: .ended, runId: runId))
             ))
 
         case "error":
             finalizeStreaming(at: timestamp)
+            activeRunId = runId
             isRunActive = false
             let msg = data["error"]?.value as? String ?? "Unknown error"
             items.append(ActivityItem(
-                id: UUID(), timestamp: timestamp,
+                id: UUID(), runId: runId, timestamp: timestamp,
                 kind: .lifecycle(LifecycleActivity(phase: .error(msg), runId: runId))
             ))
 
@@ -168,7 +188,7 @@ extension OpenClawActivityStore {
             // A tool call interrupts any active thinking/assistant stream
             finalizeStreaming(at: timestamp)
 
-            let name = data["name"]?.value as? String ?? "unknown"
+            let name = normalizeToolName(data["name"]?.value as? String)
             let args = data["args"]?.value as? [String: OpenClawProtocol.AnyCodable] ?? [:]
             let flatArgs = args.reduce(into: [String: Any]()) { $0[$1.key] = $1.value.value }
             let activity = ToolCallActivity(
@@ -176,7 +196,7 @@ extension OpenClawActivityStore {
             )
             let index = items.count
             toolCallIndex[toolCallId] = index
-            items.append(ActivityItem(id: UUID(), timestamp: timestamp, kind: .toolCall(activity)))
+            items.append(ActivityItem(id: UUID(), runId: runId, timestamp: timestamp, kind: .toolCall(activity)))
 
         case "update":
             guard let index = toolCallIndex[toolCallId],
@@ -210,9 +230,13 @@ extension OpenClawActivityStore {
 
 extension OpenClawActivityStore {
 
-    private func processThinking(data: [String: OpenClawProtocol.AnyCodable], at timestamp: Date) {
+    private func processThinking(runId: String, data: [String: OpenClawProtocol.AnyCodable], at timestamp: Date) {
         let delta = data["delta"]?.value as? String ?? ""
         let fullText = data["text"]?.value as? String
+
+        if let index = activeThinkingIndex, index < items.count, items[index].runId != runId {
+            finalizeActiveThinking(at: timestamp)
+        }
 
         if let index = activeThinkingIndex,
            index < items.count,
@@ -224,7 +248,7 @@ extension OpenClawActivityStore {
             let activity = ThinkingActivity(
                 text: fullText ?? delta, isStreaming: true, duration: nil, startedAt: timestamp
             )
-            let item = ActivityItem(id: UUID(), timestamp: timestamp, kind: .thinking(activity))
+            let item = ActivityItem(id: UUID(), runId: runId, timestamp: timestamp, kind: .thinking(activity))
             activeThinkingIndex = items.count
             items.append(item)
         }
@@ -235,10 +259,14 @@ extension OpenClawActivityStore {
 
 extension OpenClawActivityStore {
 
-    private func processAssistant(data: [String: OpenClawProtocol.AnyCodable], at timestamp: Date) {
+    private func processAssistant(runId: String, data: [String: OpenClawProtocol.AnyCodable], at timestamp: Date) {
         let delta = data["delta"]?.value as? String ?? ""
         let fullText = data["text"]?.value as? String
         let mediaUrls = (data["mediaUrls"]?.value as? [OpenClawProtocol.AnyCodable])?.compactMap { $0.value as? String } ?? []
+
+        if let index = activeAssistantIndex, index < items.count, items[index].runId != runId {
+            finalizeActiveAssistant(at: timestamp)
+        }
 
         if let index = activeAssistantIndex,
            index < items.count,
@@ -251,7 +279,7 @@ extension OpenClawActivityStore {
             let activity = AssistantActivity(
                 text: fullText ?? delta, isStreaming: true, mediaUrls: mediaUrls, startedAt: timestamp
             )
-            let item = ActivityItem(id: UUID(), timestamp: timestamp, kind: .assistant(activity))
+            let item = ActivityItem(id: UUID(), runId: runId, timestamp: timestamp, kind: .assistant(activity))
             activeAssistantIndex = items.count
             items.append(item)
         }
@@ -262,7 +290,7 @@ extension OpenClawActivityStore {
 
 extension OpenClawActivityStore {
 
-    private func processCompaction(data: [String: OpenClawProtocol.AnyCodable], at timestamp: Date) {
+    private func processCompaction(runId: String, data: [String: OpenClawProtocol.AnyCodable], at timestamp: Date) {
         let phase = data["phase"]?.value as? String ?? ""
         let willRetry = data["willRetry"]?.value as? Bool ?? false
 
@@ -273,7 +301,7 @@ extension OpenClawActivityStore {
         default:      return
         }
         items.append(ActivityItem(
-            id: UUID(), timestamp: timestamp,
+            id: UUID(), runId: runId, timestamp: timestamp,
             kind: .compaction(CompactionActivity(phase: compactionPhase))
         ))
     }
@@ -330,5 +358,17 @@ extension OpenClawActivityStore {
             return arr.map { String(describing: $0.value) }.joined(separator: "\n")
         }
         return String(describing: value)
+    }
+
+    private func normalizeToolName(_ value: String?) -> String {
+        guard let raw = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else {
+            return "invalid_tool_name"
+        }
+        let pattern = "^[A-Za-z0-9._:-]{1,80}$"
+        if raw.range(of: pattern, options: .regularExpression) != nil {
+            return raw
+        }
+        return "invalid_tool_name"
     }
 }

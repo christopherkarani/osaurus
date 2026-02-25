@@ -15,6 +15,7 @@ struct OpenClawGatewayStatusCard: View {
     @State private var hasAppeared = false
     @State private var showStopConfirmation = false
     @State private var showDisconnectConfirmation = false
+    @State private var syncTokenError: String?
 
     var body: some View {
         GlassListRow {
@@ -36,7 +37,7 @@ struct OpenClawGatewayStatusCard: View {
                                 .foregroundColor(theme.primaryText)
                             statusBadge
                         }
-                        Text("Port \(manager.configuration.gatewayPort)")
+                        Text(manager.gatewayEndpointSummary)
                             .font(.system(size: 12, design: .monospaced))
                         .foregroundColor(theme.secondaryText)
                     }
@@ -70,8 +71,8 @@ struct OpenClawGatewayStatusCard: View {
             .accessibilityLabel("Gateway status: \(statusText)")
             .accessibilityValue(
                 manager.gatewayStatus == .running
-                    ? "Running on port \(manager.configuration.gatewayPort)"
-                    : "Stopped"
+                    ? "Running on \(manager.gatewayEndpointSummary)"
+                    : statusText
             )
         }
         .scaleEffect(isHovered ? 1.02 : 1)
@@ -107,16 +108,24 @@ struct OpenClawGatewayStatusCard: View {
     }
 
     private var controls: some View {
-        HStack(spacing: 8) {
-            if manager.gatewayStatus == .running {
-                HeaderSecondaryButton("Stop", icon: "stop.fill") {
-                    showStopConfirmation = true
+        let usesRemoteEndpoint = manager.usesCustomGatewayEndpoint
+        return HStack(spacing: 8) {
+            if manager.gatewayStatus == .running || usesRemoteEndpoint {
+                if !usesRemoteEndpoint {
+                    HeaderSecondaryButton("Stop", icon: "stop.fill") {
+                        showStopConfirmation = true
+                    }
+                    .disabled(disableControls)
                 }
-                .disabled(disableControls)
 
                 if manager.isConnected {
                     HeaderSecondaryButton("Disconnect", icon: "bolt.slash.fill") {
                         showDisconnectConfirmation = true
+                    }
+                    .disabled(disableControls)
+                } else if isTokenMismatch {
+                    HeaderPrimaryButton("Sync Token", icon: "key.fill") {
+                        Task { await performSyncToken() }
                     }
                     .disabled(disableControls)
                 } else {
@@ -132,6 +141,16 @@ struct OpenClawGatewayStatusCard: View {
                 .disabled(disableControls)
             }
         }
+    }
+
+    private var isTokenMismatch: Bool {
+        if case let .connectionFailed(message) = manager.phase {
+            let lower = message.lowercased()
+            return lower.contains("token mismatch")
+                || lower.contains("authentication failed")
+                || lower.contains("reconfigure credentials")
+        }
+        return false
     }
 
     @ViewBuilder
@@ -197,7 +216,7 @@ struct OpenClawGatewayStatusCard: View {
     private var statusText: String {
         switch manager.gatewayStatus {
         case .stopped:
-            return "Stopped"
+            return manager.usesCustomGatewayEndpoint ? "Disconnected" : "Stopped"
         case .starting:
             return "Starting"
         case .running:
@@ -210,7 +229,7 @@ struct OpenClawGatewayStatusCard: View {
     private var statusColor: Color {
         switch manager.gatewayStatus {
         case .stopped:
-            return theme.tertiaryText
+            return manager.usesCustomGatewayEndpoint ? theme.accentColor : theme.tertiaryText
         case .starting:
             return theme.warningColor
         case .running:
@@ -221,6 +240,7 @@ struct OpenClawGatewayStatusCard: View {
     }
 
     private var errorMessage: String? {
+        if let syncTokenError { return syncTokenError }
         if case let .failed(message) = manager.gatewayStatus {
             return message
         }
@@ -260,6 +280,17 @@ struct OpenClawGatewayStatusCard: View {
         isBusy = true
         defer { isBusy = false }
         try? await manager.connect()
+    }
+
+    private func performSyncToken() async {
+        isBusy = true
+        syncTokenError = nil
+        defer { isBusy = false }
+        do {
+            try await manager.syncTokenFromGatewayConfig()
+        } catch {
+            syncTokenError = error.localizedDescription
+        }
     }
 
     private func toggleHeartbeat(isPaused: Bool) async {

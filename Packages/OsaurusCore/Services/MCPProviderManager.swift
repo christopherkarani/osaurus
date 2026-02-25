@@ -18,6 +18,13 @@ extension Foundation.Notification.Name {
 public final class MCPProviderManager: ObservableObject {
     public static let shared = MCPProviderManager()
 
+    struct Hooks {
+        var connectOverride: (@Sendable (_ providerId: UUID) async throws -> Void)?
+    }
+
+    nonisolated(unsafe) static var hooks: Hooks?
+    nonisolated(unsafe) static var startupAutoConnectRetryDelaysOverrideNs: [UInt64]?
+
     /// Current configuration
     @Published public private(set) var configuration: MCPProviderConfiguration
 
@@ -32,6 +39,9 @@ public final class MCPProviderManager: ObservableObject {
 
     /// Registered tool instances keyed by provider ID
     private var registeredTools: [UUID: [MCPProviderTool]] = [:]
+    private static var startupAutoConnectRetryDelaysNs: [UInt64] {
+        startupAutoConnectRetryDelaysOverrideNs ?? [0, 500_000_000, 1_500_000_000]
+    }
 
     private init() {
         self.configuration = MCPProviderConfigurationStore.load()
@@ -148,7 +158,20 @@ public final class MCPProviderManager: ObservableObject {
         var state = providerStates[providerId] ?? MCPProviderState(providerId: providerId)
         state.isConnecting = true
         state.lastError = nil
+        state.healthState = .unknownFailure
+        state.healthFixIt = nil
         providerStates[providerId] = state
+
+        await emitDiagnostic(
+            level: .info,
+            event: "mcp.connect.begin",
+            context: [
+                "providerId": provider.id.uuidString,
+                "providerName": provider.name,
+                "url": provider.url,
+                "streaming": "\(provider.streamingEnabled)",
+            ]
+        )
 
         do {
             // Create authenticated transport
@@ -175,18 +198,33 @@ public final class MCPProviderManager: ObservableObject {
                 updatedState.isConnected = true
                 updatedState.lastConnectedAt = Date()
                 updatedState.lastError = nil
+                updatedState.healthState = .ready
+                updatedState.healthFixIt = nil
                 providerStates[providerId] = updatedState
                 print(
                     "[Osaurus] MCP Provider '\(provider.name)': Connected with \(updatedState.discoveredToolCount) tools"
+                )
+                await emitDiagnostic(
+                    level: .info,
+                    event: "mcp.connect.success",
+                    context: [
+                        "providerId": provider.id.uuidString,
+                        "providerName": provider.name,
+                        "toolCount": "\(updatedState.discoveredToolCount)",
+                    ]
                 )
             }
             notifyStatusChanged()
 
         } catch {
+            let classified = classifyConnectionFailure(error, provider: provider)
+
             // Update state with error - reset tool discovery state to match disconnect behavior
             state.isConnecting = false
             state.isConnected = false
-            state.lastError = error.localizedDescription
+            state.lastError = classified.message
+            state.healthState = classified.healthState
+            state.healthFixIt = classified.fixIt
             state.discoveredToolCount = 0
             state.discoveredToolNames = []
             providerStates[providerId] = state
@@ -196,9 +234,21 @@ public final class MCPProviderManager: ObservableObject {
             discoveredTools.removeValue(forKey: providerId)
             registeredTools.removeValue(forKey: providerId)
 
-            print("[Osaurus] MCP Provider '\(provider.name)': Connection failed - \(error)")
+            print("[Osaurus] MCP Provider '\(provider.name)': Connection failed - \(classified.message)")
+            await emitDiagnostic(
+                level: .error,
+                event: "mcp.connect.failed",
+                context: [
+                    "providerId": provider.id.uuidString,
+                    "providerName": provider.name,
+                    "failureClass": classified.failureClass,
+                    "healthState": classified.healthState.rawValue,
+                    "message": classified.message,
+                    "fixIt": classified.fixIt ?? "",
+                ]
+            )
             notifyStatusChanged()
-            throw error
+            throw MCPProviderError.connectionFailed(classified.renderedMessage)
         }
     }
 
@@ -219,6 +269,9 @@ public final class MCPProviderManager: ObservableObject {
         if var state = providerStates[providerId] {
             state.isConnected = false
             state.isConnecting = false
+            state.lastError = nil
+            state.healthState = .unknownFailure
+            state.healthFixIt = nil
             state.discoveredToolCount = 0
             state.discoveredToolNames = []
             providerStates[providerId] = state
@@ -237,13 +290,97 @@ public final class MCPProviderManager: ObservableObject {
         try await connect(providerId: providerId)
     }
 
-    /// Connect to all enabled providers on app launch
-    public func connectEnabledProviders() async {
-        for provider in configuration.enabledProviders {
-            do {
-                try await connect(providerId: provider.id)
-            } catch {
-                print("[Osaurus] Failed to auto-connect to '\(provider.name)': \(error)")
+    /// Connect to all enabled providers that are marked for auto-connect on app launch
+    public func connectEnabledProviders(isStartup: Bool = false) async {
+        for provider in configuration.autoConnectProviders {
+            if isStartup,
+               shouldDisableStartupAutoConnect(provider: provider, healthState: .misconfiguredEndpoint)
+            {
+                await emitDiagnostic(
+                    level: .warning,
+                    event: "mcp.autoconnect.skipped",
+                    context: [
+                        "providerId": provider.id.uuidString,
+                        "providerName": provider.name,
+                        "reason": "openclaw-endpoint-sanity-failed",
+                    ]
+                )
+                await disableAutoConnectForProvider(
+                    provider,
+                    reason: "misconfigured-openclaw-endpoint"
+                )
+                continue
+            }
+
+            if isStartup,
+                providerStates[provider.id]?.healthState == .misconfiguredEndpoint
+            {
+                await emitDiagnostic(
+                    level: .warning,
+                    event: "mcp.autoconnect.skipped",
+                    context: [
+                        "providerId": provider.id.uuidString,
+                        "providerName": provider.name,
+                        "reason": "previously-misconfigured-endpoint",
+                    ]
+                )
+                continue
+            }
+
+            let maxAttempts = isStartup ? Self.startupAutoConnectRetryDelaysNs.count : 1
+            for attempt in 1...maxAttempts {
+                if isStartup {
+                    let delay = Self.startupAutoConnectRetryDelaysNs[max(0, attempt - 1)]
+                    if delay > 0 {
+                        try? await Task.sleep(nanoseconds: delay)
+                    }
+                }
+
+                do {
+                    if let connectOverride = Self.hooks?.connectOverride {
+                        try await connectOverride(provider.id)
+                    } else {
+                        try await connect(providerId: provider.id)
+                    }
+                    break
+                } catch {
+                    let storedHealthState = providerStates[provider.id]?.healthState ?? .unknownFailure
+                    let inferred = inferFailureClass(from: error.localizedDescription)
+                    let healthState = storedHealthState == .unknownFailure ? inferred.healthState : storedHealthState
+                    await emitDiagnostic(
+                        level: .warning,
+                        event: "mcp.autoconnect.retry",
+                        context: [
+                            "providerId": provider.id.uuidString,
+                            "providerName": provider.name,
+                            "attempt": "\(attempt)",
+                            "maxAttempts": "\(maxAttempts)",
+                            "healthState": healthState.rawValue,
+                            "error": error.localizedDescription,
+                        ]
+                    )
+                    print(
+                        "[Osaurus] Failed to auto-connect to '\(provider.name)' (attempt \(attempt)/\(maxAttempts)): \(error)"
+                    )
+
+                    if isStartup,
+                       shouldDisableStartupAutoConnect(provider: provider, healthState: healthState)
+                    {
+                        await disableAutoConnectForProvider(
+                            provider,
+                            reason: "misconfigured-openclaw-endpoint"
+                        )
+                        break
+                    }
+
+                    if healthState == .misconfiguredEndpoint || healthState == .authFailed {
+                        break
+                    }
+
+                    if attempt == maxAttempts {
+                        break
+                    }
+                }
             }
         }
     }
@@ -321,6 +458,15 @@ public final class MCPProviderManager: ObservableObject {
         guard let endpoint = URL(string: url) else {
             throw MCPProviderError.invalidURL
         }
+        if let sanityIssue = openClawMCPEndpointSanityIssue(for: endpoint) {
+            throw MCPProviderError.endpointMismatch(sanityIssue)
+        }
+
+        await emitDiagnostic(
+            level: .info,
+            event: "mcp.test.begin",
+            context: ["url": url]
+        )
 
         // Create temporary transport
         let configuration = URLSessionConfiguration.default
@@ -346,12 +492,38 @@ public final class MCPProviderManager: ObservableObject {
         )
 
         // Connect
-        _ = try await client.connect(transport: transport)
+        do {
+            _ = try await client.connect(transport: transport)
 
-        // List tools to verify connection
-        let (tools, _) = try await client.listTools()
-
-        return tools.count
+            // List tools to verify connection
+            let (tools, _) = try await client.listTools()
+            await emitDiagnostic(
+                level: .info,
+                event: "mcp.test.success",
+                context: [
+                    "url": url,
+                    "toolCount": "\(tools.count)",
+                ]
+            )
+            return tools.count
+        } catch {
+            let classified = classifyConnectionFailure(
+                error,
+                provider: MCPProvider(name: "Test", url: url, enabled: true, customHeaders: headers)
+            )
+            await emitDiagnostic(
+                level: .error,
+                event: "mcp.test.failed",
+                context: [
+                    "url": url,
+                    "failureClass": classified.failureClass,
+                    "healthState": classified.healthState.rawValue,
+                    "message": classified.message,
+                    "fixIt": classified.fixIt ?? "",
+                ]
+            )
+            throw MCPProviderError.connectionFailed(classified.renderedMessage)
+        }
     }
 
     // MARK: - Private Helpers
@@ -359,6 +531,9 @@ public final class MCPProviderManager: ObservableObject {
     private func createTransport(for provider: MCPProvider) throws -> HTTPClientTransport {
         guard let endpoint = URL(string: provider.url) else {
             throw MCPProviderError.invalidURL
+        }
+        if let sanityIssue = openClawMCPEndpointSanityIssue(for: endpoint) {
+            throw MCPProviderError.endpointMismatch(sanityIssue)
         }
 
         let urlConfig = URLSessionConfiguration.default
@@ -438,9 +613,213 @@ public final class MCPProviderManager: ObservableObject {
         }
     }
 
+    private struct ClassifiedConnectionFailure {
+        let failureClass: String
+        let healthState: ProviderHealthState
+        let message: String
+        let fixIt: String?
+
+        var renderedMessage: String {
+            guard let fixIt, !fixIt.isEmpty else { return message }
+            if message.localizedCaseInsensitiveContains(fixIt) {
+                return message
+            }
+            return "\(message) \(fixIt)"
+        }
+    }
+
+    private func classifyConnectionFailure(_ error: Error, provider: MCPProvider) -> ClassifiedConnectionFailure {
+        if let typed = error as? MCPProviderError {
+            switch typed {
+            case .endpointMismatch(let message):
+                return ClassifiedConnectionFailure(
+                    failureClass: "misconfigured-endpoint",
+                    healthState: .misconfiguredEndpoint,
+                    message: message,
+                    fixIt:
+                        "Use an MCP transport endpoint (for example /mcp or /sse), not OpenClaw UI/control routes like /health or /ws."
+                )
+            case .invalidURL:
+                return ClassifiedConnectionFailure(
+                    failureClass: "misconfigured-endpoint",
+                    healthState: .misconfiguredEndpoint,
+                    message: "Invalid MCP provider URL.",
+                    fixIt: "Correct the URL and retry."
+                )
+            case .timeout:
+                return ClassifiedConnectionFailure(
+                    failureClass: "network-unreachable",
+                    healthState: .networkUnreachable,
+                    message: "MCP request timed out while connecting to \(provider.url).",
+                    fixIt: "Check endpoint reachability and discovery timeout settings."
+                )
+            case .connectionFailed(let message):
+                let inferred = inferFailureClass(from: message)
+                return ClassifiedConnectionFailure(
+                    failureClass: inferred.failureClass,
+                    healthState: inferred.healthState,
+                    message: message,
+                    fixIt: inferred.fixIt
+                )
+            default:
+                break
+            }
+        }
+
+        let inferred = inferFailureClass(from: error.localizedDescription)
+        return ClassifiedConnectionFailure(
+            failureClass: inferred.failureClass,
+            healthState: inferred.healthState,
+            message: error.localizedDescription,
+            fixIt: inferred.fixIt
+        )
+    }
+
+    private func inferFailureClass(from rawMessage: String) -> (
+        failureClass: String,
+        healthState: ProviderHealthState,
+        fixIt: String?
+    ) {
+        let message = rawMessage.lowercased()
+        if message.contains("method not allowed") || message.contains("405")
+            || message.contains("unsupported protocol")
+        {
+            return (
+                "misconfigured-endpoint",
+                .misconfiguredEndpoint,
+                "Endpoint/protocol mismatch: configure the provider URL to an MCP endpoint (SSE/HTTP) instead of a control/UI route."
+            )
+        }
+        if message.contains("unauthorized") || message.contains("forbidden")
+            || message.contains("401") || message.contains("403")
+            || message.contains("authentication")
+        {
+            return ("auth-failed", .authFailed, "Update token/headers and retry.")
+        }
+        if message.contains("network") || message.contains("timed out")
+            || message.contains("timeout")
+            || message.contains("connection refused")
+            || message.contains("could not connect")
+            || message.contains("dns")
+        {
+            return ("network-unreachable", .networkUnreachable, "Check network reachability and endpoint host/port.")
+        }
+        if message.contains("unavailable") || message.contains("bad gateway")
+            || message.contains("502")
+            || message.contains("503")
+        {
+            return ("gateway-unavailable", .gatewayUnavailable, "Ensure the MCP gateway/server is running and retry.")
+        }
+        return ("unknown", .unknownFailure, nil)
+    }
+
+    private func openClawMCPEndpointSanityIssue(for url: URL) -> String? {
+        let host = url.host?.lowercased() ?? ""
+        let path = url.path.lowercased()
+        let localHosts: Set<String> = ["127.0.0.1", "localhost", "::1"]
+        let isOpenClawLocalGateway = localHosts.contains(host) && (url.port == 18789)
+        let knownBadControlRoutes =
+            path.hasPrefix("/health")
+            || path.hasPrefix("/ws")
+            || path.hasPrefix("/mcp")
+            || path.hasPrefix("/dashboard")
+            || path.hasPrefix("/channels")
+            || path.hasPrefix("/system")
+            || path.hasPrefix("/wizard")
+
+        if isOpenClawLocalGateway && knownBadControlRoutes {
+            return
+                "Configured URL '\(url.absoluteString)' points to an OpenClaw control route. Use an MCP transport endpoint instead."
+        }
+
+        if isOpenClawLocalGateway, (path.isEmpty || path == "/" || path == "/models") {
+            return
+                "Configured URL '\(url.absoluteString)' looks like OpenClaw gateway root, not an MCP endpoint. Configure the mcporter MCP URL instead."
+        }
+
+        return nil
+    }
+
+    private func shouldDisableStartupAutoConnect(
+        provider: MCPProvider,
+        healthState: ProviderHealthState
+    ) -> Bool {
+        guard healthState == .misconfiguredEndpoint else { return false }
+        guard let url = URL(string: provider.url) else { return false }
+        return openClawMCPEndpointSanityIssue(for: url) != nil
+    }
+
+    private func disableAutoConnectForProvider(_ provider: MCPProvider, reason: String) async {
+        guard var updated = configuration.provider(id: provider.id), updated.autoConnect else { return }
+        updated.autoConnect = false
+        configuration.update(updated)
+        MCPProviderConfigurationStore.save(configuration)
+        await emitDiagnostic(
+            level: .warning,
+            event: "mcp.autoconnect.disabled",
+            context: [
+                "providerId": provider.id.uuidString,
+                "providerName": provider.name,
+                "reason": reason,
+            ]
+        )
+        print("[Osaurus] MCP Provider '\(provider.name)': Auto-connect disabled (\(reason)).")
+    }
+
+    private func emitDiagnostic(
+        level: StartupDiagnosticsLevel,
+        event: String,
+        context: [String: String]
+    ) async {
+        await StartupDiagnostics.shared.emit(
+            level: level,
+            component: "mcp-provider-manager",
+            event: event,
+            context: context
+        )
+    }
+
     private func notifyStatusChanged() {
         NotificationCenter.default.post(name: Foundation.Notification.Name.mcpProviderStatusChanged, object: nil)
     }
+
+#if DEBUG
+    static func _testSetHooks(_ hooks: Hooks?) {
+        self.hooks = hooks
+    }
+
+    static func _testSetStartupRetryDelaysNs(_ delays: [UInt64]?) {
+        startupAutoConnectRetryDelaysOverrideNs = delays
+    }
+
+    func _testSetConfiguration(_ configuration: MCPProviderConfiguration) {
+        self.configuration = configuration
+        var states: [UUID: MCPProviderState] = [:]
+        for provider in configuration.providers {
+            states[provider.id] = providerStates[provider.id] ?? MCPProviderState(providerId: provider.id)
+        }
+        self.providerStates = states
+        self.clients.removeAll()
+        self.discoveredTools.removeAll()
+        self.registeredTools.removeAll()
+    }
+
+    func _testSetProviderState(_ state: MCPProviderState, for providerId: UUID) {
+        providerStates[providerId] = state
+    }
+
+    func _testInferFailureClass(from rawMessage: String) -> (
+        failureClass: String,
+        healthState: ProviderHealthState,
+        fixIt: String?
+    ) {
+        inferFailureClass(from: rawMessage)
+    }
+
+    func _testOpenClawMCPEndpointSanityIssue(url: URL) -> String? {
+        openClawMCPEndpointSanityIssue(for: url)
+    }
+#endif
 }
 
 // MARK: - Errors
@@ -450,6 +829,7 @@ public enum MCPProviderError: LocalizedError {
     case providerDisabled
     case notConnected
     case invalidURL
+    case endpointMismatch(String)
     case timeout
     case toolExecutionFailed(String)
     case connectionFailed(String)
@@ -464,6 +844,8 @@ public enum MCPProviderError: LocalizedError {
             return "Not connected to provider"
         case .invalidURL:
             return "Invalid server URL"
+        case .endpointMismatch(let message):
+            return "Endpoint mismatch: \(message)"
         case .timeout:
             return "Request timed out"
         case .toolExecutionFailed(let message):

@@ -161,18 +161,104 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             }
         }
 
-        // Auto-connect to enabled providers, then update model cache with remote models
+        // Auto-start OpenClaw gateway (when configured), then auto-connect providers.
+        // This prevents OpenClaw-backed provider connections from racing the gateway startup.
         Task { @MainActor in
-            await MCPProviderManager.shared.connectEnabledProviders()
-            await RemoteProviderManager.shared.connectEnabledProviders()
+            await StartupDiagnostics.shared.emit(
+                level: .info,
+                component: "app-startup",
+                event: "startup.providers.begin",
+                context: ["phase": "gateway-and-provider-autoconnect"]
+            )
+
+            // Initialize OpenClaw manager first so it can observe MCP provider changes
+            // that occur during startup auto-connect.
+            let openClawManager = OpenClawManager.shared
+
+            let shouldAutoStartGateway =
+                openClawManager.configuration.isEnabled &&
+                openClawManager.configuration.autoStartGateway &&
+                (openClawManager.configuration.gatewayURL?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .isEmpty ?? true)
+
+            if shouldAutoStartGateway {
+                let start = Date()
+                await StartupDiagnostics.shared.emit(
+                    level: .info,
+                    component: "app-startup",
+                    event: "startup.gateway.autostart.begin",
+                    context: ["endpoint": openClawManager.gatewayEndpointSummary]
+                )
+                do {
+                    try await openClawManager.startGateway()
+                    let elapsedMs = Int(Date().timeIntervalSince(start) * 1000)
+                    await StartupDiagnostics.shared.emit(
+                        level: .info,
+                        component: "app-startup",
+                        event: "startup.gateway.autostart.success",
+                        context: [
+                            "endpoint": openClawManager.gatewayEndpointSummary,
+                            "elapsedMs": "\(elapsedMs)",
+                        ]
+                    )
+                } catch {
+                    let elapsedMs = Int(Date().timeIntervalSince(start) * 1000)
+                    await StartupDiagnostics.shared.emit(
+                        level: .error,
+                        component: "app-startup",
+                        event: "startup.gateway.autostart.failed",
+                        context: [
+                            "endpoint": openClawManager.gatewayEndpointSummary,
+                            "elapsedMs": "\(elapsedMs)",
+                            "error": error.localizedDescription,
+                        ]
+                    )
+                }
+            } else {
+                await StartupDiagnostics.shared.emit(
+                    level: .info,
+                    component: "app-startup",
+                    event: "startup.gateway.autostart.skipped",
+                    context: ["reason": "disabled-or-custom-endpoint"]
+                )
+            }
+
+            await StartupDiagnostics.shared.emit(
+                level: .info,
+                component: "app-startup",
+                event: "startup.mcp.autoconnect.begin",
+                context: ["providerCount": "\(MCPProviderManager.shared.configuration.autoConnectProviders.count)"]
+            )
+            await MCPProviderManager.shared.connectEnabledProviders(isStartup: true)
+            await StartupDiagnostics.shared.emit(
+                level: .info,
+                component: "app-startup",
+                event: "startup.mcp.autoconnect.complete",
+                context: ["providerCount": "\(MCPProviderManager.shared.configuration.autoConnectProviders.count)"]
+            )
+
+            await StartupDiagnostics.shared.emit(
+                level: .info,
+                component: "app-startup",
+                event: "startup.remote.autoconnect.begin",
+                context: ["providerCount": "\(RemoteProviderManager.shared.configuration.autoConnectProviders.count)"]
+            )
+            await RemoteProviderManager.shared.connectEnabledProviders(isStartup: true)
+            await StartupDiagnostics.shared.emit(
+                level: .info,
+                component: "app-startup",
+                event: "startup.remote.autoconnect.complete",
+                context: ["providerCount": "\(RemoteProviderManager.shared.configuration.autoConnectProviders.count)"]
+            )
             // Update cache with remote models (local models already cached above)
             await ChatSession.prewarmModelCache()
-
-            if OpenClawManager.shared.configuration.isEnabled &&
-                OpenClawManager.shared.configuration.autoStartGateway
-            {
-                try? await OpenClawManager.shared.startGateway()
-            }
+            await StartupDiagnostics.shared.emit(
+                level: .info,
+                component: "app-startup",
+                event: "startup.providers.complete",
+                context: [:]
+            )
         }
 
         // Start plugin repository background refresh for update checking
@@ -475,6 +561,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
         NotificationCenter.default.addObserver(
             forName: .openClawConnectionChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.updateStatusItemAndMenu()
+        }
+        NotificationCenter.default.addObserver(
+            forName: .openClawGatewayStatusChanged,
             object: nil,
             queue: .main
         ) { [weak self] _ in

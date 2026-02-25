@@ -1,0 +1,211 @@
+{
+  "sessionKey": "agent:main:main",
+  "sessionId": "ca6dfcd6-b265-4963-8355-b3bc934b0ecf",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Conversation info (untrusted metadata):\n```json\n{\n  \"message_id\": \"46b57eca-7157-46f5-bbbb-ca6404a5f6a6\",\n  \"sender\": \"gateway-client\"\n}\n```\n\n[Sat 2026-02-21 06:05 GMT+3] hello"
+        }
+      ],
+      "timestamp": 1771643125828
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "The user says hello. Let me check memory for recent context before responding."
+        },
+        {
+          "type": "toolCall",
+          "id": "toolu_012D1ys1NxgkBY5kf8KMJRNL",
+          "name": "memory_search",
+          "arguments": {
+            "query": "recent context Chris",
+            "maxResults": 3
+          }
+        }
+      ],
+      "api": "anthropic-messages",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "stopReason": "toolUse",
+      "timestamp": 1771643125831
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "toolu_012D1ys1NxgkBY5kf8KMJRNL",
+      "toolName": "memory_search",
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"results\": [],\n  \"provider\": \"none\",\n  \"citations\": \"auto\",\n  \"mode\": \"fts-only\"\n}"
+        }
+      ],
+      "isError": false,
+      "timestamp": 1771643128577
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "No memory results. Let me just greet Chris simply and naturally."
+        },
+        {
+          "type": "text",
+          "text": "Hey Chris! 👋 Early Saturday morning for you — hope the day's off to a good start. What's up?"
+        }
+      ],
+      "api": "anthropic-messages",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "stopReason": "stop",
+      "timestamp": 1771643128583
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "PR-E2E-06 tag=seq-gap-20260224T040438Z idx=1. Reply with text that includes: ACK tag=seq-gap-20260224T040438Z idx=1."
+        }
+      ],
+      "timestamp": 1771905884479
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "The user wants me to acknowledge a sequence gap tag."
+        },
+        {
+          "type": "text",
+          "text": "ACK tag=seq-gap-20260224T040438Z idx=1."
+        }
+      ],
+      "api": "anthropic-messages",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "stopReason": "stop",
+      "timestamp": 1771905884481
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "PR-E2E-06 tag=seq-gap-20260224T040438Z idx=2. Reply with text that includes: ACK tag=seq-gap-20260224T040438Z idx=2."
+        }
+      ],
+      "timestamp": 1771905887735
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "Simple acknowledgment needed."
+        },
+        {
+          "type": "text",
+          "text": "ACK tag=seq-gap-20260224T040438Z idx=2."
+        }
+      ],
+      "api": "anthropic-messages",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "stopReason": "stop",
+      "timestamp": 1771905887736
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "PR-E2E-06 tag=seq-gap-20260224T040438Z idx=3. Reply with text that includes: ACK tag=seq-gap-20260224T040438Z idx=3."
+        }
+      ],
+      "timestamp": 1771905890427
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "Simple acknowledgment."
+        },
+        {
+          "type": "text",
+          "text": "ACK tag=seq-gap-20260224T040438Z idx=3."
+        }
+      ],
+      "api": "anthropic-messages",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "stopReason": "stop",
+      "timestamp": 1771905890427
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "PR-E2E-06 tag=seq-gap-20260224T040438Z idx=4. Reply with text that includes: ACK tag=seq-gap-20260224T040438Z idx=4."
+        }
+      ],
+      "timestamp": 1771905892802
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "Simple acknowledgment."
+        },
+        {
+          "type": "text",
+          "text": "ACK tag=seq-gap-20260224T040438Z idx=4."
+        }
+      ],
+      "api": "anthropic-messages",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "stopReason": "stop",
+      "timestamp": 1771905892803
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "PR-E2E-06 tag=seq-gap-20260224T040438Z idx=5. Reply with text that includes: ACK tag=seq-gap-20260224T040438Z idx=5."
+        }
+      ],
+      "timestamp": 1771905896193
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "Simple acknowledgment."
+        },
+        {
+          "type": "text",
+          "text": "ACK tag=seq-gap-20260224T040438Z idx=5."
+        }
+      ],
+      "api": "anthropic-messages",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "stopReason": "stop",
+      "timestamp": 1771905896194
+    }
+  ],
+  "thinkingLevel": "low"
+}

@@ -189,7 +189,22 @@ public final class BackgroundTaskManager: ObservableObject {
         registerTask(state)
         observeWorkTask(state, session: workSession)
 
-        await context.start(prompt: request.prompt)
+        do {
+            try await context.start(prompt: request.prompt)
+        } catch {
+            if let currentTask = workSession.currentTask {
+                state.taskId = currentTask.id
+                state.taskTitle = currentTask.title
+            }
+            state.issues = workSession.issues
+            state.activeIssueId = workSession.activeIssue?.id
+            state.loopState = workSession.loopState
+            state.currentStep = nil
+            state.appendActivity(kind: .error, title: "Start failed", detail: error.localizedDescription)
+            markCompleted(state, success: false, summary: error.localizedDescription)
+            print("[BackgroundTaskManager] Work dispatch failed: \(error.localizedDescription)")
+            return DispatchHandle(id: request.id, request: request)
+        }
 
         // Update with real task info now that the work session has created its task
         if let currentTask = workSession.currentTask {
@@ -231,7 +246,15 @@ public final class BackgroundTaskManager: ObservableObject {
         registerTask(state)
         observeChatTask(state, session: context.chatSession)
 
-        await context.start(prompt: request.prompt)
+        do {
+            try await context.start(prompt: request.prompt)
+        } catch {
+            state.currentStep = nil
+            state.appendActivity(kind: .error, title: "Start failed", detail: error.localizedDescription)
+            markCompleted(state, success: false, summary: error.localizedDescription)
+            print("[BackgroundTaskManager] Chat dispatch failed: \(error.localizedDescription)")
+            return DispatchHandle(id: request.id, request: request)
+        }
 
         print("[BackgroundTaskManager] Dispatched chat task: \(request.title ?? "untitled")")
         return DispatchHandle(id: request.id, request: request)
@@ -298,8 +321,11 @@ public final class BackgroundTaskManager: ObservableObject {
 
     private func resultFromState(_ state: BackgroundTaskState) -> DispatchResult {
         switch state.status {
-        case .completed:
-            return .completed(sessionId: state.executionContext?.chatSession.sessionId)
+        case .completed(let success, let summary):
+            if success {
+                return .completed(sessionId: state.executionContext?.chatSession.sessionId)
+            }
+            return .failed(summary)
         case .cancelled:
             return .cancelled
         default:

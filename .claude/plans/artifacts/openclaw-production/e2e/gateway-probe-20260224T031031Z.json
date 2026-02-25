@@ -1,0 +1,80 @@
+{
+  "ok": false,
+  "ts": 1771902672775,
+  "durationMs": 5914,
+  "timeoutMs": 3000,
+  "primaryTargetId": null,
+  "warnings": [],
+  "network": {
+    "localLoopbackUrl": "ws://127.0.0.1:18789",
+    "localTailnetUrl": null,
+    "tailnetIPv4": null
+  },
+  "discovery": {
+    "timeoutMs": 1200,
+    "count": 1,
+    "beacons": [
+      {
+        "instanceName": "Chris’s M3 Max (OpenClaw)",
+        "displayName": "Chris’s M3 Max (OpenClaw)",
+        "domain": "local.",
+        "host": "openclaw.local",
+        "lanHost": null,
+        "tailnetDns": null,
+        "gatewayPort": null,
+        "sshPort": null,
+        "wsUrl": "ws://openclaw.local:18789"
+      }
+    ]
+  },
+  "targets": [
+    {
+      "id": "sshTunnel",
+      "kind": "sshTunnel",
+      "url": "ws://127.0.0.1:18789",
+      "active": true,
+      "tunnel": {
+        "kind": "ssh",
+        "target": "chriskarani@openclaw.local",
+        "localPort": 18789,
+        "remotePort": 18789,
+        "pid": 86187
+      },
+      "connect": {
+        "ok": false,
+        "latencyMs": null,
+        "error": "connect failed: unauthorized: device token mismatch (rotate/reissue device token)",
+        "close": {
+          "code": 1008,
+          "reason": "unauthorized: device token mismatch (rotate/reissue device token)"
+        }
+      },
+      "self": null,
+      "config": null,
+      "health": null,
+      "summary": null,
+      "presence": null
+    },
+    {
+      "id": "configRemote",
+      "kind": "configRemote",
+      "url": "ws://openclaw.local:18789",
+      "active": false,
+      "tunnel": null,
+      "connect": {
+        "ok": false,
+        "latencyMs": null,
+        "error": "connect failed: unauthorized: device token mismatch (rotate/reissue device token)",
+        "close": {
+          "code": 1008,
+          "reason": "unauthorized: device token mismatch (rotate/reissue device token)"
+        }
+      },
+      "self": null,
+      "config": null,
+      "health": null,
+      "summary": null,
+      "presence": null
+    }
+  ]
+}

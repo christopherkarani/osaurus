@@ -1,0 +1,5 @@
+gateway connect failed: Error: unauthorized: device token mismatch (rotate/reissue device token)
+Gateway call failed: Error: gateway closed (1008): unauthorized: device token mismatch (rotate/reissue device token)
+Gateway target: ws://openclaw.local:18789
+Source: cli --url
+Config: /Users/chriskarani/.openclaw/openclaw.json

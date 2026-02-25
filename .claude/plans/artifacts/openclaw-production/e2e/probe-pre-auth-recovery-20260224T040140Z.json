@@ -1,0 +1,67 @@
+{
+  "ok": false,
+  "ts": 1771905705801,
+  "durationMs": 1525,
+  "timeoutMs": 3000,
+  "primaryTargetId": null,
+  "warnings": [
+    {
+      "code": "ssh_tunnel_failed",
+      "message": "SSH tunnel failed: listen EPERM: operation not permitted 0.0.0.0:18789"
+    }
+  ],
+  "network": {
+    "localLoopbackUrl": "ws://127.0.0.1:18789",
+    "localTailnetUrl": null,
+    "tailnetIPv4": null
+  },
+  "discovery": {
+    "timeoutMs": 1200,
+    "count": 0,
+    "beacons": []
+  },
+  "targets": [
+    {
+      "id": "configRemote",
+      "kind": "configRemote",
+      "url": "ws://openclaw.local:18789",
+      "active": false,
+      "tunnel": null,
+      "connect": {
+        "ok": false,
+        "latencyMs": null,
+        "error": "connect failed: getaddrinfo ENOTFOUND openclaw.local",
+        "close": {
+          "code": 1006,
+          "reason": ""
+        }
+      },
+      "self": null,
+      "config": null,
+      "health": null,
+      "summary": null,
+      "presence": null
+    },
+    {
+      "id": "localLoopback",
+      "kind": "localLoopback",
+      "url": "ws://127.0.0.1:18789",
+      "active": true,
+      "tunnel": null,
+      "connect": {
+        "ok": false,
+        "latencyMs": null,
+        "error": "connect failed: connect EPERM 127.0.0.1:18789 - Local (0.0.0.0:0)",
+        "close": {
+          "code": 1006,
+          "reason": ""
+        }
+      },
+      "self": null,
+      "config": null,
+      "health": null,
+      "summary": null,
+      "presence": null
+    }
+  ]
+}

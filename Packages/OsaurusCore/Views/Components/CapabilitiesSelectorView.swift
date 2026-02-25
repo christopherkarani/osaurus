@@ -382,6 +382,10 @@ struct CapabilitiesSelectorView: View {
     var body: some View {
         let content = VStack(spacing: 0) {
             header
+            if isWorkMode {
+                Divider().background(theme.primaryBorder.opacity(0.25))
+                workModeScopeBanner
+            }
             Divider().background(theme.primaryBorder.opacity(0.3))
             searchField
             Divider().background(theme.primaryBorder.opacity(0.3))
@@ -471,7 +475,7 @@ struct CapabilitiesSelectorView: View {
         VStack(spacing: 12) {
             if !isInline {
                 HStack {
-                    Text("Abilities")
+                    Text(isWorkMode ? "Local Abilities" : "Abilities")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
@@ -564,6 +568,24 @@ struct CapabilitiesSelectorView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, isInline ? 8 : 12)
+    }
+
+    private var workModeScopeBanner: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(theme.secondaryText)
+                .padding(.top, 1)
+
+            Text("Work mode runs through OpenClaw. This panel only configures Osaurus local tools/skills, so available runtime tools may differ.")
+                .font(.system(size: 10))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(theme.tertiaryBackground.opacity(0.18))
     }
 
     // MARK: - Search

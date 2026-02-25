@@ -56,20 +56,24 @@ public final class WorkDatabase: @unchecked Sendable {
 
     // MARK: - Lifecycle
 
-    private static let legacyDatabasePath: URL = OsaurusPaths.appSupportRoot()
-        .appendingPathComponent("agent", isDirectory: true)
-        .appendingPathComponent("agent.db")
+    private static func legacyDatabasePath() -> URL {
+        OsaurusPaths.appSupportRoot()
+            .appendingPathComponent("agent", isDirectory: true)
+            .appendingPathComponent("agent.db")
+    }
 
     /// Opens the database connection and runs migrations
     public func open() throws {
         try queue.sync {
-            guard db == nil else { return }
-
-            OsaurusPaths.ensureExistsSilent(OsaurusPaths.workData())
-
-            try openConnection()
-            try runMigrations()
-            try recoverLegacyDataIfNeeded()
+            let wasOpen = db != nil
+            try ensureOpenConnectionLocked(caller: "open")
+            if !wasOpen {
+                emitDiagnostics(
+                    level: .info,
+                    event: "workdb.opened",
+                    context: ["caller": "open", "dbPath": OsaurusPaths.workDatabaseFile().path]
+                )
+            }
         }
     }
 
@@ -77,8 +81,14 @@ public final class WorkDatabase: @unchecked Sendable {
     public func close() {
         queue.sync {
             guard let connection = db else { return }
+            emitDiagnostics(
+                level: .info,
+                event: "workdb.close.begin",
+                context: ["caller": "close", "dbPath": OsaurusPaths.workDatabaseFile().path]
+            )
             sqlite3_close(connection)
             db = nil
+            emitDiagnostics(level: .info, event: "workdb.closed", context: ["caller": "close"])
         }
     }
 
@@ -87,7 +97,8 @@ public final class WorkDatabase: @unchecked Sendable {
     /// Replaces an empty work.db with agent.db if the user already launched
     /// the broken version (schema exists but no data).
     private func recoverLegacyDataIfNeeded() throws {
-        guard FileManager.default.fileExists(atPath: Self.legacyDatabasePath.path) else { return }
+        let legacyPath = Self.legacyDatabasePath()
+        guard FileManager.default.fileExists(atPath: legacyPath.path) else { return }
 
         var hasData = false
         try executeRaw("SELECT COUNT(*) FROM tasks") { stmt in
@@ -101,7 +112,7 @@ public final class WorkDatabase: @unchecked Sendable {
 
         let newPath = OsaurusPaths.workDatabaseFile()
         try? FileManager.default.removeItem(at: newPath)
-        try FileManager.default.copyItem(at: Self.legacyDatabasePath, to: newPath)
+        try FileManager.default.copyItem(at: legacyPath, to: newPath)
         print("[WorkDatabase] Recovered data from legacy agent.db")
 
         try openConnection()
@@ -120,6 +131,29 @@ public final class WorkDatabase: @unchecked Sendable {
         }
         db = connection
         try executeRaw("PRAGMA foreign_keys = ON")
+    }
+
+    private func ensureOpenConnectionLocked(caller: String) throws {
+        guard db == nil else { return }
+
+        OsaurusPaths.ensureExistsSilent(OsaurusPaths.workData())
+
+        do {
+            try openConnection()
+            try runMigrations()
+            try recoverLegacyDataIfNeeded()
+        } catch {
+            emitDiagnostics(
+                level: .error,
+                event: "workdb.open.failed",
+                context: [
+                    "caller": caller,
+                    "error": error.localizedDescription,
+                    "dbPath": OsaurusPaths.workDatabaseFile().path,
+                ]
+            )
+            throw error
+        }
     }
 
     // MARK: - Schema & Migrations
@@ -291,7 +325,13 @@ public final class WorkDatabase: @unchecked Sendable {
 
     /// Executes a raw SQL statement without results
     private func executeRaw(_ sql: String) throws {
+        try ensureOpenConnectionLocked(caller: "executeRaw")
         guard let connection = db else {
+            emitDiagnostics(
+                level: .error,
+                event: "workdb.notOpen",
+                context: ["caller": "executeRaw", "sql": Self.sqlPreview(sql)]
+            )
             throw WorkDatabaseError.notOpen
         }
 
@@ -307,7 +347,13 @@ public final class WorkDatabase: @unchecked Sendable {
 
     /// Executes a raw SQL statement with a result handler
     private func executeRaw(_ sql: String, handler: (OpaquePointer) throws -> Void) throws {
+        try ensureOpenConnectionLocked(caller: "executeRawWithHandler")
         guard let connection = db else {
+            emitDiagnostics(
+                level: .error,
+                event: "workdb.notOpen",
+                context: ["caller": "executeRawWithHandler", "sql": Self.sqlPreview(sql)]
+            )
             throw WorkDatabaseError.notOpen
         }
 
@@ -326,7 +372,9 @@ public final class WorkDatabase: @unchecked Sendable {
     /// Executes a query on the database queue
     public func execute<T>(_ operation: @escaping (OpaquePointer) throws -> T) throws -> T {
         try queue.sync {
+            try ensureOpenConnectionLocked(caller: "execute")
             guard let connection = db else {
+                emitDiagnostics(level: .error, event: "workdb.notOpen", context: ["caller": "execute"])
                 throw WorkDatabaseError.notOpen
             }
             return try operation(connection)
@@ -338,7 +386,13 @@ public final class WorkDatabase: @unchecked Sendable {
         throws
     {
         try queue.sync {
+            try ensureOpenConnectionLocked(caller: "prepareAndExecute")
             guard let connection = db else {
+                emitDiagnostics(
+                    level: .error,
+                    event: "workdb.notOpen",
+                    context: ["caller": "prepareAndExecute", "sql": Self.sqlPreview(sql)]
+                )
                 throw WorkDatabaseError.notOpen
             }
 
@@ -399,6 +453,26 @@ public final class WorkDatabase: @unchecked Sendable {
             try? rollbackTransaction()
             throw error
         }
+    }
+
+    private func emitDiagnostics(
+        level: StartupDiagnosticsLevel,
+        event: String,
+        context: [String: String] = [:]
+    ) {
+        Task.detached(priority: .utility) {
+            await StartupDiagnostics.shared.emit(
+                level: level,
+                component: "work-database",
+                event: event,
+                context: context
+            )
+        }
+    }
+
+    private static func sqlPreview(_ sql: String) -> String {
+        let collapsed = sql.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        return StartupDiagnostics.truncateValue(collapsed, maxLength: 120)
     }
 }
 

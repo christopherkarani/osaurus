@@ -220,6 +220,14 @@ public final class OpenClawManager: ObservableObject {
         case failed(String)
     }
 
+    public enum OnboardingState: Equatable, Sendable {
+        case unknown
+        case checking
+        case required
+        case notRequired
+        case failed(String)
+    }
+
     public enum ToastEvent: Equatable, Sendable {
         case started
         case connected
@@ -374,6 +382,7 @@ public final class OpenClawManager: ObservableObject {
     @Published public private(set) var activeSessions: [ActiveSessionInfo] = []
     @Published public private(set) var lastHealth: OpenClawGatewayHealth?
     @Published public private(set) var lastError: String?
+    @Published public private(set) var onboardingState: OnboardingState = .unknown
     @Published public private(set) var mcpBridgeIsSyncing = false
     @Published public private(set) var mcpBridgeLastSyncResult: OpenClawMCPBridgeSyncResult?
     @Published public private(set) var mcpBridgeLastSyncError: String?
@@ -414,6 +423,8 @@ public final class OpenClawManager: ObservableObject {
     private static let providerConfigPatchRetryDelayNanoseconds: UInt64 = 150_000_000
     private static let osaurusLocalServerBootstrapAttempts = 4
     private static let osaurusLocalServerBootstrapDelayNanoseconds: UInt64 = 350_000_000
+    private static let kimiCodingCanonicalBaseURL = "https://api.kimi.com/coding"
+    private static let kimiCodingLegacyPaths: Set<String> = ["/anthropic", "/anthropic/"]
     private static func emitDefaultToastEvent(_ event: ToastEvent) {
         switch event {
         case .started:
@@ -479,6 +490,24 @@ public final class OpenClawManager: ObservableObject {
         return "127.0.0.1:\(configuration.gatewayPort)"
     }
 
+    public var isLocalOnboardingGateRequired: Bool {
+        guard configuration.isEnabled else { return false }
+        guard !hasCustomGatewayURL else { return false }
+        switch onboardingState {
+        case .checking, .required:
+            return true
+        default:
+            return false
+        }
+    }
+
+    public var onboardingFailureMessage: String? {
+        if case .failed(let message) = onboardingState {
+            return message
+        }
+        return nil
+    }
+
     private var hasCustomGatewayURL: Bool {
         !(configuration.gatewayURL?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
     }
@@ -510,6 +539,7 @@ public final class OpenClawManager: ObservableObject {
         case .ready:
             if !configuration.isEnabled {
                 phase = .notConfigured
+                onboardingState = .unknown
             } else if gatewayStatus == .running {
                 phase = isConnected ? .connected : .gatewayRunning
             } else {
@@ -522,7 +552,63 @@ public final class OpenClawManager: ObservableObject {
                 phase = .environmentBlocked(status)
             } else {
                 phase = .notConfigured
+                onboardingState = .unknown
             }
+        }
+    }
+
+    public func refreshOnboardingState(force: Bool = false) async {
+        guard configuration.isEnabled else {
+            onboardingState = .unknown
+            return
+        }
+
+        guard !hasCustomGatewayURL else {
+            onboardingState = .notRequired
+            return
+        }
+
+        guard isConnected else {
+            if force || onboardingState == .checking {
+                onboardingState = .unknown
+            }
+            return
+        }
+
+        if !force {
+            switch onboardingState {
+            case .required, .notRequired:
+                return
+            default:
+                break
+            }
+        }
+
+        onboardingState = .checking
+
+        do {
+            let requiresOnboarding = try await detectOnboardingRequirement()
+            onboardingState = requiresOnboarding ? .required : .notRequired
+        } catch {
+            onboardingState = .failed(error.localizedDescription)
+            await emitStartupDiagnostic(
+                level: .warning,
+                event: "openclaw.onboarding.state.failed",
+                context: ["error": error.localizedDescription]
+            )
+        }
+    }
+
+    private func detectOnboardingRequirement() async throws -> Bool {
+        let agents = try await gatewayAgentsList()
+        let defaultAgentId = normalizedString(agents.defaultId) ?? agents.agents.first?.id
+        guard let defaultAgentId else {
+            return false
+        }
+
+        let listing = try await gatewayAgentsFilesList(agentId: defaultAgentId)
+        return listing.files.contains { file in
+            file.name.caseInsensitiveCompare("BOOTSTRAP.md") == .orderedSame && !file.missing
         }
     }
 
@@ -1479,7 +1565,11 @@ public final class OpenClawManager: ObservableObject {
         seedModelsFromEndpoint: Bool = false,
         requireSeededModels: Bool = false
     ) async throws -> Int {
-        let normalizedBaseURL = baseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedProviderID = id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalizedBaseURL = Self.canonicalProviderBaseURL(
+            providerId: normalizedProviderID,
+            baseURL: baseUrl
+        )
         let normalizedAPI = apiCompatibility.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedAPIKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
         let discoveredModels: [ProviderSeedModel]
@@ -1602,6 +1692,97 @@ public final class OpenClawManager: ObservableObject {
         return configuredModels.count
     }
 
+    /// Migrates legacy Kimi Coding provider base URLs from Moonshot Anthropic endpoints
+    /// to OpenClaw's canonical `https://api.kimi.com/coding` endpoint.
+    @discardableResult
+    public func migrateLegacyKimiCodingProviderEndpointIfNeeded() async throws -> Bool {
+        let result = try await applyProviderConfigMutation(providerId: "kimi-coding") { existingProvider, _ in
+            guard let existingProvider else {
+                return .skip
+            }
+
+            var providerEntry = Self.normalizeJSONValue(existingProvider) as? [String: Any] ?? [:]
+            guard let rawBaseURL = providerEntry["baseUrl"] as? String else {
+                return .skip
+            }
+
+            let trimmedBaseURL = rawBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedBaseURL.isEmpty,
+                  Self.isLegacyKimiCodingEndpoint(trimmedBaseURL)
+            else {
+                return .skip
+            }
+
+            providerEntry["baseUrl"] = Self.kimiCodingCanonicalBaseURL
+            return .set(provider: providerEntry, allowlistEntries: [:])
+        }
+
+        if result?.restart == true {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            if !isConnected && gatewayStatus == .running {
+                try? await connect()
+            }
+        }
+
+        if result != nil {
+            providerReadinessOverrides.removeValue(forKey: "kimi-coding")
+        }
+        return result != nil
+    }
+
+    public func updateProviderAPIKey(id: String, apiKey: String) async throws {
+        let providerID = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !providerID.isEmpty else {
+            throw NSError(
+                domain: "OpenClawManager",
+                code: 13,
+                userInfo: [NSLocalizedDescriptionKey: "Provider ID is required."]
+            )
+        }
+        guard !normalizedAPIKey.isEmpty else {
+            throw NSError(
+                domain: "OpenClawManager",
+                code: 14,
+                userInfo: [NSLocalizedDescriptionKey: "API key cannot be empty."]
+            )
+        }
+
+        let result = try await applyProviderConfigMutation(providerId: providerID) { existingProvider, _ in
+            guard let existingProvider else {
+                throw NSError(
+                    domain: "OpenClawManager",
+                    code: 15,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "Provider '\(providerID)' is not configured. Add it first."
+                    ]
+                )
+            }
+
+            var providerEntry = Self.normalizeJSONValue(existingProvider) as? [String: Any] ?? [:]
+            let existingKey = (providerEntry["apiKey"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if existingKey == normalizedAPIKey {
+                return .skip
+            }
+
+            providerEntry["apiKey"] = normalizedAPIKey
+            return .set(provider: providerEntry, allowlistEntries: [:])
+        }
+
+        if result?.restart == true {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            if !isConnected && gatewayStatus == .running {
+                try? await connect()
+            }
+        }
+
+        await refreshStatus()
+        try await fetchConfiguredProviders()
+        providerReadinessOverrides.removeValue(forKey: providerID)
+    }
+
     public func removeProvider(id: String) async throws {
         let result = try await applyProviderConfigMutation(providerId: id) { existingProvider, _ in
             guard existingProvider != nil else {
@@ -1620,6 +1801,16 @@ public final class OpenClawManager: ObservableObject {
     }
 
     public func fetchConfiguredProviders() async throws {
+        do {
+            _ = try await migrateLegacyKimiCodingProviderEndpointIfNeeded()
+        } catch {
+            await emitStartupDiagnostic(
+                level: .warning,
+                event: "openclaw.providers.kimiCodingMigration.failed",
+                context: ["error": error.localizedDescription]
+            )
+        }
+
         let configResult = try await gatewayConfigGetFull()
         guard let config = configResult.config else {
             configuredProviders = []
@@ -1742,7 +1933,46 @@ public final class OpenClawManager: ObservableObject {
             return modelId
         }()
 
-        guard let model = availableModels.first(where: { $0.id == stripped }) else {
+        let normalizedSelection = stripped.trimmingCharacters(in: .whitespacesAndNewlines)
+        let providerHintAndModelID: (provider: String?, modelID: String) = {
+            guard let slashIndex = normalizedSelection.firstIndex(of: "/"),
+                  slashIndex > normalizedSelection.startIndex
+            else {
+                return (nil, normalizedSelection)
+            }
+
+            let provider = normalizedSelection[..<slashIndex]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            let model = normalizedSelection[normalizedSelection.index(after: slashIndex)...]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !provider.isEmpty, !model.isEmpty else {
+                return (nil, normalizedSelection)
+            }
+            return (provider, model)
+        }()
+
+        let model = availableModels.first(where: { candidate in
+            let candidateID = candidate.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            let candidateProvider = candidate.provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard let providerHint = providerHintAndModelID.provider else {
+                return candidateID == providerHintAndModelID.modelID
+            }
+            return candidateProvider == providerHint
+                && candidateID == providerHintAndModelID.modelID
+        })
+
+        guard let model else {
+            if let providerHint = providerHintAndModelID.provider,
+               let provider = configuredProviders.first(where: {
+                   $0.id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == providerHint
+               })
+            {
+                if let override = providerReadinessOverrides[provider.id], override != .ready {
+                    return override
+                }
+                return provider.readinessReason
+            }
             if let override = providerReadinessOverrides.values.first(where: { !$0.isReady }) {
                 return override
             }
@@ -2245,22 +2475,40 @@ public final class OpenClawManager: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
 
-        guard normalizedProviderID == "moonshot",
-              normalizedAPI == "openai-completions",
-              isMoonshotEndpoint(baseURL)
-        else {
+        switch normalizedProviderID {
+        case "moonshot":
+            guard normalizedAPI == "openai-completions",
+                  isMoonshotEndpoint(baseURL)
+            else {
+                return discoveredModels
+            }
+
+            return [
+                ProviderSeedModel(
+                    id: "kimi-k2.5",
+                    name: "Kimi K2.5",
+                    reasoning: false,
+                    contextWindow: 256_000,
+                    maxTokens: 8_192
+                )
+            ]
+        case "kimi-coding":
+            guard normalizedAPI == "anthropic-messages",
+                  isKimiCodingEndpoint(baseURL)
+            else {
+                return discoveredModels
+            }
+
+            return [
+                ProviderSeedModel(
+                    id: "k2p5",
+                    name: "Kimi K2.5",
+                    reasoning: true
+                )
+            ]
+        default:
             return discoveredModels
         }
-
-        return [
-            ProviderSeedModel(
-                id: "kimi-k2.5",
-                name: "Kimi K2.5",
-                reasoning: false,
-                contextWindow: 256_000,
-                maxTokens: 8_192
-            )
-        ]
     }
 
     private static func isMoonshotEndpoint(_ rawURL: String) -> Bool {
@@ -2275,6 +2523,61 @@ public final class OpenClawManager: ObservableObject {
             || host.hasSuffix(".moonshot.cn")
     }
 
+    private static func isKimiCodingEndpoint(_ rawURL: String) -> Bool {
+        guard let components = URLComponents(string: rawURL),
+              let host = components.host?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        else {
+            return false
+        }
+
+        let normalizedPath = components.path
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        // Canonical endpoint used by OpenClaw/pi-ai for Kimi Coding.
+        if host == "api.kimi.com" || host.hasSuffix(".kimi.com") {
+            return normalizedPath == "/coding"
+                || normalizedPath == "/coding/"
+                || normalizedPath.hasPrefix("/coding/")
+        }
+
+        // Backward-compatibility with older Moonshot Anthropic-style endpoint.
+        if isMoonshotEndpoint(rawURL) {
+            return normalizedPath == "/anthropic"
+                || normalizedPath == "/anthropic/"
+                || normalizedPath.hasPrefix("/anthropic/")
+        }
+
+        return false
+    }
+
+    private static func isLegacyKimiCodingEndpoint(_ rawURL: String) -> Bool {
+        guard isMoonshotEndpoint(rawURL),
+              let components = URLComponents(string: rawURL)
+        else {
+            return false
+        }
+
+        let normalizedPath = components.path
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if kimiCodingLegacyPaths.contains(normalizedPath) {
+            return true
+        }
+        return normalizedPath.hasPrefix("/anthropic/")
+    }
+
+    private static func canonicalProviderBaseURL(providerId: String, baseURL: String) -> String {
+        let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard providerId == "kimi-coding" else {
+            return trimmed
+        }
+        if isLegacyKimiCodingEndpoint(trimmed) {
+            return kimiCodingCanonicalBaseURL
+        }
+        return trimmed
+    }
+
     private static func desiredAllowlistEntries(
         providerId: String,
         configuredModels: [ProviderSeedModel]
@@ -2283,19 +2586,38 @@ public final class OpenClawManager: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
 
-        guard normalizedProviderID == "moonshot" else {
+        switch normalizedProviderID {
+        case "moonshot":
+            guard let model = configuredModels.first(where: {
+                $0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            }) else {
+                return [:]
+            }
+
+            let modelID = model.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            let modelRef = "\(normalizedProviderID)/\(modelID)"
+            return [modelRef: ["alias": "Kimi"]]
+        case "kimi-coding":
+            var entries: [String: [String: Any]] = [:]
+            for model in configuredModels {
+                let modelID = model.id.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !modelID.isEmpty else { continue }
+
+                let alias: String?
+                switch modelID.lowercased() {
+                case "k2p5":
+                    alias = "Kimi K2.5"
+                default:
+                    alias = nil
+                }
+
+                guard let alias else { continue }
+                entries["\(normalizedProviderID)/\(modelID)"] = ["alias": alias]
+            }
+            return entries
+        default:
             return [:]
         }
-
-        guard let model = configuredModels.first(where: {
-            $0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-        }) else {
-            return [:]
-        }
-
-        let modelID = model.id.trimmingCharacters(in: .whitespacesAndNewlines)
-        let modelRef = "\(normalizedProviderID)/\(modelID)"
-        return [modelRef: ["alias": "Kimi"]]
     }
 
     private static func missingAllowlistEntries(
@@ -2830,6 +3152,7 @@ public final class OpenClawManager: ObservableObject {
             notificationService.stopListening()
             heartbeatEnabled = true
             heartbeatLastTimestamp = nil
+            onboardingState = .unknown
             resetHealthFailureTracking()
             diagnosticContext["connectionState"] = connectionStateLabel(connectionState)
             await emitStartupDiagnostic(
@@ -2872,6 +3195,7 @@ public final class OpenClawManager: ObservableObject {
             startHealthMonitoring()
             notificationService.startListening()
             await refreshStatus()
+            await refreshOnboardingState(force: true)
             scheduleMCPBridgeAutoSync(reason: "gateway connected")
             if !suppressConnectedToastAfterReconnected {
                 emitToastEvent(.connected)
@@ -2918,6 +3242,7 @@ public final class OpenClawManager: ObservableObject {
             reconnectToastShownForCurrentCycle = false
             resetHealthFailureTracking()
             await refreshStatus()
+            await refreshOnboardingState(force: true)
             scheduleMCPBridgeAutoSync(reason: "gateway reconnected")
             diagnosticContext["reconnectedToastEmitted"] = shouldEmitReconnectedToast ? "true" : "false"
             diagnosticContext["connectionState"] = connectionStateLabel(connectionState)
@@ -2932,6 +3257,7 @@ public final class OpenClawManager: ObservableObject {
             reconnectToastShownForCurrentCycle = false
             connectionState = .failed(message)
             phase = .connectionFailed(message)
+            onboardingState = .unknown
             // Auth failures mean the gateway process is still running but rejected our
             // token. Don't mark the gateway as failed — doing so hides the "Sync Token"
             // button and shows "Start Gateway" instead, which is the wrong recovery path.
@@ -4009,6 +4335,9 @@ public final class OpenClawManager: ObservableObject {
         case .disconnected:
             phase = gatewayStatus == .running ? .gatewayRunning : .configured
         }
+        if state != .connected {
+            onboardingState = .unknown
+        }
     }
 
     func _testSetProviderState(
@@ -4044,6 +4373,7 @@ public final class OpenClawManager: ObservableObject {
         reconnectToastShownForCurrentCycle = false
         heartbeatStatusMethodUnsupported = false
         skillsBinsRoleUnauthorized = false
+        onboardingState = .unknown
     }
 
     nonisolated static func _testShouldAttemptLocalAuthRecovery(

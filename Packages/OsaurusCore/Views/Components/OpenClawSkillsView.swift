@@ -13,9 +13,24 @@ struct OpenClawSkillsView: View {
     @State private var busySkillKey: String?
     @State private var actionError: String?
     @State private var toggleOverrides: [String: Bool] = [:]
+    @State private var configuringSkill: OpenClawSkillStatus?
 
     private var skills: [OpenClawSkillStatus] {
         (manager.skillsReport?.skills ?? []).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private var selectedSkillsAgentBinding: Binding<String> {
+        Binding(
+            get: {
+                if let selected = manager.selectedSkillsAgentId {
+                    return selected
+                }
+                return manager.skillsAgents.first?.id ?? ""
+            },
+            set: { newValue in
+                Task { await manager.selectSkillsAgent(newValue) }
+            }
+        )
     }
 
     var body: some View {
@@ -74,18 +89,52 @@ struct OpenClawSkillsView: View {
             hasLoaded = true
             Task { await manager.refreshSkills() }
         }
+        .sheet(item: $configuringSkill) { skill in
+            OpenClawSkillConfigurationSheet(manager: manager, skill: skill)
+        }
     }
 
     private var headerRow: some View {
-        HStack(spacing: 8) {
-            Text("Skills")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-            Spacer()
-            HeaderSecondaryButton("Refresh", icon: "arrow.clockwise") {
-                Task { await manager.refreshSkills() }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("Skills")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Spacer()
+                HeaderSecondaryButton("Refresh", icon: "arrow.clockwise") {
+                    Task { await manager.refreshSkills() }
+                }
+            }
+            Text("These are OpenClaw gateway skills. Osaurus local skills are managed in the Skills tab.")
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+
+            if !manager.skillsAgents.isEmpty {
+                HStack(spacing: 8) {
+                    Text("Agent")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+                    Spacer(minLength: 8)
+                    Picker("Skill Agent", selection: selectedSkillsAgentBinding) {
+                        ForEach(manager.skillsAgents) { agent in
+                            Text(skillAgentLabel(agent))
+                                .tag(agent.id)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 220, alignment: .trailing)
+                }
             }
         }
+    }
+
+    private func skillAgentLabel(_ agent: OpenClawGatewayAgentSummary) -> String {
+        let trimmedName = agent.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmedName.isEmpty || trimmedName.caseInsensitiveCompare(agent.id) == .orderedSame {
+            return agent.id
+        }
+        return "\(trimmedName) (\(agent.id))"
     }
 
     @ViewBuilder
@@ -190,6 +239,12 @@ struct OpenClawSkillsView: View {
                     .disabled(busySkillKey == skill.skillKey)
                 }
 
+                HeaderSecondaryButton("Configure", icon: "slider.horizontal.3") {
+                    configuringSkill = skill
+                }
+                .accessibilityLabel("Configure \(skill.name)")
+                .disabled(busySkillKey == skill.skillKey)
+
                 if skill.hasMissingRequirements && !skill.install.isEmpty {
                     Text("Update available")
                         .font(.system(size: 10, weight: .semibold))
@@ -281,5 +336,130 @@ enum OpenClawSkillsViewLogic {
             return "Updating"
         }
         return isEnabled ? "Enabled" : "Disabled"
+    }
+}
+
+private struct OpenClawSkillConfigurationSheet: View {
+    @Environment(\.theme) private var theme
+    @Environment(\.dismiss) private var dismiss
+
+    @ObservedObject var manager: OpenClawManager
+    let skill: OpenClawSkillStatus
+
+    @State private var apiKey: String = ""
+    @State private var clearApiKey = false
+    @State private var envValues: [String: String] = [:]
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    private var envKeys: [String] {
+        var keys = Set(skill.requirements.env)
+        keys.formUnion(skill.missing.env)
+        if let primary = skill.primaryEnv?.trimmingCharacters(in: .whitespacesAndNewlines), !primary.isEmpty {
+            keys.insert(primary)
+        }
+        return keys.sorted()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Configure \(skill.name)")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Spacer()
+                Button("Close") { dismiss() }
+                    .buttonStyle(.plain)
+                    .foregroundColor(theme.secondaryText)
+            }
+
+            Text("Apply optional API key or environment variables for this OpenClaw skill.")
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+
+            VStack(alignment: .leading, spacing: 8) {
+                SecureField("API key (leave blank to keep current)", text: $apiKey)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(clearApiKey)
+                Toggle("Clear existing API key", isOn: $clearApiKey)
+                    .font(.system(size: 12))
+                    .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+            }
+
+            if !envKeys.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Environment Variables")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    ForEach(envKeys, id: \.self) { key in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(key)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(theme.secondaryText)
+                            TextField("Value", text: Binding(
+                                get: { envValues[key, default: ""] },
+                                set: { envValues[key] = $0 }
+                            ))
+                            .textFieldStyle(.roundedBorder)
+                        }
+                    }
+                }
+            }
+
+            if let errorMessage, !errorMessage.isEmpty {
+                Text(errorMessage)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.errorColor)
+            }
+
+            HStack {
+                Spacer()
+                HeaderSecondaryButton("Cancel", icon: "xmark") {
+                    dismiss()
+                }
+                HeaderPrimaryButton("Save", icon: "checkmark") {
+                    Task { await save() }
+                }
+                .disabled(isSaving)
+            }
+        }
+        .padding(18)
+        .frame(minWidth: 460)
+        .background(theme.primaryBackground)
+    }
+
+    @MainActor
+    private func save() async {
+        let trimmedApiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let apiKeyUpdate: String? = clearApiKey ? "" : (trimmedApiKey.isEmpty ? nil : trimmedApiKey)
+
+        var envUpdate: [String: String] = [:]
+        for key in envKeys {
+            let value = envValues[key, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)
+            if !value.isEmpty {
+                envUpdate[key] = value
+            }
+        }
+        let envPayload = envUpdate.isEmpty ? nil : envUpdate
+
+        guard apiKeyUpdate != nil || envPayload != nil else {
+            errorMessage = "No changes to save."
+            return
+        }
+
+        isSaving = true
+        errorMessage = nil
+        defer { isSaving = false }
+
+        do {
+            try await manager.updateSkillConfiguration(
+                skillKey: skill.skillKey,
+                apiKey: apiKeyUpdate,
+                env: envPayload
+            )
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }

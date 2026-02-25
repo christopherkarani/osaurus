@@ -83,7 +83,8 @@ public final class WorkSession: ObservableObject {
             from: currentTurns,
             streamingTurnId: streamingTurnId,
             agentName: displayName,
-            version: turnsVersion  // Ensures cache invalidation on issue switch
+            version: turnsVersion,  // Ensures cache invalidation on issue switch
+            suppressAssistantText: isExecuting
         )
     }
 
@@ -284,6 +285,9 @@ public final class WorkSession: ObservableObject {
     /// Model options
     @Published var modelOptions: [ModelOption] = []
 
+    /// Tracks whether initial provider/model hydration has completed for Work mode.
+    @Published var hasCompletedInitialModelHydration: Bool = false
+
     /// Estimated context tokens (synced from chat session for consistency)
     var estimatedContextTokens: Int {
         windowState?.session.estimatedContextTokens ?? 0
@@ -349,24 +353,27 @@ public final class WorkSession: ObservableObject {
         self.windowState = windowState
         self.engine = WorkEngine()
 
-        // Initialize model options from ChatSession and subscribe to keep in sync
-        // after provider changes (add/remove/enable/disable)
-        if let windowState = windowState {
-            self.modelOptions = windowState.session.modelOptions
-            self.selectedModel = windowState.session.selectedModel
+        // Work mode must always route through OpenClaw. Use the shared model catalog
+        // as the source of truth and keep only OpenClaw model selections.
+        let modelCatalog = ModelCatalogService.shared
+        applyOpenClawModelOptions(
+            modelCatalog.currentOptions(),
+            preferredSelection: windowState?.session.selectedModel
+        )
 
-            modelOptionsCancellable = windowState.session.$modelOptions
-                .dropFirst()
-                .receive(on: RunLoop.main)
-                .sink { [weak self] updatedOptions in
-                    guard let self = self else { return }
-                    self.modelOptions = updatedOptions
-                    if let selected = self.selectedModel,
-                        !updatedOptions.contains(where: { $0.id == selected })
-                    {
-                        self.selectedModel = updatedOptions.first?.id
-                    }
-                }
+        modelOptionsCancellable = modelCatalog.$options
+            .receive(on: RunLoop.main)
+            .sink { [weak self] updatedOptions in
+                guard let self else { return }
+                self.applyOpenClawModelOptions(
+                    updatedOptions,
+                    preferredSelection: self.windowState?.session.selectedModel
+                )
+            }
+
+        Task { [weak self] in
+            guard let self else { return }
+            await self.performInitialModelHydration(using: modelCatalog)
         }
 
         // Initialize database and issue manager
@@ -399,13 +406,85 @@ public final class WorkSession: ObservableObject {
         }
     }
 
+    private func applyOpenClawModelOptions(
+        _ allOptions: [ModelOption],
+        preferredSelection: String?
+    ) {
+        let openClawSelections = Self.openClawSelectionOptions(from: allOptions)
+        modelOptions = openClawSelections
+
+        let resolvedSelection =
+            normalizedOpenClawSelectionIdentifier(from: selectedModel)
+            ?? normalizedOpenClawSelectionIdentifier(from: preferredSelection)
+            ?? normalizedOpenClawSelectionIdentifier(from: windowState?.session.selectedModel)
+            ?? inferDefaultOpenClawSelectionIdentifier(from: openClawSelections)
+
+        selectedModel = resolvedSelection
+    }
+
+    private func performInitialModelHydration(using modelCatalog: ModelCatalogService) async {
+        hasCompletedInitialModelHydration = false
+        await modelCatalog.refreshIfNeeded()
+        applyOpenClawModelOptions(
+            modelCatalog.currentOptions(),
+            preferredSelection: windowState?.session.selectedModel
+        )
+        hasCompletedInitialModelHydration = true
+    }
+
+    private func inferDefaultOpenClawSelectionIdentifier(from options: [ModelOption]) -> String? {
+        if let readyModel = options.first(where: { OpenClawManager.shared.isProviderReady(forModelId: $0.id) }) {
+            return readyModel.id
+        }
+        return options.first?.id
+    }
+
+    private func normalizedOpenClawSelectionIdentifier(from modelIdentifier: String?) -> String? {
+        if let modelId = Self.extractOpenClawModelId(from: modelIdentifier) {
+            return Self.openClawSelectionIdentifier(modelId: modelId)
+        }
+
+        guard let sessionKey = Self.extractOpenClawSessionKey(from: modelIdentifier) else {
+            return nil
+        }
+
+        if let runtimeModelId = OpenClawManager.shared.activeSessions
+            .first(where: { $0.key == sessionKey })?.model?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !runtimeModelId.isEmpty
+        {
+            return Self.openClawSelectionIdentifier(modelId: runtimeModelId)
+        }
+
+        // If runtime session metadata is unavailable, preserve the runtime identifier
+        // so Work mode still routes through OpenClaw.
+        return Self.openClawRuntimeIdentifier(sessionKey: sessionKey)
+    }
+
+    private func resolvedOpenClawSelectionForExecution() -> String? {
+        normalizedOpenClawSelectionIdentifier(from: selectedModel)
+            ?? normalizedOpenClawSelectionIdentifier(from: windowState?.session.selectedModel)
+            ?? inferDefaultOpenClawSelectionIdentifier(from: modelOptions)
+    }
+
     // MARK: - Task Management
 
     /// Programmatic entry point for dispatched tasks (used by TaskDispatcher).
     /// Creates a new task and begins execution without touching the input field.
     public func dispatch(query: String) async throws {
         streamingContent = ""
+        errorMessage = nil
         try await startNewTask(query: query)
+        if let errorMessage,
+           !errorMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !isExecuting
+        {
+            throw NSError(
+                domain: "WorkSession",
+                code: 9001,
+                userInfo: [NSLocalizedDescriptionKey: errorMessage]
+            )
+        }
     }
 
     /// Handles user input based on current input state
@@ -574,9 +653,22 @@ public final class WorkSession: ObservableObject {
     public func executeIssue(_ issue: Issue, withRetry: Bool = true) async {
         guard !isExecuting else { return }
 
+        let baseConfig = buildExecutionConfig()
+        let resolvedModel: String
+        do {
+            resolvedModel = try await resolveExecutionModelIdentifier(from: baseConfig.model)
+        } catch {
+            errorMessage = "Failed to prepare model: \(error.localizedDescription)"
+            return
+        }
+
         resetExecutionState(for: issue)
 
-        let config = buildExecutionConfig()
+        let config = (
+            model: resolvedModel,
+            systemPrompt: baseConfig.systemPrompt,
+            toolOverrides: baseConfig.toolOverrides
+        )
         let tools = ToolRegistry.shared.specs(withOverrides: config.toolOverrides)
         let skillCatalog = buildSkillCatalog()
 
@@ -633,15 +725,8 @@ public final class WorkSession: ObservableObject {
             windowState?.cachedSystemPrompt
             ?? AgentManager.shared.effectiveSystemPrompt(for: agentId)
 
-        // Model priority: selectedModel > windowState model > agent default
-        let model =
-            if let selected = selectedModel, !selected.isEmpty {
-                selected
-            } else if let wsModel = windowState?.session.selectedModel, !wsModel.isEmpty {
-                wsModel
-            } else {
-                AgentManager.shared.agent(for: agentId)?.defaultModel ?? "default"
-            }
+        let model = resolvedOpenClawSelectionForExecution() ?? ""
+        selectedModel = model.isEmpty ? nil : model
 
         var toolOverrides = AgentManager.shared.effectiveToolOverrides(for: agentId)
 
@@ -655,6 +740,147 @@ public final class WorkSession: ObservableObject {
         }
 
         return (model, systemPrompt, toolOverrides)
+    }
+
+    private func resolveExecutionModelIdentifier(from model: String) async throws -> String {
+        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw NSError(
+                domain: "WorkSession",
+                code: 1,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "No OpenClaw model is selected. Choose a model in Work mode to continue."
+                ]
+            )
+        }
+
+        guard OpenClawManager.shared.isConnected else {
+            throw NSError(
+                domain: "WorkSession",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "OpenClaw gateway is not connected."]
+            )
+        }
+
+        if let sessionKey = Self.extractOpenClawSessionKey(from: trimmed) {
+            return Self.openClawRuntimeIdentifier(sessionKey: sessionKey)
+        }
+
+        let gatewayModelId: String
+        if let explicitModelId = Self.extractOpenClawModelId(from: trimmed) {
+            gatewayModelId = explicitModelId
+        } else if
+            let inferredSelection = resolvedOpenClawSelectionForExecution(),
+            let inferredModelId = Self.extractOpenClawModelId(from: inferredSelection)
+        {
+            selectedModel = inferredSelection
+            gatewayModelId = inferredModelId
+        } else {
+            throw NSError(
+                domain: "WorkSession",
+                code: 3,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Work mode requires OpenClaw models. Configure an OpenClaw provider and select a model."
+                ]
+            )
+        }
+
+        try? await OpenClawManager.shared.fetchConfiguredProviders()
+
+        let selectionIdentifier = Self.openClawSelectionIdentifier(modelId: gatewayModelId)
+        let readinessReason = OpenClawManager.shared.providerReadinessReason(forModelId: selectionIdentifier)
+        guard readinessReason.isReady else {
+            throw NSError(
+                domain: "WorkSession",
+                code: 4,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        OpenClawManager.providerReadinessMessage(for: readinessReason)
+                ]
+            )
+        }
+
+        let providerCandidates = OpenClawManager.shared.availableModels
+            .filter { $0.id == gatewayModelId }
+            .map(\.provider)
+            .filter { !$0.isEmpty }
+            .sorted()
+        let providerCandidatesSummary = providerCandidates.isEmpty
+            ? "<none>"
+            : providerCandidates.joined(separator: ",")
+
+        let gatewayModelRef = OpenClawManager.shared.canonicalModelReference(for: gatewayModelId)
+        let resolvedProvider = gatewayModelRef.split(separator: "/", maxSplits: 1).first.map(String.init) ?? "<none>"
+        let sessionKey: String
+        do {
+            sessionKey = try await OpenClawSessionManager.shared.createSession(model: gatewayModelRef)
+            await StartupDiagnostics.shared.emit(
+                level: .debug,
+                component: "work-session",
+                event: "work.model.prepare.success",
+                context: [
+                    "selection": trimmed,
+                    "gatewayModelId": gatewayModelId,
+                    "gatewayModelRef": gatewayModelRef,
+                    "resolvedProvider": resolvedProvider,
+                    "providerCandidates": providerCandidatesSummary,
+                    "sessionKey": sessionKey,
+                ]
+            )
+        } catch {
+            await StartupDiagnostics.shared.emit(
+                level: .error,
+                component: "work-session",
+                event: "work.model.prepare.failed",
+                context: [
+                    "selection": trimmed,
+                    "gatewayModelId": gatewayModelId,
+                    "gatewayModelRef": gatewayModelRef,
+                    "resolvedProvider": resolvedProvider,
+                    "providerCandidates": providerCandidatesSummary,
+                    "selectionIdentifier": selectionIdentifier,
+                    "error": error.localizedDescription,
+                ]
+            )
+            throw error
+        }
+        return Self.openClawRuntimeIdentifier(sessionKey: sessionKey)
+    }
+
+    private static func extractOpenClawSessionKey(from modelIdentifier: String?) -> String? {
+        guard let modelIdentifier,
+            modelIdentifier.hasPrefix(OpenClawModelService.sessionPrefix)
+        else {
+            return nil
+        }
+        let sessionKey = String(modelIdentifier.dropFirst(OpenClawModelService.sessionPrefix.count))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return sessionKey.isEmpty ? nil : sessionKey
+    }
+
+    private static func extractOpenClawModelId(from modelIdentifier: String?) -> String? {
+        guard let modelIdentifier,
+            modelIdentifier.hasPrefix(OpenClawModelService.modelPrefix)
+        else {
+            return nil
+        }
+        let modelId = String(modelIdentifier.dropFirst(OpenClawModelService.modelPrefix.count))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return modelId.isEmpty ? nil : modelId
+    }
+
+    private static func openClawSelectionIdentifier(modelId: String) -> String {
+        "\(OpenClawModelService.modelPrefix)\(modelId)"
+    }
+
+    private static func openClawRuntimeIdentifier(sessionKey: String) -> String {
+        "\(OpenClawModelService.sessionPrefix)\(sessionKey)"
+    }
+
+    private static func openClawSelectionOptions(from options: [ModelOption]) -> [ModelOption] {
+        options.filter { extractOpenClawModelId(from: $0.id) != nil }
     }
 
     /// Handles the result of an execution
@@ -980,8 +1206,21 @@ public final class WorkSession: ObservableObject {
     public func resumeSelectedIssue() async {
         guard canResumeSelectedIssue, let issue = selectedIssue else { return }
 
+        let baseConfig = buildExecutionConfig()
+        let resolvedModel: String
+        do {
+            resolvedModel = try await resolveExecutionModelIdentifier(from: baseConfig.model)
+        } catch {
+            errorMessage = "Failed to prepare model: \(error.localizedDescription)"
+            return
+        }
+
         resetExecutionState(for: issue)
-        let config = buildExecutionConfig()
+        let config = (
+            model: resolvedModel,
+            systemPrompt: baseConfig.systemPrompt,
+            toolOverrides: baseConfig.toolOverrides
+        )
         let tools = ToolRegistry.shared.specs(withOverrides: config.toolOverrides)
         let skillCatalog = buildSkillCatalog()
 
@@ -1076,6 +1315,144 @@ extension WorkSession: WorkEngineDelegate {
     public func workEngine(_ engine: WorkEngine, didReceiveStreamingDelta delta: String, forStep stepIndex: Int) {
         streamingContent += delta
         deltaProcessor?.receiveDelta(delta)
+    }
+
+    /// Synchronizes the live assistant turn from OpenClaw activity events.
+    /// This keeps Work chat UI aligned with gateway event state even when
+    /// event timing differs from text delta timing.
+    public func applyOpenClawActivityItems(_ items: [ActivityItem]) {
+        guard isExecuting, let activeIssue else { return }
+        guard !items.isEmpty else { return }
+
+        guard let latestAssistant = items.reversed().compactMap({ item -> AssistantActivity? in
+            guard case .assistant(let assistant) = item.kind else { return nil }
+            return assistant
+        }).first else {
+            return
+        }
+
+        let assistantTurn = lastAssistantTurn()
+        let cleanedAssistant = sanitizeOpenClawActivityText(latestAssistant.text)
+        if shouldAdoptActivityAssistantText(cleanedAssistant, over: assistantTurn.content) {
+            assistantTurn.content = cleanedAssistant
+            assistantTurn.notifyContentChanged()
+        }
+
+        if let latestThinking = items.reversed().compactMap({ item -> ThinkingActivity? in
+            guard case .thinking(let thinking) = item.kind else { return nil }
+            return thinking
+        }).first {
+            let cleanedThinking = sanitizeOpenClawActivityText(latestThinking.text)
+            if !cleanedThinking.isEmpty, assistantTurn.thinking != cleanedThinking {
+                assistantTurn.thinking = cleanedThinking
+                assistantTurn.notifyContentChanged()
+            }
+        }
+
+        notifyIfSelected(activeIssue.id)
+    }
+
+    private func shouldAdoptActivityAssistantText(_ candidate: String, over current: String) -> Bool {
+        let normalizedCandidate = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedCandidate.isEmpty else { return false }
+
+        let normalizedCurrent = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalizedCurrent.isEmpty {
+            return true
+        }
+
+        if normalizedCandidate == normalizedCurrent {
+            return false
+        }
+
+        // Guard against token-glued snapshots (e.g. "I'llhelpyou...") that can
+        // occasionally arrive via activity updates and would degrade readable markdown.
+        if looksLikeCollapsedTokenStream(normalizedCandidate),
+            !looksLikeCollapsedTokenStream(normalizedCurrent)
+        {
+            return false
+        }
+
+        // Ignore regressive snapshots that trim already-rendered content.
+        if normalizedCurrent.hasPrefix(normalizedCandidate),
+            normalizedCandidate.count < normalizedCurrent.count
+        {
+            return false
+        }
+
+        // Prefer richer/latest snapshots that extend or improve what is currently shown.
+        return normalizedCandidate.count >= normalizedCurrent.count
+    }
+
+    private func looksLikeCollapsedTokenStream(_ text: String) -> Bool {
+        guard text.count >= 30 else { return false }
+
+        let whitespaceCount = text.unicodeScalars.reduce(into: 0) { count, scalar in
+            if CharacterSet.whitespacesAndNewlines.contains(scalar) {
+                count += 1
+            }
+        }
+
+        let alphaNumericCount = text.unicodeScalars.reduce(into: 0) { count, scalar in
+            if CharacterSet.alphanumerics.contains(scalar) {
+                count += 1
+            }
+        }
+
+        guard alphaNumericCount >= 30 else { return false }
+
+        let vowelCount = text.unicodeScalars.reduce(into: 0) { count, scalar in
+            let value = Character(scalar).lowercased()
+            if value == "a" || value == "e" || value == "i" || value == "o" || value == "u" {
+                count += 1
+            }
+        }
+
+        if whitespaceCount == 0 {
+            return vowelCount >= 5
+        }
+
+        let whitespaceRatio = Double(whitespaceCount) / Double(max(alphaNumericCount, 1))
+        return whitespaceRatio < 0.02
+    }
+
+    private func sanitizeOpenClawActivityText(_ text: String) -> String {
+        guard !text.isEmpty else { return "" }
+
+        var output = text
+        if let range = output.range(of: "\nSystem:\n") {
+            output = String(output[..<range.lowerBound])
+        } else if output.hasPrefix("System:\n") {
+            output = ""
+        }
+
+        output = stripControlBlock(
+            output,
+            startMarker: "---REQUEST_CLARIFICATION_START---",
+            endMarker: "---REQUEST_CLARIFICATION_END---"
+        )
+        output = stripControlBlock(
+            output,
+            startMarker: "---COMPLETE_TASK_START---",
+            endMarker: "---COMPLETE_TASK_END---"
+        )
+        output = stripControlBlock(
+            output,
+            startMarker: "---GENERATED_ARTIFACT_START---",
+            endMarker: "---GENERATED_ARTIFACT_END---"
+        )
+
+        return output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func stripControlBlock(_ text: String, startMarker: String, endMarker: String) -> String {
+        var output = text
+        while let start = output.range(of: startMarker),
+            let end = output.range(of: endMarker, range: start.upperBound..<output.endIndex)
+        {
+            output.removeSubrange(start.lowerBound..<end.upperBound)
+        }
+        return output
     }
 
     public func workEngine(_ engine: WorkEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue) {
