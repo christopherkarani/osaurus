@@ -35,6 +35,7 @@ enum ContentBlockKind: Equatable {
     case userMessage(text: String, images: [Data])
     case typingIndicator
     case groupSpacer
+    case activityGroup(thinkingText: String, thinkingIsStreaming: Bool, thinkingDuration: TimeInterval?, calls: [ToolCallItem])
 
     /// Custom Equatable optimized for performance during streaming.
     /// Uses text length comparison as a cheap proxy for content change detection.
@@ -73,6 +74,12 @@ enum ContentBlockKind: Equatable {
         case (.groupSpacer, .groupSpacer):
             return true
 
+        case let (.activityGroup(lThink, lStream, lDur, lCalls),
+                  .activityGroup(rThink, rStream, rDur, rCalls)):
+            guard lStream == rStream && lDur == rDur && lCalls == rCalls else { return false }
+            guard lThink.count == rThink.count else { return false }
+            return lThink == rThink
+
         default:
             return false
         }
@@ -92,7 +99,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         switch kind {
         case let .header(role, _, _): return role
         case let .paragraph(_, _, _, role): return role
-        case .toolCallGroup, .thinking, .clarification, .typingIndicator, .groupSpacer:
+        case .toolCallGroup, .thinking, .clarification, .typingIndicator, .groupSpacer, .activityGroup:
             return .assistant
         case .userMessage: return .user
         }
@@ -193,6 +200,27 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
     static func groupSpacer(afterTurnId: UUID, associatedWithTurnId: UUID? = nil) -> ContentBlock {
         let turnId = associatedWithTurnId ?? afterTurnId
         return ContentBlock(id: "spacer-\(afterTurnId.uuidString)", turnId: turnId, kind: .groupSpacer, position: .only)
+    }
+
+    static func activityGroup(
+        turnId: UUID,
+        thinkingText: String,
+        thinkingIsStreaming: Bool,
+        thinkingDuration: TimeInterval?,
+        calls: [ToolCallItem],
+        position: BlockPosition
+    ) -> ContentBlock {
+        ContentBlock(
+            id: "activity-\(turnId.uuidString)",
+            turnId: turnId,
+            kind: .activityGroup(
+                thinkingText: thinkingText,
+                thinkingIsStreaming: thinkingIsStreaming,
+                thinkingDuration: thinkingDuration,
+                calls: calls
+            ),
+            position: position
+        )
     }
 }
 
