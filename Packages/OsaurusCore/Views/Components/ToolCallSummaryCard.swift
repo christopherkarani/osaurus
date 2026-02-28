@@ -32,16 +32,129 @@ enum ToolCallSummaryLogic {
     static func hasActiveTools(calls: [ToolCallItem]) -> Bool {
         calls.contains { $0.result == nil }
     }
+
+    // MARK: - Icon mapping
+
+    static func toolIcon(for name: String) -> String {
+        let n = name.lowercased()
+        if n.contains("read") || n.contains("cat") || n.contains("view") { return "doc.text" }
+        if n.contains("write") || n.contains("create") { return "doc.badge.plus" }
+        if n.contains("edit") || n.contains("patch") || n.contains("str_replace") { return "pencil.line" }
+        if n.contains("bash") || n.contains("run") || n.contains("exec") || n.contains("command") || n.contains("terminal") { return "terminal" }
+        if n.contains("search") || n.contains("grep") || n.contains("find") { return "magnifyingglass" }
+        if n.contains("list") || n.contains("ls") || n.contains("glob") { return "list.bullet" }
+        if n.contains("delete") || n.contains("rm") || n.contains("remove") { return "trash" }
+        if n.contains("move") || n.contains("rename") || n.contains("copy") { return "doc.on.doc" }
+        if n.contains("web") || n.contains("fetch") || n.contains("url") || n.contains("http") { return "globe" }
+        return "wrench.and.screwdriver"
+    }
+
+    // MARK: - Human title
+
+    /// Priority argument keys to use as the title subject.
+    private static let priorityArgKeys = ["path", "file", "file_path", "query", "url", "command", "pattern", "name"]
+
+    static func humanTitle(call: ToolCall) -> String {
+        let prefix = actionPrefix(for: call.function.name)
+        guard let data = call.function.arguments.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              !json.isEmpty else {
+            return prefix
+        }
+        for key in priorityArgKeys {
+            if let value = json[key] as? String, !value.isEmpty {
+                let truncated = value.count > 60 ? String(value.prefix(57)) + "..." : value
+                return "\(prefix) \(truncated)"
+            }
+        }
+        return prefix
+    }
+
+    private static func actionPrefix(for name: String) -> String {
+        let n = name.lowercased()
+        if n.contains("read") || n.contains("cat") || n.contains("view") { return "Reading" }
+        if n.contains("write") || n.contains("create") { return "Writing" }
+        if n.contains("edit") || n.contains("patch") || n.contains("str_replace") { return "Editing" }
+        if n.contains("bash") || n.contains("run") || n.contains("exec") || n.contains("command") || n.contains("terminal") { return "Running" }
+        if n.contains("search") || n.contains("grep") || n.contains("find") { return "Searching" }
+        if n.contains("list") || n.contains("ls") || n.contains("glob") { return "Listing" }
+        if n.contains("delete") || n.contains("rm") || n.contains("remove") { return "Deleting" }
+        if n.contains("move") || n.contains("rename") { return "Moving" }
+        if n.contains("copy") { return "Copying" }
+        if n.contains("web") || n.contains("fetch") || n.contains("url") || n.contains("http") { return "Fetching" }
+        return "Using"
+    }
+
+    // MARK: - Content kind
+
+    enum ToolContentKind {
+        case file(path: String, content: String?)
+        case terminal(command: String, output: String?)
+        case search(query: String, results: [SearchResultChip])
+        case generic(text: String)
+    }
+
+    struct SearchResultChip: Equatable {
+        let title: String
+        let domain: String
+    }
+
+    static func contentKind(call: ToolCall, result: String?) -> ToolContentKind {
+        let n = call.function.name.lowercased()
+        let args = (try? JSONSerialization.jsonObject(with: Data(call.function.arguments.utf8))) as? [String: Any] ?? [:]
+
+        // Terminal
+        if n.contains("bash") || n.contains("exec") || n.contains("run") || n.contains("command") || n.contains("terminal") {
+            let command = args["command"] as? String ?? args["cmd"] as? String ?? call.function.name
+            return .terminal(command: command, output: result)
+        }
+
+        // Search / web
+        if n.contains("search") || n.contains("web") || n.contains("grep") {
+            let query = args["query"] as? String ?? args["pattern"] as? String ?? ""
+            let chips = parseSearchChips(from: result)
+            return .search(query: query, results: chips)
+        }
+
+        // File operations
+        let filePath = args["path"] as? String ?? args["file"] as? String ?? args["file_path"] as? String
+        if filePath != nil || n.contains("read") || n.contains("write") || n.contains("edit") || n.contains("create") || n.contains("list") {
+            return .file(path: filePath ?? "", content: result)
+        }
+
+        return .generic(text: result ?? "")
+    }
+
+    private static func parseSearchChips(from result: String?) -> [SearchResultChip] {
+        guard let result else { return [] }
+        var chips: [SearchResultChip] = []
+        for line in result.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if let url = URL(string: trimmed), let host = url.host {
+                let domain = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+                chips.append(SearchResultChip(title: trimmed, domain: domain))
+            }
+        }
+        return Array(chips.prefix(6))
+    }
 }
 
 // MARK: - ToolCallSummaryCard
 
 struct ToolCallSummaryCard: View {
     let calls: [ToolCallItem]
+    let blockId: String
 
-    @State private var isExpanded = false
     @Environment(\.theme) private var theme
     @EnvironmentObject private var expandedStore: ExpandedBlocksStore
+
+    private var expansionKey: String {
+        "tool-group-summary-\(blockId)"
+    }
+
+    private var isExpanded: Bool {
+        expandedStore.isExpanded(expansionKey)
+    }
 
     // MARK: - Computed Properties
 
@@ -68,7 +181,7 @@ struct ToolCallSummaryCard: View {
             // Summary header (always visible, clickable)
             Button(action: {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                    isExpanded.toggle()
+                    expandedStore.toggle(expansionKey)
                 }
             }) {
                 summaryHeader
@@ -192,7 +305,7 @@ struct ToolCallSummaryCard: View {
                     .font(.headline)
                     .foregroundColor(.white)
 
-                ToolCallSummaryCard(calls: calls)
+                ToolCallSummaryCard(calls: calls, blockId: "preview-group-running")
 
                 Text("All Complete")
                     .font(.headline)
@@ -210,7 +323,7 @@ struct ToolCallSummaryCard: View {
                         ),
                         result: "main.swift\nutils.swift"
                     ),
-                ])
+                ], blockId: "preview-group-complete")
             }
             .padding()
             .frame(width: 500, height: 500)
