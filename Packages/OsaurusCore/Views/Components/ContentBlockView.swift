@@ -138,14 +138,21 @@ struct ContentBlockView: View, Equatable {
         case .groupSpacer:
             EmptyView()
 
-        case .activityGroup:
-            EmptyView()  // TODO: Task 8 — wire ActivityGroupView
+        case let .activityGroup(thinkingText, thinkingIsStreaming, thinkingDuration, calls):
+            ActivityGroupView(
+                thinkingText: thinkingText,
+                thinkingIsStreaming: thinkingIsStreaming,
+                thinkingDuration: thinkingDuration,
+                calls: calls,
+                blockId: block.id
+            )
+            .padding(.top, 6)
+            .padding(.bottom, isLastInTurn ? 16 : 6)
 
-        case .fileSummary:
-            EmptyView()  // TODO: Task 8 — wire FileSummaryCardView
-
-        @unknown default:
-            EmptyView()
+        case let .fileSummary(files):
+            FileSummaryRow(files: files)
+                .padding(.top, 4)
+                .padding(.bottom, isLastInTurn ? 12 : 4)
         }
     }
 
