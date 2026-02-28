@@ -622,6 +622,11 @@ extension MessageTableRepresentable {
             return blocks.last(where: {
                 if case .paragraph(_, _, true, _) = $0.kind { return true }
                 if case .thinking(_, _, true, _) = $0.kind { return true }
+                // Activity groups: streaming when thinking is streaming or tool calls are running
+                if case .activityGroup(_, true, _, _) = $0.kind { return true }
+                if case .activityGroup(_, _, _, let calls) = $0.kind {
+                    return calls.contains { $0.result == nil }
+                }
                 return false
             })?.id
         }

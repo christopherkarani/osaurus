@@ -318,38 +318,26 @@ extension ContentBlock {
                 )
             }
 
-            // Unified activity group: when a turn has BOTH thinking AND tool calls,
-            // emit a single .activityGroup that renders them as a cohesive stream.
-            // Otherwise, emit .thinking and .toolCallGroup separately.
+            // Unified activity group: always use .activityGroup for turns
+            // with thinking or tool calls. This ensures a stable block ID
+            // (activity-<turnId>) from the moment thinking starts, avoiding
+            // ID transitions when tool calls arrive during streaming.
             let hasToolCalls = !(turn.toolCalls ?? []).isEmpty
+            let toolItems = hasToolCalls
+                ? turn.toolCalls!.map { ToolCallItem(call: $0, result: turn.toolResults[$0.id]) }
+                : []
 
-            if turn.hasThinking && hasToolCalls {
-                // Combined thinking + tools → unified .activityGroup
-                let items = turn.toolCalls!.map { ToolCallItem(call: $0, result: turn.toolResults[$0.id]) }
+            if turn.hasThinking || hasToolCalls {
                 turnBlocks.append(
                     .activityGroup(
                         turnId: turn.id,
-                        thinkingText: turn.thinking,
-                        thinkingIsStreaming: isStreaming && turn.contentIsEmpty,
+                        thinkingText: turn.hasThinking ? turn.thinking : "",
+                        thinkingIsStreaming: turn.hasThinking && isStreaming && turn.contentIsEmpty,
                         thinkingDuration: nil,
-                        calls: items,
+                        calls: toolItems,
                         position: .middle
                     )
                 )
-            } else {
-                // Thinking only (no tool calls yet)
-                if turn.hasThinking {
-                    turnBlocks.append(
-                        .thinking(
-                            turnId: turn.id,
-                            index: 0,
-                            text: turn.thinking,
-                            isStreaming: isStreaming && turn.contentIsEmpty,
-                            duration: nil,
-                            position: .middle
-                        )
-                    )
-                }
             }
 
             let shouldSuppressParagraph = suppressAssistantText && turn.role == .assistant
@@ -366,13 +354,6 @@ extension ContentBlock {
                 )
             } else if isStreaming && !turn.hasThinking && !hasToolCalls && !shouldSuppressParagraph {
                 turnBlocks.append(.typingIndicator(turnId: turn.id, position: .middle))
-            }
-
-            // Tool calls without thinking → standalone .toolCallGroup
-            // (preserves ParallelGroupRow for multiple parallel calls)
-            if hasToolCalls && !turn.hasThinking {
-                let items = turn.toolCalls!.map { ToolCallItem(call: $0, result: turn.toolResults[$0.id]) }
-                turnBlocks.append(.toolCallGroup(turnId: turn.id, calls: items, position: .middle))
             }
 
             // Emit file summary when a turn contains >=2 file-mutation tool calls
