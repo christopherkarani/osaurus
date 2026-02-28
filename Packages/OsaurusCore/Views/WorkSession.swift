@@ -1347,26 +1347,28 @@ extension WorkSession: WorkEngineDelegate {
         guard isExecuting, let activeIssue else { return }
         guard !items.isEmpty else { return }
 
-        guard let latestAssistant = items.reversed().compactMap({ item -> AssistantActivity? in
+        let assistantTurn = lastAssistantTurn()
+
+        // Bridge assistant text if available
+        if let latestAssistant = items.reversed().compactMap({ item -> AssistantActivity? in
             guard case .assistant(let assistant) = item.kind else { return nil }
             return assistant
-        }).first else {
-            return
+        }).first {
+            let cleanedAssistant = sanitizeOpenClawActivityText(latestAssistant.text)
+            if shouldAdoptActivityAssistantText(cleanedAssistant, over: assistantTurn.content) {
+                assistantTurn.content = cleanedAssistant
+                deltaProcessor?.reset(turn: assistantTurn)
+                assistantTurn.notifyContentChanged()
+            }
+
+            // When the final (non-streaming) snapshot arrives, collapse any duplicate
+            // assistant turns that were created by didStartIteration across gateway runs.
+            if !latestAssistant.isStreaming {
+                consolidateAssistantTurns(keeping: assistantTurn)
+            }
         }
 
-        let assistantTurn = lastAssistantTurn()
-        let cleanedAssistant = sanitizeOpenClawActivityText(latestAssistant.text)
-        if shouldAdoptActivityAssistantText(cleanedAssistant, over: assistantTurn.content) {
-            assistantTurn.content = cleanedAssistant
-            assistantTurn.notifyContentChanged()
-        }
-
-        // When the final (non-streaming) snapshot arrives, collapse any duplicate
-        // assistant turns that were created by didStartIteration across gateway runs.
-        if !latestAssistant.isStreaming {
-            consolidateAssistantTurns(keeping: assistantTurn)
-        }
-
+        // Bridge thinking if available
         if let latestThinking = items.reversed().compactMap({ item -> ThinkingActivity? in
             guard case .thinking(let thinking) = item.kind else { return nil }
             return thinking
@@ -1378,7 +1380,72 @@ extension WorkSession: WorkEngineDelegate {
             }
         }
 
+        // Bridge tool calls from OpenClaw activity events onto the ChatTurn.
+        // The OpenClaw gateway execution path does not invoke WorkEngineDelegate.didCallTool,
+        // so tool call data only exists in the ActivityItem stream. Without bridging,
+        // generateBlocks() never sees tool calls and cannot produce .activityGroup blocks.
+        let toolActivities = items.compactMap { item -> ToolCallActivity? in
+            guard case .toolCall(let tool) = item.kind else { return nil }
+            return tool
+        }
+        if !toolActivities.isEmpty {
+            bridgeToolCallActivities(toolActivities, onto: assistantTurn)
+        }
+
         notifyIfSelected(activeIssue.id)
+    }
+
+    /// Converts OpenClaw `ToolCallActivity` items into `ToolCall` objects on the assistant turn,
+    /// deduplicating by `toolCallId` and updating results for already-bridged calls.
+    private func bridgeToolCallActivities(_ activities: [ToolCallActivity], onto turn: ChatTurn) {
+        if turn.toolCalls == nil {
+            turn.toolCalls = []
+        }
+
+        let existingIds = Set(turn.toolCalls?.map(\.id) ?? [])
+        var didChange = false
+
+        for activity in activities {
+            if existingIds.contains(activity.toolCallId) {
+                // Update result if the call completed since last bridge
+                if let result = activity.result,
+                   turn.toolResults[activity.toolCallId] != result
+                {
+                    turn.toolResults[activity.toolCallId] = result
+                    didChange = true
+                }
+            } else {
+                // New tool call — convert and append
+                let argsJSON: String
+                if let data = try? JSONSerialization.data(
+                    withJSONObject: activity.args,
+                    options: [.sortedKeys]
+                ) {
+                    argsJSON = String(data: data, encoding: .utf8) ?? "{}"
+                } else {
+                    argsJSON = "{}"
+                }
+
+                let toolCall = ToolCall(
+                    id: activity.toolCallId,
+                    type: "function",
+                    function: ToolCallFunction(
+                        name: activity.name,
+                        arguments: argsJSON
+                    )
+                )
+                turn.toolCalls?.append(toolCall)
+
+                if let result = activity.result {
+                    turn.toolResults[activity.toolCallId] = result
+                }
+                didChange = true
+            }
+        }
+
+        if didChange {
+            turn.notifyContentChanged()
+        }
     }
 
     private func shouldAdoptActivityAssistantText(_ candidate: String, over current: String) -> Bool {
