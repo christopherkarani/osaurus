@@ -184,7 +184,7 @@ struct ToolActionRow: View {
         .padding(.bottom, 8)
     }
 
-    // MARK: - Expanded Content (STUB -- filled in Task 4)
+    // MARK: - Expanded Content
 
     @ViewBuilder
     private var expandedContent: some View {
@@ -197,12 +197,33 @@ struct ToolActionRow: View {
                 .padding(.leading, 13)
                 .scaleEffect(y: isExpanded ? 1 : 0, anchor: .top)
 
-            // Placeholder content -- replaced in Task 4
-            Text(result ?? "")
-                .font(theme.font(size: 13, weight: .regular))
-                .foregroundColor(theme.secondaryText)
+            // Content
+            expandedBody
                 .padding(.leading, 12)
                 .padding(.bottom, 8)
+        }
+    }
+
+    @ViewBuilder
+    private var expandedBody: some View {
+        switch ToolCallSummaryLogic.contentKind(call: call, result: result) {
+        case let .file(path, content):
+            FileExpandedContent(path: path, content: content)
+        case let .terminal(command, output):
+            TerminalExpandedContent(command: command, output: output)
+        case let .search(query, results):
+            SearchExpandedContent(query: query, results: results)
+        case let .generic(text):
+            if text.isEmpty {
+                Text("No output")
+                    .font(theme.font(size: 12, weight: .regular))
+                    .foregroundColor(theme.tertiaryText)
+            } else {
+                Text(text)
+                    .font(theme.font(size: 13, weight: .regular))
+                    .foregroundColor(theme.secondaryText)
+                    .textSelection(.enabled)
+            }
         }
     }
 
@@ -211,6 +232,258 @@ struct ToolActionRow: View {
     private func toggleExpansion() {
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
             expandedStore.toggle(expansionKey)
+        }
+    }
+}
+
+// MARK: - DiffParser
+
+enum DiffLineKind { case added, removed, context, header }
+
+struct DiffLine: Equatable {
+    let kind: DiffLineKind
+    let text: String
+}
+
+enum DiffParser {
+    static func isDiff(_ text: String) -> Bool {
+        text.hasPrefix("@@") || text.hasPrefix("---") || text.hasPrefix("+++")
+    }
+
+    static func parse(_ diff: String) -> [DiffLine] {
+        diff.components(separatedBy: "\n").compactMap { line in
+            if line.hasPrefix("@@") { return DiffLine(kind: .header, text: line) }
+            if line.hasPrefix("+") { return DiffLine(kind: .added, text: String(line.dropFirst())) }
+            if line.hasPrefix("-") { return DiffLine(kind: .removed, text: String(line.dropFirst())) }
+            if line.hasPrefix(" ") { return DiffLine(kind: .context, text: String(line.dropFirst())) }
+            if line.isEmpty { return nil }
+            return DiffLine(kind: .context, text: line)
+        }
+    }
+}
+
+// MARK: - FileExpandedContent
+
+private struct FileExpandedContent: View {
+    let path: String
+    let content: String?
+
+    @Environment(\.theme) private var theme
+    @State private var showFull = false
+
+    private var isDiff: Bool { DiffParser.isDiff(content ?? "") }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(path)
+                .font(.system(size: 12, weight: .regular, design: .monospaced))
+                .foregroundColor(theme.secondaryText)
+                .lineLimit(1)
+
+            if let content, !content.isEmpty {
+                if isDiff {
+                    DiffView(diff: content)
+                } else {
+                    TerminalBlock(text: content, maxLines: showFull ? nil : 8) {
+                        showFull = true
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - TerminalExpandedContent
+
+private struct TerminalExpandedContent: View {
+    let command: String
+    let output: String?
+
+    @Environment(\.theme) private var theme
+    @State private var showFull = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // "Running command:" sub-header label
+            Text("Running command:")
+                .font(theme.font(size: 12, weight: .medium))
+                .foregroundColor(theme.tertiaryText)
+
+            // Command text
+            Text(command)
+                .font(.system(size: 12, weight: .regular, design: .monospaced))
+                .foregroundColor(theme.secondaryText)
+                .lineLimit(1)
+
+            if let output, !output.isEmpty {
+                TerminalBlock(text: output, maxLines: showFull ? nil : 8) {
+                    showFull = true
+                }
+            } else if output == nil {
+                Text("Running...")
+                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText)
+            }
+        }
+    }
+}
+
+// MARK: - SearchExpandedContent
+
+private struct SearchExpandedContent: View {
+    let query: String
+    let results: [ToolCallSummaryLogic.SearchResultChip]
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                Text(query)
+                    .font(theme.font(size: 13, weight: .regular))
+                    .italic()
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(1)
+            }
+
+            if !results.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(Array(results.prefix(6).enumerated()), id: \.offset) { _, chip in
+                        HStack(spacing: 5) {
+                            Image(systemName: "globe")
+                                .font(.system(size: 10))
+                                .foregroundColor(theme.tertiaryText)
+                            Text(chip.domain)
+                                .font(theme.font(size: 12, weight: .medium))
+                                .foregroundColor(theme.tertiaryText)
+                        }
+                    }
+
+                    if results.count > 6 {
+                        Text("+\(results.count - 6) more")
+                            .font(theme.font(size: 12, weight: .medium))
+                            .foregroundColor(theme.accentColor)
+                    }
+                }
+                .padding(.top, 2)
+            }
+        }
+    }
+}
+
+// MARK: - TerminalBlock
+
+struct TerminalBlock: View {
+    let text: String
+    let maxLines: Int?
+    let onShowMore: (() -> Void)?
+
+    @Environment(\.theme) private var theme
+
+    private var lines: [String] { text.components(separatedBy: "\n") }
+    private var displayLines: [String] {
+        guard let max = maxLines else { return lines }
+        return Array(lines.prefix(max))
+    }
+    private var hasMore: Bool {
+        guard let max = maxLines else { return false }
+        return lines.count > max
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(displayLines.enumerated()), id: \.offset) { _, line in
+                    Text(line.isEmpty ? " " : line)
+                        .font(.system(size: 12, weight: .regular, design: .monospaced))
+                        .foregroundColor(Color.white.opacity(0.85))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+            }
+            .padding(10)
+            .background(Color(red: 0.067, green: 0.071, blue: 0.078))
+            .overlay(alignment: .top) {
+                Rectangle()
+                    .fill(Color.white.opacity(0.05))
+                    .frame(height: 1)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+
+            if hasMore, let onShowMore {
+                Button("Show more") { onShowMore() }
+                    .buttonStyle(.plain)
+                    .font(theme.font(size: 12, weight: .medium))
+                    .foregroundColor(theme.accentColor)
+                    .padding(.top, 4)
+            }
+        }
+    }
+}
+
+// MARK: - DiffView
+
+private struct DiffView: View {
+    let diff: String
+    @Environment(\.theme) private var theme
+
+    private var lines: [DiffLine] { DiffParser.parse(diff) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                diffLineView(line)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+
+    @ViewBuilder
+    private func diffLineView(_ line: DiffLine) -> some View {
+        HStack(spacing: 0) {
+            Text(line.kind == .added ? "+" : line.kind == .removed ? "-" : " ")
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundColor(gutterColor(line.kind))
+                .frame(width: 16, alignment: .center)
+                .padding(.vertical, 1)
+
+            Text(line.text.isEmpty ? " " : line.text)
+                .font(.system(size: 11, weight: .regular, design: .monospaced))
+                .foregroundColor(textColor(line.kind))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 1)
+                .textSelection(.enabled)
+        }
+        .background(bgColor(line.kind))
+        .padding(.horizontal, 4)
+    }
+
+    private func bgColor(_ kind: DiffLineKind) -> Color {
+        switch kind {
+        case .added:   return Color(red: 0.18, green: 0.33, blue: 0.20).opacity(0.4)
+        case .removed: return Color(red: 0.40, green: 0.12, blue: 0.12).opacity(0.4)
+        case .header:  return theme.secondaryBackground.opacity(0.5)
+        case .context: return Color.clear
+        }
+    }
+
+    private func textColor(_ kind: DiffLineKind) -> Color {
+        switch kind {
+        case .added:   return Color(red: 0.56, green: 0.93, blue: 0.56)
+        case .removed: return Color(red: 0.95, green: 0.55, blue: 0.55)
+        case .header:  return theme.tertiaryText
+        case .context: return theme.secondaryText
+        }
+    }
+
+    private func gutterColor(_ kind: DiffLineKind) -> Color {
+        switch kind {
+        case .added:   return Color(red: 0.56, green: 0.93, blue: 0.56)
+        case .removed: return Color(red: 0.95, green: 0.55, blue: 0.55)
+        default:       return theme.tertiaryText
         }
     }
 }
