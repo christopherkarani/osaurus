@@ -6,6 +6,7 @@
 import Foundation
 import OpenClawKit
 import OpenClawProtocol
+import Terra
 
 public enum OpenClawConnectionError: LocalizedError, Sendable {
     case gatewayNotReachable
@@ -503,18 +504,58 @@ public actor OpenClawGatewayConnection {
         token: String?,
         healthURL: URL? = nil
     ) async throws {
+        let normalizedHealthURL = healthURL ?? Self.defaultHealthURL(for: url)
+        let credentialProvided = token?.isEmpty == false
+        _ = try await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.gateway.connect", id: nil)) { scope in
+            let connectStartedAt = Date()
+            scope.setAttributes([
+                Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                Terra.Keys.Terra.openClawGateway: .bool(true),
+                Terra.Keys.GenAI.providerName: .string("openclaw"),
+                "osaurus.openclaw.gateway.url": .string(url.absoluteString),
+                "osaurus.openclaw.gateway.health_url": .string(normalizedHealthURL?.absoluteString ?? ""),
+                "osaurus.openclaw.gateway.connect.credential_provided": .bool(credentialProvided),
+            ])
+
+            do {
+                try await self.connectUntraced(url: url, token: token, healthURL: normalizedHealthURL)
+                scope.setAttributes([
+                    "osaurus.openclaw.gateway.connect.success": .bool(true),
+                    "osaurus.openclaw.gateway.connect.latency_ms": .double(
+                        Date().timeIntervalSince(connectStartedAt) * 1000
+                    ),
+                ])
+            } catch {
+                scope.setAttributes([
+                    "osaurus.openclaw.gateway.connect.success": .bool(false),
+                    "osaurus.openclaw.gateway.connect.latency_ms": .double(
+                        Date().timeIntervalSince(connectStartedAt) * 1000
+                    ),
+                    "osaurus.openclaw.gateway.connect.error.raw": .string(error.localizedDescription),
+                    "osaurus.openclaw.gateway.connect.error.kind": .string(Self.mappedErrorKind(error)),
+                ])
+                throw error
+            }
+        }
+    }
+
+    private func connectUntraced(
+        url: URL,
+        token: String?,
+        healthURL: URL?
+    ) async throws {
+        let reconnectTaskWasActive = reconnectTask != nil
         reconnectTask?.cancel()
         reconnectTask = nil
         intentionalDisconnect = false
-        let normalizedHealthURL = healthURL ?? Self.defaultHealthURL(for: url)
         connectionParameters = OpenClawConnectionParameters(
             wsURL: url,
-            healthURL: normalizedHealthURL,
+            healthURL: healthURL,
             token: token
         )
-        var beginContext = Self.endpointContext(wsURL: url, healthURL: normalizedHealthURL)
+        var beginContext = Self.endpointContext(wsURL: url, healthURL: healthURL)
         beginContext["credentialProvided"] = token?.isEmpty == false ? "true" : "false"
-        beginContext["reconnectTaskWasActive"] = reconnectTask == nil ? "false" : "true"
+        beginContext["reconnectTaskWasActive"] = reconnectTaskWasActive ? "true" : "false"
         await emitGatewayDiagnostic(
             level: .info,
             event: "gateway.connect.begin",
@@ -524,16 +565,16 @@ public actor OpenClawGatewayConnection {
         await shutdownChannel()
 
         do {
-            try await performConnect(wsURL: url, healthURL: normalizedHealthURL, token: token)
+            try await performConnect(wsURL: url, healthURL: healthURL, token: token)
             await emitGatewayDiagnostic(
                 level: .info,
                 event: "gateway.connect.success",
-                context: Self.endpointContext(wsURL: url, healthURL: normalizedHealthURL)
+                context: Self.endpointContext(wsURL: url, healthURL: healthURL)
             )
             await transitionConnectionState(.connected)
         } catch {
             let mapped = mapError(error)
-            var failureContext = Self.endpointContext(wsURL: url, healthURL: normalizedHealthURL)
+            var failureContext = Self.endpointContext(wsURL: url, healthURL: healthURL)
             failureContext["rawError"] = error.localizedDescription
             failureContext["mappedError"] = mapped.localizedDescription
             failureContext["mappedErrorKind"] = Self.mappedErrorKind(mapped)
@@ -840,6 +881,13 @@ public actor OpenClawGatewayConnection {
         sessionKey: String,
         clientRunId: String?
     ) async throws -> OpenClawChatSendResponse {
+        let promptSafetyCheck = Terra.SafetyCheck(
+            name: "openclaw.chat.prompt",
+            subject: message,
+            subjectCapture: .optIn
+        )
+        _ = await Terra.withSafetyCheckSpan(promptSafetyCheck) { _ in true }
+
         let runId = clientRunId?.isEmpty == false ? clientRunId! : UUID().uuidString
         let request = ChatSendParams(
             sessionkey: sessionKey,
@@ -854,6 +902,19 @@ public actor OpenClawGatewayConnection {
         let data = try await requestRaw(method: "chat.send", params: params)
         let payload = try decodePayload(method: "chat.send", data: data, as: OpenClawChatSendResponse.self)
         activeRunSessionKeys[payload.runId] = sessionKey
+
+        _ = await Terra.withAgentInvocationSpan(
+            agent: .init(name: "openclaw.chat.send", id: sessionKey)
+        ) { scope in
+            scope.setAttributes([
+                Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                Terra.Keys.Terra.openClawGateway: .bool(true),
+                Terra.Keys.GenAI.providerName: .string("openclaw"),
+                "osaurus.openclaw.message.length": .int(message.count),
+                "osaurus.prompt.raw": .string(message),
+                "osaurus.openclaw.run_id": .string(payload.runId),
+            ])
+        }
         return payload
     }
 
@@ -1014,7 +1075,30 @@ public actor OpenClawGatewayConnection {
             guard let data = try? await requestRaw(method: "agent.wait", params: params),
                 let snapshot = try? decodePayload(method: "agent.wait", data: data, as: AgentWaitResponse.self)
             else {
+                _ = await Terra.withAgentInvocationSpan(
+                    agent: .init(name: "openclaw.agent.wait.refresh", id: runId)
+                ) { scope in
+                    scope.setAttributes([
+                        Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                        Terra.Keys.Terra.openClawGateway: .bool(true),
+                        Terra.Keys.GenAI.providerName: .string("openclaw"),
+                        "osaurus.openclaw.refresh.has_hint": .bool(runIdHint?.isEmpty == false),
+                    ])
+                    scope.addEvent("openclaw.agent.wait.decode_failed")
+                }
                 continue
+            }
+
+            _ = await Terra.withAgentInvocationSpan(
+                agent: .init(name: "openclaw.agent.wait.refresh", id: runId)
+            ) { scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                    Terra.Keys.Terra.openClawGateway: .bool(true),
+                    Terra.Keys.GenAI.providerName: .string("openclaw"),
+                    "osaurus.openclaw.refresh.has_hint": .bool(runIdHint?.isEmpty == false),
+                    "osaurus.openclaw.agent_wait.status": .string(snapshot.status),
+                ])
             }
 
             pendingResyncRunIDs.remove(runId)
@@ -1072,6 +1156,7 @@ public actor OpenClawGatewayConnection {
         healthURL: URL?,
         token: String?
     ) async throws {
+        let connectStartedAt = Date()
         await emitGatewayDiagnostic(
             level: .debug,
             event: "gateway.handshake.begin",
@@ -1132,6 +1217,18 @@ public actor OpenClawGatewayConnection {
                 event: "gateway.websocket.connect.success",
                 context: ["webSocketURL": wsURL.absoluteString]
             )
+            _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.gateway.connect.success", id: nil)) {
+                scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                    Terra.Keys.Terra.openClawGateway: .bool(true),
+                    Terra.Keys.GenAI.providerName: .string("openclaw"),
+                    "osaurus.openclaw.gateway.url": .string(wsURL.absoluteString),
+                    "osaurus.openclaw.gateway.health_url": .string(healthURL?.absoluteString ?? ""),
+                    "osaurus.openclaw.gateway.connect.latency_ms": .double(Date().timeIntervalSince(connectStartedAt) * 1000),
+                    "osaurus.openclaw.gateway.connect.credential_provided": .bool(token?.isEmpty == false),
+                ])
+            }
         } catch {
             let mapped = mapError(error)
             await emitGatewayDiagnostic(
@@ -1144,6 +1241,20 @@ public actor OpenClawGatewayConnection {
                     "mappedErrorKind": Self.mappedErrorKind(mapped),
                 ]
             )
+            _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.gateway.connect.failed", id: nil)) {
+                scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                    Terra.Keys.Terra.openClawGateway: .bool(true),
+                    Terra.Keys.GenAI.providerName: .string("openclaw"),
+                    "osaurus.openclaw.gateway.url": .string(wsURL.absoluteString),
+                    "osaurus.openclaw.gateway.health_url": .string(healthURL?.absoluteString ?? ""),
+                    "osaurus.openclaw.gateway.connect.latency_ms": .double(Date().timeIntervalSince(connectStartedAt) * 1000),
+                    "osaurus.openclaw.gateway.connect.error.raw": .string(error.localizedDescription),
+                    "osaurus.openclaw.gateway.connect.error.mapped": .string(mapped.localizedDescription),
+                    "osaurus.openclaw.gateway.connect.error.kind": .string(Self.mappedErrorKind(mapped)),
+                ])
+            }
             throw mapped
         }
     }
@@ -1204,13 +1315,15 @@ public actor OpenClawGatewayConnection {
         )
         var attempt = 1
         while !Task.isCancelled {
-            await transitionConnectionState(.reconnecting(attempt: attempt))
-            let base = Self.delaySeconds(forAttempt: attempt, immediateFirstAttempt: immediate)
+            let reconnectAttemptStartedAt = Date()
+            let attemptSnapshot = attempt
+            await transitionConnectionState(.reconnecting(attempt: attemptSnapshot))
+            let base = Self.delaySeconds(forAttempt: attemptSnapshot, immediateFirstAttempt: immediate)
             await emitGatewayDiagnostic(
                 level: .debug,
                 event: "gateway.reconnect.attempt.begin",
                 context: [
-                    "attempt": "\(attempt)",
+                    "attempt": "\(attemptSnapshot)",
                     "backoffSeconds": "\(base)",
                     "webSocketURL": parameters.wsURL.absoluteString,
                 ]
@@ -1252,8 +1365,20 @@ public actor OpenClawGatewayConnection {
                 await emitGatewayDiagnostic(
                     level: .info,
                     event: "gateway.reconnect.success",
-                    context: ["attempt": "\(attempt)"]
+                    context: ["attempt": "\(attemptSnapshot)"]
                 )
+                _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.gateway.reconnect.success", id: nil))
+                { scope in
+                    scope.setAttributes([
+                        Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                        Terra.Keys.Terra.openClawGateway: .bool(true),
+                        Terra.Keys.GenAI.providerName: .string("openclaw"),
+                        "osaurus.openclaw.gateway.reconnect.attempt": .int(attemptSnapshot),
+                        "osaurus.openclaw.gateway.reconnect.latency_ms": .double(
+                            Date().timeIntervalSince(reconnectAttemptStartedAt) * 1000
+                        ),
+                    ])
+                }
                 await transitionConnectionState(.reconnected)
                 await transitionConnectionState(.connected)
                 return
@@ -1263,12 +1388,27 @@ public actor OpenClawGatewayConnection {
                     level: .warning,
                     event: "gateway.reconnect.attempt.failed",
                     context: [
-                        "attempt": "\(attempt)",
+                        "attempt": "\(attemptSnapshot)",
                         "rawError": error.localizedDescription,
                         "mappedError": mapped.localizedDescription,
                         "mappedErrorKind": Self.mappedErrorKind(mapped),
                     ]
                 )
+                _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.gateway.reconnect.failed", id: nil))
+                { scope in
+                    scope.setAttributes([
+                        Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                        Terra.Keys.Terra.openClawGateway: .bool(true),
+                        Terra.Keys.GenAI.providerName: .string("openclaw"),
+                        "osaurus.openclaw.gateway.reconnect.attempt": .int(attemptSnapshot),
+                        "osaurus.openclaw.gateway.reconnect.latency_ms": .double(
+                            Date().timeIntervalSince(reconnectAttemptStartedAt) * 1000
+                        ),
+                        "osaurus.openclaw.gateway.reconnect.error.raw": .string(error.localizedDescription),
+                        "osaurus.openclaw.gateway.reconnect.error.mapped": .string(mapped.localizedDescription),
+                        "osaurus.openclaw.gateway.reconnect.error.kind": .string(Self.mappedErrorKind(mapped)),
+                    ])
+                }
                 if let clawError = mapped as? OpenClawConnectionError {
                     if case .rateLimited(let retryAfterMs) = clawError {
                         // Don't count toward attempt; just sleep for the gateway's instruction.
@@ -1277,7 +1417,7 @@ public actor OpenClawGatewayConnection {
                             level: .warning,
                             event: "gateway.reconnect.rateLimited",
                             context: [
-                                "attempt": "\(attempt)",
+                                "attempt": "\(attemptSnapshot)",
                                 "retryAfterMs": "\(retryAfterMs)",
                             ]
                         )
@@ -1290,7 +1430,7 @@ public actor OpenClawGatewayConnection {
                             level: .error,
                             event: "gateway.reconnect.stopped.authFailure",
                             context: [
-                                "attempt": "\(attempt)",
+                                "attempt": "\(attemptSnapshot)",
                                 "error": message,
                             ]
                         )
@@ -1422,11 +1562,53 @@ public actor OpenClawGatewayConnection {
         if let requestExecutor {
             return try await requestExecutor(method, params)
         }
+        let requestStartedAt = Date()
+        return try await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.gateway.request", id: method)) {
+            scope in
+            scope.setAttributes([
+                Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                Terra.Keys.Terra.openClawGateway: .bool(true),
+                Terra.Keys.GenAI.providerName: .string("openclaw"),
+                "osaurus.openclaw.request.method": .string(method),
+                "osaurus.openclaw.request.param_count": .int(params?.count ?? 0),
+                "osaurus.openclaw.request.param_keys": .string(Self.requestParamKeys(params)),
+            ])
+            if let paramsRaw = Self.rawTelemetryJSONString(from: params), !paramsRaw.isEmpty {
+                scope.setAttributes(["osaurus.openclaw.request.params.raw": .string(paramsRaw)])
+            }
+            do {
+                let data = try await self.requestRawRetried(method: method, params: params)
+                scope.setAttributes([
+                    "osaurus.openclaw.request.success": .bool(true),
+                    "osaurus.openclaw.request.total_latency_ms": .double(
+                        Date().timeIntervalSince(requestStartedAt) * 1000
+                    ),
+                    "osaurus.openclaw.response.bytes": .int(data.count),
+                ])
+                return data
+            } catch {
+                scope.setAttributes([
+                    "osaurus.openclaw.request.success": .bool(false),
+                    "osaurus.openclaw.request.total_latency_ms": .double(
+                        Date().timeIntervalSince(requestStartedAt) * 1000
+                    ),
+                    "osaurus.openclaw.request.error.raw": .string(error.localizedDescription),
+                    "osaurus.openclaw.request.error.kind": .string(Self.mappedErrorKind(error)),
+                ])
+                throw error
+            }
+        }
+    }
 
+    private func requestRawRetried(
+        method: String,
+        params: [String: OpenClawProtocol.AnyCodable]?
+    ) async throws -> Data {
         let retryDelaysMs = [0, 150, 400, 900]
         var lastError: Error = OpenClawConnectionError.noChannel
         var lastRawError: Error = OpenClawConnectionError.noChannel
         let requestDebugContext = Self.requestDebugContext(method: method, params: params)
+        let requestStartedAt = Date()
 
         if method == "sessions.patch" {
             await emitGatewayDiagnostic(
@@ -1438,6 +1620,7 @@ public actor OpenClawGatewayConnection {
 
         for (index, delay) in retryDelaysMs.enumerated() {
             let attempt = index + 1
+            let attemptStartedAt = Date()
             if delay > 0 {
                 try? await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000)
             }
@@ -1447,6 +1630,27 @@ public actor OpenClawGatewayConnection {
                     throw OpenClawConnectionError.noChannel
                 }
                 let data = try await channel.request(method: method, params: params, timeoutMs: nil)
+
+                _ = await Terra.withToolExecutionSpan(
+                    tool: .init(name: method, type: "openclaw.rpc"),
+                    call: .init(id: "rpc_\(UUID().uuidString.lowercased())")
+                ) { scope in
+                    scope.setAttributes([
+                        Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                        Terra.Keys.Terra.openClawGateway: .bool(true),
+                        Terra.Keys.GenAI.providerName: .string("openclaw"),
+                        "osaurus.openclaw.request.method": .string(method),
+                        "osaurus.openclaw.request.param_count": .int(params?.count ?? 0),
+                        "osaurus.openclaw.request.param_keys": .string(Self.requestParamKeys(params)),
+                        "osaurus.openclaw.request.attempt": .int(attempt),
+                        "osaurus.openclaw.response.bytes": .int(data.count),
+                        "osaurus.openclaw.request.latency_ms": .double(Date().timeIntervalSince(attemptStartedAt) * 1000),
+                    ])
+                    if let paramsRaw = Self.rawTelemetryJSONString(from: params), !paramsRaw.isEmpty {
+                        scope.setAttributes(["osaurus.openclaw.request.params.raw": .string(paramsRaw)])
+                    }
+                }
+
                 if method == "sessions.patch" {
                     var successContext = requestDebugContext
                     successContext["attempt"] = "\(attempt)"
@@ -1478,22 +1682,72 @@ public actor OpenClawGatewayConnection {
                     event: "gateway.request.attempt.failed",
                     context: attemptContext
                 )
+
+                _ = await Terra.withToolExecutionSpan(
+                    tool: .init(name: method, type: "openclaw.rpc"),
+                    call: .init(id: "rpc_\(UUID().uuidString.lowercased())")
+                ) { scope in
+                    scope.setAttributes([
+                        Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                        Terra.Keys.Terra.openClawGateway: .bool(true),
+                        Terra.Keys.GenAI.providerName: .string("openclaw"),
+                        "osaurus.openclaw.request.method": .string(method),
+                        "osaurus.openclaw.request.param_count": .int(params?.count ?? 0),
+                        "osaurus.openclaw.request.param_keys": .string(Self.requestParamKeys(params)),
+                        "osaurus.openclaw.request.attempt": .int(attempt),
+                        "osaurus.openclaw.request.latency_ms": .double(Date().timeIntervalSince(attemptStartedAt) * 1000),
+                        "osaurus.openclaw.request.error.raw": .string(error.localizedDescription),
+                        "osaurus.openclaw.request.error.mapped": .string(mappedError.localizedDescription),
+                        "osaurus.openclaw.request.error.kind": .string(Self.mappedErrorKind(mappedError)),
+                    ])
+                    if let paramsRaw = Self.rawTelemetryJSONString(from: params), !paramsRaw.isEmpty {
+                        scope.setAttributes(["osaurus.openclaw.request.params.raw": .string(paramsRaw)])
+                    }
+                }
+            }
+        }
+
+        let finalRawError = lastRawError
+        let finalMappedError = lastError
+        let finalRawErrorDescription = finalRawError.localizedDescription
+        let finalMappedErrorDescription = finalMappedError.localizedDescription
+        let finalMappedErrorKind = Self.mappedErrorKind(finalMappedError)
+
+        _ = await Terra.withToolExecutionSpan(
+            tool: .init(name: method, type: "openclaw.rpc"),
+            call: .init(id: "rpc_\(UUID().uuidString.lowercased())")
+        ) { scope in
+            scope.setAttributes([
+                Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                Terra.Keys.Terra.openClawGateway: .bool(true),
+                Terra.Keys.GenAI.providerName: .string("openclaw"),
+                "osaurus.openclaw.request.method": .string(method),
+                "osaurus.openclaw.request.param_count": .int(params?.count ?? 0),
+                "osaurus.openclaw.request.param_keys": .string(Self.requestParamKeys(params)),
+                "osaurus.openclaw.request.error.raw": .string(finalRawErrorDescription),
+                "osaurus.openclaw.request.error.mapped": .string(finalMappedErrorDescription),
+                "osaurus.openclaw.request.error.kind": .string(finalMappedErrorKind),
+                "osaurus.openclaw.request.attempts": .int(retryDelaysMs.count),
+                "osaurus.openclaw.request.total_latency_ms": .double(Date().timeIntervalSince(requestStartedAt) * 1000),
+            ])
+            if let paramsRaw = Self.rawTelemetryJSONString(from: params), !paramsRaw.isEmpty {
+                scope.setAttributes(["osaurus.openclaw.request.params.raw": .string(paramsRaw)])
             }
         }
 
         var finalContext = requestDebugContext
         finalContext["method"] = method
         finalContext["attempts"] = "\(retryDelaysMs.count)"
-        finalContext["error"] = lastError.localizedDescription
-        finalContext["rawError"] = lastRawError.localizedDescription
-        finalContext["mappedErrorKind"] = Self.mappedErrorKind(lastError)
-        finalContext.merge(Self.gatewayResponseDebugContext(from: lastRawError)) { _, new in new }
+        finalContext["error"] = finalMappedErrorDescription
+        finalContext["rawError"] = finalRawErrorDescription
+        finalContext["mappedErrorKind"] = finalMappedErrorKind
+        finalContext.merge(Self.gatewayResponseDebugContext(from: finalRawError)) { _, new in new }
         await emitGatewayDiagnostic(
             level: .warning,
             event: "gateway.request.failed",
             context: finalContext
         )
-        throw lastError
+        throw finalMappedError
     }
 
     private static func requestDebugContext(
@@ -1570,6 +1824,21 @@ public actor OpenClawGatewayConnection {
             let data = try? JSONSerialization.data(withJSONObject: sanitized, options: [.sortedKeys])
         else {
             return String(describing: sanitized)
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func rawTelemetryJSONString(
+        from params: [String: OpenClawProtocol.AnyCodable]?
+    ) -> String? {
+        guard let params else { return nil }
+        let dictionary = params.reduce(into: [String: Any]()) { partialResult, entry in
+            partialResult[entry.key] = entry.value.value
+        }
+        guard JSONSerialization.isValidJSONObject(dictionary),
+            let data = try? JSONSerialization.data(withJSONObject: dictionary, options: [.sortedKeys])
+        else {
+            return String(describing: dictionary)
         }
         return String(data: data, encoding: .utf8)
     }
@@ -1924,6 +2193,15 @@ public actor OpenClawGatewayConnection {
                 if recentEventFrames.count > Self.maxBufferedEventFrames {
                     let dropped = recentEventFrames.count - Self.maxBufferedEventFrames
                     recentEventFrames.removeFirst(dropped)
+                    await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.gateway.event_buffer", id: nil))
+                    { scope in
+                        scope.setAttributes([
+                            Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                            Terra.Keys.Terra.openClawGateway: .bool(true),
+                            "osaurus.openclaw.buffer.dropped": .int(dropped),
+                            "osaurus.openclaw.buffer.limit": .int(Self.maxBufferedEventFrames),
+                        ])
+                    }
                     #if DEBUG
                     print("[OpenClawGatewayConnection] ⚠️ event buffer overflow — dropped \(dropped) frame(s)")
                     #endif
@@ -1956,6 +2234,15 @@ public actor OpenClawGatewayConnection {
         if registration.pendingPushes.count >= Self.maxPendingPushesPerListener {
             let dropped = registration.pendingPushes.count - Self.maxPendingPushesPerListener + 1
             registration.pendingPushes.removeFirst(dropped)
+            await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.gateway.listener_backlog", id: listenerID.uuidString))
+            { scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                    Terra.Keys.Terra.openClawGateway: .bool(true),
+                    "osaurus.openclaw.listener.dropped": .int(dropped),
+                    "osaurus.openclaw.listener.backlog_limit": .int(Self.maxPendingPushesPerListener),
+                ])
+            }
             #if DEBUG
             print(
                 "[OpenClawGatewayConnection] ⚠️ listener backlog overflow — dropped \(dropped) push(es) for listener \(listenerID.uuidString)"

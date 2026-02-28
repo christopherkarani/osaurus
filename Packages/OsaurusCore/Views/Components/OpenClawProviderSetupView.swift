@@ -305,6 +305,7 @@ enum OpenClawProviderPreset: String, CaseIterable, Identifiable {
     case openrouter
     case moonshot
     case kimiCoding = "kimi-coding"
+    case minimax
     case ollama
     case vllm
     case anthropic
@@ -319,6 +320,7 @@ enum OpenClawProviderPreset: String, CaseIterable, Identifiable {
         case .openrouter: return "OpenRouter"
         case .moonshot: return "Moonshot (Kimi K2.5)"
         case .kimiCoding: return "Kimi Coding (K2.5)"
+        case .minimax: return "MiniMax"
         case .ollama: return "Ollama"
         case .vllm: return "vLLM"
         case .anthropic: return "Anthropic"
@@ -337,6 +339,7 @@ enum OpenClawProviderPreset: String, CaseIterable, Identifiable {
         case .openrouter: return "https://openrouter.ai/api/v1"
         case .moonshot: return "https://api.moonshot.ai/v1"
         case .kimiCoding: return "https://api.kimi.com/coding"
+        case .minimax: return "https://api.minimax.io/v1"
         case .ollama: return "http://127.0.0.1:11434/v1"
         case .vllm: return "http://127.0.0.1:8000/v1"
         case .anthropic: return "https://api.anthropic.com/v1"
@@ -348,7 +351,7 @@ enum OpenClawProviderPreset: String, CaseIterable, Identifiable {
     var apiCompatibility: String {
         switch self {
         case .osaurus: return "openai-completions"
-        case .openrouter, .moonshot, .openai, .vllm: return "openai-completions"
+        case .openrouter, .moonshot, .minimax, .openai, .vllm: return "openai-completions"
         case .kimiCoding, .anthropic: return "anthropic-messages"
         case .ollama: return "ollama"
         case .custom: return "openai-completions"
@@ -372,6 +375,7 @@ enum OpenClawProviderPreset: String, CaseIterable, Identifiable {
         case .openrouter: return "arrow.triangle.branch"
         case .moonshot: return "moon.stars.fill"
         case .kimiCoding: return "terminal.fill"
+        case .minimax: return "wand.and.stars"
         case .ollama: return "desktopcomputer"
         case .vllm: return "cpu"
         case .anthropic: return "brain"
@@ -386,6 +390,7 @@ enum OpenClawProviderPreset: String, CaseIterable, Identifiable {
         case .openrouter: return "Access 200+ models from top providers"
         case .moonshot: return "Use Kimi K2.5 models via Moonshot AI"
         case .kimiCoding: return "Use Kimi Code keys via the Kimi Coding endpoint"
+        case .minimax: return "MiniMax M2.5 and M2.1 models"
         case .ollama: return "Local models \u{2014} no API key needed"
         case .vllm: return "Local OpenAI-compatible server"
         case .anthropic: return "Claude models from Anthropic"
@@ -400,6 +405,7 @@ enum OpenClawProviderPreset: String, CaseIterable, Identifiable {
         case .openrouter: return "https://openrouter.ai/keys"
         case .moonshot: return "https://platform.moonshot.ai/console/api-keys"
         case .kimiCoding: return "https://www.kimi.com/code/en"
+        case .minimax: return "https://platform.minimax.io/user-center/basic-information/interface-key"
         case .ollama: return "https://ollama.com/download"
         case .vllm: return "https://docs.vllm.ai/"
         case .anthropic: return "https://console.anthropic.com/settings/keys"
@@ -414,6 +420,7 @@ enum OpenClawProviderPreset: String, CaseIterable, Identifiable {
         case .openrouter: return [Color(red: 0.95, green: 0.55, blue: 0.25), Color(red: 0.85, green: 0.4, blue: 0.2)]
         case .moonshot: return [Color(red: 0.2, green: 0.45, blue: 0.95), Color(red: 0.14, green: 0.28, blue: 0.75)]
         case .kimiCoding: return [Color(red: 0.1, green: 0.6, blue: 0.7), Color(red: 0.06, green: 0.4, blue: 0.5)]
+        case .minimax: return [Color(red: 0.5, green: 0.3, blue: 0.8), Color(red: 0.35, green: 0.2, blue: 0.65)]
         case .ollama: return [Color(red: 0.55, green: 0.55, blue: 0.6), Color(red: 0.4, green: 0.4, blue: 0.45)]
         case .vllm: return [Color(red: 0.3, green: 0.6, blue: 0.8), Color(red: 0.2, green: 0.45, blue: 0.65)]
         case .anthropic: return [Color(red: 0.85, green: 0.55, blue: 0.35), Color(red: 0.75, green: 0.4, blue: 0.25)]

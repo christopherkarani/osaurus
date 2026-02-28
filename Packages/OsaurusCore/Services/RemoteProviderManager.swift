@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Terra
 
 /// Notification posted when remote provider connection status changes
 extension Foundation.Notification.Name {
@@ -175,6 +176,7 @@ public final class RemoteProviderManager: ObservableObject {
         guard provider.enabled else {
             throw RemoteProviderError.providerDisabled
         }
+        let startedAt = Date()
 
         // Update state to connecting
         var state = providerStates[providerId] ?? RemoteProviderState(providerId: providerId)
@@ -194,6 +196,19 @@ public final class RemoteProviderManager: ObservableObject {
                 "baseURL": provider.baseURL?.absoluteString ?? "<invalid-url>",
             ]
         )
+        let providerName = provider.name
+        let providerType = provider.providerType.rawValue
+        let providerURL = provider.baseURL?.absoluteString ?? "<invalid-url>"
+                    _ = await Terra.withAgentInvocationSpan(agent: .init(name: "remote.provider.connect.begin", id: providerId.uuidString))
+            { scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("remote_provider"),
+                    Terra.Keys.GenAI.providerName: .string(providerName),
+                    "osaurus.remote.provider.id": .string(providerId.uuidString),
+                    "osaurus.remote.provider.type": .string(providerType),
+                    "osaurus.remote.provider.base_url": .string(providerURL),
+                ])
+            }
 
         do {
             // Fetch models from the provider
@@ -223,6 +238,17 @@ public final class RemoteProviderManager: ObservableObject {
                     "modelCount": "\(models.count)",
                 ]
             )
+                            _ = await Terra.withAgentInvocationSpan(
+                    agent: .init(name: "remote.provider.connect.success", id: providerId.uuidString)
+                ) { scope in
+                    scope.setAttributes([
+                        Terra.Keys.Terra.runtime: .string("remote_provider"),
+                        Terra.Keys.GenAI.providerName: .string(providerName),
+                        "osaurus.remote.provider.id": .string(providerId.uuidString),
+                        "osaurus.remote.provider.model_count": .int(models.count),
+                        "osaurus.remote.provider.connect.latency_ms": .double(Date().timeIntervalSince(startedAt) * 1000),
+                    ])
+                }
 
             notifyStatusChanged()
             notifyModelsChanged()
@@ -257,6 +283,19 @@ public final class RemoteProviderManager: ObservableObject {
                     "fixIt": classified.fixIt ?? "",
                 ]
             )
+                            _ = await Terra.withAgentInvocationSpan(
+                    agent: .init(name: "remote.provider.connect.failed", id: providerId.uuidString)
+                ) { scope in
+                    scope.setAttributes([
+                        Terra.Keys.Terra.runtime: .string("remote_provider"),
+                        Terra.Keys.GenAI.providerName: .string(providerName),
+                        "osaurus.remote.provider.id": .string(providerId.uuidString),
+                        "osaurus.remote.provider.failure_class": .string(classified.failureClass.rawValue),
+                        "osaurus.remote.provider.health_state": .string(classified.healthState.rawValue),
+                        "osaurus.remote.provider.error": .string(classified.message),
+                        "osaurus.remote.provider.connect.latency_ms": .double(Date().timeIntervalSince(startedAt) * 1000),
+                    ])
+                }
 
             notifyStatusChanged()
             throw RemoteProviderError.connectionFailed(classified.message)
@@ -265,6 +304,8 @@ public final class RemoteProviderManager: ObservableObject {
 
     /// Disconnect from a provider
     public func disconnect(providerId: UUID) {
+        let disconnectStartedAt = Date()
+        let providerName = configuration.provider(id: providerId)?.name ?? ""
         // Invalidate the URLSession before discarding the service to prevent leaking
         if let service = services.removeValue(forKey: providerId) {
             Task { await service.invalidateSession() }
@@ -284,6 +325,20 @@ public final class RemoteProviderManager: ObservableObject {
         if let provider = configuration.provider(id: providerId) {
             print("[Osaurus] Remote Provider '\(provider.name)': Disconnected")
         }
+        Task {
+            _ = await Terra.withAgentInvocationSpan(
+                agent: .init(name: "remote.provider.disconnect", id: providerId.uuidString)
+            ) { scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("remote_provider"),
+                    Terra.Keys.GenAI.providerName: .string(providerName),
+                    "osaurus.remote.provider.id": .string(providerId.uuidString),
+                    "osaurus.remote.provider.disconnect.latency_ms": .double(
+                        Date().timeIntervalSince(disconnectStartedAt) * 1000
+                    ),
+                ])
+            }
+        }
 
         notifyStatusChanged()
         notifyModelsChanged()
@@ -298,6 +353,8 @@ public final class RemoteProviderManager: ObservableObject {
     /// Connect to all enabled providers that are marked for auto-connect on app launch
     public func connectEnabledProviders(isStartup: Bool = false) async {
         for provider in configuration.autoConnectProviders {
+            let autoconnectProviderName = provider.name
+            let autoconnectProviderID = provider.id.uuidString
             if isStartup,
                shouldDisableStartupAutoConnect(provider: provider, healthState: .misconfiguredEndpoint)
             {
@@ -314,6 +371,17 @@ public final class RemoteProviderManager: ObservableObject {
                     provider,
                     reason: "misconfigured-openclaw-endpoint"
                 )
+                                    _ = await Terra.withAgentInvocationSpan(
+                        agent: .init(name: "remote.provider.autoconnect.skipped", id: autoconnectProviderID)
+                    ) { scope in
+                        scope.setAttributes([
+                            Terra.Keys.Terra.runtime: .string("remote_provider"),
+                            Terra.Keys.GenAI.providerName: .string(autoconnectProviderName),
+                            "osaurus.remote.provider.id": .string(autoconnectProviderID),
+                            "osaurus.remote.provider.startup": .bool(isStartup),
+                            "osaurus.remote.provider.skip_reason": .string("openclaw-endpoint-sanity-failed"),
+                        ])
+                    }
                 continue
             }
 
@@ -329,6 +397,17 @@ public final class RemoteProviderManager: ObservableObject {
                         "reason": "previously-misconfigured-endpoint",
                     ]
                 )
+                                    _ = await Terra.withAgentInvocationSpan(
+                        agent: .init(name: "remote.provider.autoconnect.skipped", id: autoconnectProviderID)
+                    ) { scope in
+                        scope.setAttributes([
+                            Terra.Keys.Terra.runtime: .string("remote_provider"),
+                            Terra.Keys.GenAI.providerName: .string(autoconnectProviderName),
+                            "osaurus.remote.provider.id": .string(autoconnectProviderID),
+                            "osaurus.remote.provider.startup": .bool(isStartup),
+                            "osaurus.remote.provider.skip_reason": .string("previously-misconfigured-endpoint"),
+                        ])
+                    }
                 continue
             }
 
@@ -347,6 +426,18 @@ public final class RemoteProviderManager: ObservableObject {
                     } else {
                         try await connect(providerId: provider.id)
                     }
+                                            _ = await Terra.withAgentInvocationSpan(
+                            agent: .init(name: "remote.provider.autoconnect.success", id: autoconnectProviderID)
+                        ) { scope in
+                            scope.setAttributes([
+                                Terra.Keys.Terra.runtime: .string("remote_provider"),
+                                Terra.Keys.GenAI.providerName: .string(autoconnectProviderName),
+                                "osaurus.remote.provider.id": .string(autoconnectProviderID),
+                                "osaurus.remote.provider.startup": .bool(isStartup),
+                                "osaurus.remote.provider.attempt": .int(attempt),
+                                "osaurus.remote.provider.max_attempts": .int(maxAttempts),
+                            ])
+                        }
                     break
                 } catch {
                     let storedHealthState = providerStates[provider.id]?.healthState ?? .unknownFailure
@@ -365,6 +456,21 @@ public final class RemoteProviderManager: ObservableObject {
                             "error": error.localizedDescription,
                         ]
                     )
+                    let autoconnectError = error.localizedDescription
+                                            _ = await Terra.withAgentInvocationSpan(
+                            agent: .init(name: "remote.provider.autoconnect.retry", id: autoconnectProviderID)
+                        ) { scope in
+                            scope.setAttributes([
+                                Terra.Keys.Terra.runtime: .string("remote_provider"),
+                                Terra.Keys.GenAI.providerName: .string(autoconnectProviderName),
+                                "osaurus.remote.provider.id": .string(autoconnectProviderID),
+                                "osaurus.remote.provider.startup": .bool(isStartup),
+                                "osaurus.remote.provider.attempt": .int(attempt),
+                                "osaurus.remote.provider.max_attempts": .int(maxAttempts),
+                                "osaurus.remote.provider.health_state": .string(healthState.rawValue),
+                                "osaurus.remote.provider.error": .string(autoconnectError),
+                            ])
+                        }
 
                     print(
                         "[Osaurus] Failed to auto-connect to '\(provider.name)' (attempt \(attempt)/\(maxAttempts)): \(error)"

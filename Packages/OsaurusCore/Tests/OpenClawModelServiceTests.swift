@@ -369,6 +369,168 @@ struct OpenClawModelServiceTests {
     }
 
     @Test @MainActor
+    func streamDeltas_deltaOnlyCumulativeSnapshots_withoutText_doNotDuplicate() async throws {
+        let connection = OpenClawGatewayConnection { method, _ in
+            if method == "chat.send" {
+                return try encodeJSONObject(["runId": "run-delta-only-cumulative", "status": "started"])
+            }
+            return try encodeJSONObject([:])
+        }
+        let service = OpenClawModelService(connection: connection, availabilityProvider: { true })
+
+        let stream = try await service.streamDeltas(
+            messages: [ChatMessage(role: "user", content: "hello")],
+            parameters: params,
+            requestedModel: "openclaw:main",
+            stopSequences: []
+        )
+
+        let consumeTask = Task { () throws -> String in
+            var output = ""
+            for try await delta in stream {
+                output += delta
+            }
+            return output
+        }
+
+        await connection._testEmitPush(
+            .event(
+                makeEventFrame(
+                    event: "chat",
+                    payload: [
+                        "runId": "run-delta-only-cumulative",
+                        "state": "delta",
+                        "message": [
+                            "role": "assistant",
+                            "content": [["type": "text", "delta": "Hello"]]
+                        ]
+                    ],
+                    seq: 1
+                )
+            )
+        )
+        await connection._testEmitPush(
+            .event(
+                makeEventFrame(
+                    event: "chat",
+                    payload: [
+                        "runId": "run-delta-only-cumulative",
+                        "state": "delta",
+                        "message": [
+                            "role": "assistant",
+                            "content": [["type": "text", "delta": "Hello"]]
+                        ]
+                    ],
+                    seq: 2
+                )
+            )
+        )
+        await connection._testEmitPush(
+            .event(
+                makeEventFrame(
+                    event: "chat",
+                    payload: [
+                        "runId": "run-delta-only-cumulative",
+                        "state": "delta",
+                        "message": [
+                            "role": "assistant",
+                            "content": [["type": "text", "delta": "Hello there"]]
+                        ]
+                    ],
+                    seq: 3
+                )
+            )
+        )
+        await connection._testEmitPush(
+            .event(
+                makeEventFrame(
+                    event: "chat",
+                    payload: [
+                        "runId": "run-delta-only-cumulative",
+                        "state": "final"
+                    ],
+                    seq: 4
+                )
+            )
+        )
+
+        let output = try await consumeTask.value
+        #expect(output == "Hello there")
+    }
+
+    @Test @MainActor
+    func streamDeltas_agentAssistantDeltaOnlyCumulativeSnapshots_doNotDuplicate() async throws {
+        let connection = OpenClawGatewayConnection { method, _ in
+            if method == "chat.send" {
+                return try encodeJSONObject(["runId": "run-agent-delta-cumulative", "status": "started"])
+            }
+            return try encodeJSONObject([:])
+        }
+        let service = OpenClawModelService(connection: connection, availabilityProvider: { true })
+
+        let stream = try await service.streamDeltas(
+            messages: [ChatMessage(role: "user", content: "hello")],
+            parameters: params,
+            requestedModel: "openclaw:main",
+            stopSequences: []
+        )
+
+        let consumeTask = Task { () throws -> String in
+            var output = ""
+            for try await delta in stream {
+                output += delta
+            }
+            return output
+        }
+
+        await connection._testEmitPush(
+            .event(
+                makeAgentEventFrame(
+                    stream: "assistant",
+                    runId: "run-agent-delta-cumulative",
+                    seq: 1,
+                    data: ["delta": "Hello"]
+                )
+            )
+        )
+        await connection._testEmitPush(
+            .event(
+                makeAgentEventFrame(
+                    stream: "assistant",
+                    runId: "run-agent-delta-cumulative",
+                    seq: 2,
+                    data: ["delta": "Hello"]
+                )
+            )
+        )
+        await connection._testEmitPush(
+            .event(
+                makeAgentEventFrame(
+                    stream: "assistant",
+                    runId: "run-agent-delta-cumulative",
+                    seq: 3,
+                    data: ["delta": "Hello there"]
+                )
+            )
+        )
+        await connection._testEmitPush(
+            .event(
+                makeEventFrame(
+                    event: "chat",
+                    payload: [
+                        "runId": "run-agent-delta-cumulative",
+                        "state": "final"
+                    ],
+                    seq: 4
+                )
+            )
+        )
+
+        let output = try await consumeTask.value
+        #expect(output == "Hello there")
+    }
+
+    @Test @MainActor
     func streamDeltas_nonPrefixRewriteDoesNotCorruptOutput() async throws {
         let connection = OpenClawGatewayConnection { method, _ in
             if method == "chat.send" {

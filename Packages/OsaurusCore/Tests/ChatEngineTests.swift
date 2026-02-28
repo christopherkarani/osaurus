@@ -191,4 +191,208 @@ struct ChatEngineTests {
         do { _ = try await engine.streamChat(request: req) } catch { threw = true }
         #expect(threw)
     }
+
+    @Test func streamChat_toolInvocation_generatesToolCallIdWhenMissing() async throws {
+        struct MissingIDToolStreamService: ToolCapableService {
+            var id: String { "fake" }
+            func isAvailable() -> Bool { true }
+            func handles(requestedModel: String?) -> Bool { (requestedModel ?? "") == "fake" }
+            func streamDeltas(
+                messages _: [ChatMessage],
+                parameters _: GenerationParameters,
+                requestedModel _: String?,
+                stopSequences _: [String]
+            ) async throws -> AsyncThrowingStream<String, Error> { AsyncThrowingStream { $0.finish() } }
+            func generateOneShot(
+                messages _: [ChatMessage],
+                parameters _: GenerationParameters,
+                requestedModel _: String?
+            ) async throws -> String { "" }
+            func respondWithTools(
+                messages _: [ChatMessage],
+                parameters _: GenerationParameters,
+                stopSequences _: [String],
+                tools _: [Tool],
+                toolChoice _: ToolChoiceOption?,
+                requestedModel _: String?
+            ) async throws -> String { "" }
+            func streamWithTools(
+                messages _: [ChatMessage],
+                parameters _: GenerationParameters,
+                stopSequences _: [String],
+                tools _: [Tool],
+                toolChoice _: ToolChoiceOption?,
+                requestedModel _: String?
+            ) async throws -> AsyncThrowingStream<String, Error> {
+                AsyncThrowingStream { continuation in
+                    continuation.finish(
+                        throwing: ServiceToolInvocation(toolName: "read_file", jsonArguments: "{\"path\":\"a\"}")
+                    )
+                }
+            }
+        }
+
+        let engine = ChatEngine(services: [MissingIDToolStreamService()], installedModelsProvider: { [] })
+        let req = ChatCompletionRequest(
+            model: "fake",
+            messages: [ChatMessage(role: "user", content: "hi")],
+            temperature: 0.5,
+            max_tokens: 16,
+            stream: true,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: [
+                Tool(type: "function", function: ToolFunction(name: "read_file", description: nil, parameters: .object([:])))
+            ],
+            tool_choice: .auto,
+            session_id: nil
+        )
+
+        let stream = try await engine.streamChat(request: req)
+        do {
+            for try await _ in stream {}
+            Issue.record("Expected tool invocation error")
+        } catch let inv as ServiceToolInvocation {
+            #expect(inv.toolCallId != nil)
+            #expect((inv.toolCallId ?? "").hasPrefix("call_"))
+        }
+    }
+
+    @Test func streamChat_toolInvocation_preservesToolCallIdWhenPresent() async throws {
+        struct PreservedIDToolStreamService: ToolCapableService {
+            var id: String { "fake" }
+            func isAvailable() -> Bool { true }
+            func handles(requestedModel: String?) -> Bool { (requestedModel ?? "") == "fake" }
+            func streamDeltas(
+                messages _: [ChatMessage],
+                parameters _: GenerationParameters,
+                requestedModel _: String?,
+                stopSequences _: [String]
+            ) async throws -> AsyncThrowingStream<String, Error> { AsyncThrowingStream { $0.finish() } }
+            func generateOneShot(
+                messages _: [ChatMessage],
+                parameters _: GenerationParameters,
+                requestedModel _: String?
+            ) async throws -> String { "" }
+            func respondWithTools(
+                messages _: [ChatMessage],
+                parameters _: GenerationParameters,
+                stopSequences _: [String],
+                tools _: [Tool],
+                toolChoice _: ToolChoiceOption?,
+                requestedModel _: String?
+            ) async throws -> String { "" }
+            func streamWithTools(
+                messages _: [ChatMessage],
+                parameters _: GenerationParameters,
+                stopSequences _: [String],
+                tools _: [Tool],
+                toolChoice _: ToolChoiceOption?,
+                requestedModel _: String?
+            ) async throws -> AsyncThrowingStream<String, Error> {
+                AsyncThrowingStream { continuation in
+                    continuation.finish(
+                        throwing: ServiceToolInvocation(
+                            toolName: "read_file",
+                            jsonArguments: "{\"path\":\"a\"}",
+                            toolCallId: "call_preserved_123"
+                        )
+                    )
+                }
+            }
+        }
+
+        let engine = ChatEngine(services: [PreservedIDToolStreamService()], installedModelsProvider: { [] })
+        let req = ChatCompletionRequest(
+            model: "fake",
+            messages: [ChatMessage(role: "user", content: "hi")],
+            temperature: 0.5,
+            max_tokens: 16,
+            stream: true,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: [
+                Tool(type: "function", function: ToolFunction(name: "read_file", description: nil, parameters: .object([:])))
+            ],
+            tool_choice: .auto,
+            session_id: nil
+        )
+
+        let stream = try await engine.streamChat(request: req)
+        do {
+            for try await _ in stream {}
+            Issue.record("Expected tool invocation error")
+        } catch let inv as ServiceToolInvocation {
+            #expect(inv.toolCallId == "call_preserved_123")
+        }
+    }
+
+    @Test func completeChat_toolInvocation_preservesProvidedToolCallId() async throws {
+        struct PreservedIDToolResponseService: ToolCapableService {
+            var id: String { "fake" }
+            func isAvailable() -> Bool { true }
+            func handles(requestedModel: String?) -> Bool { (requestedModel ?? "") == "fake" }
+            func streamDeltas(
+                messages _: [ChatMessage],
+                parameters _: GenerationParameters,
+                requestedModel _: String?,
+                stopSequences _: [String]
+            ) async throws -> AsyncThrowingStream<String, Error> { AsyncThrowingStream { $0.finish() } }
+            func generateOneShot(
+                messages _: [ChatMessage],
+                parameters _: GenerationParameters,
+                requestedModel _: String?
+            ) async throws -> String { "" }
+            func respondWithTools(
+                messages _: [ChatMessage],
+                parameters _: GenerationParameters,
+                stopSequences _: [String],
+                tools _: [Tool],
+                toolChoice _: ToolChoiceOption?,
+                requestedModel _: String?
+            ) async throws -> String {
+                throw ServiceToolInvocation(
+                    toolName: "read_file",
+                    jsonArguments: "{\"path\":\"a\"}",
+                    toolCallId: "call_preserved_999"
+                )
+            }
+            func streamWithTools(
+                messages _: [ChatMessage],
+                parameters _: GenerationParameters,
+                stopSequences _: [String],
+                tools _: [Tool],
+                toolChoice _: ToolChoiceOption?,
+                requestedModel _: String?
+            ) async throws -> AsyncThrowingStream<String, Error> { AsyncThrowingStream { $0.finish() } }
+        }
+
+        let engine = ChatEngine(services: [PreservedIDToolResponseService()], installedModelsProvider: { [] })
+        let req = ChatCompletionRequest(
+            model: "fake",
+            messages: [ChatMessage(role: "user", content: "hi")],
+            temperature: 0.5,
+            max_tokens: 16,
+            stream: false,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: [
+                Tool(type: "function", function: ToolFunction(name: "read_file", description: nil, parameters: .object([:])))
+            ],
+            tool_choice: .auto,
+            session_id: nil
+        )
+
+        let response = try await engine.completeChat(request: req)
+        #expect(response.choices.first?.message.tool_calls?.first?.id == "call_preserved_999")
+    }
 }

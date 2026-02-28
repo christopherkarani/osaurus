@@ -94,9 +94,15 @@ struct IssueTrackerPanel: View {
     let onRefreshMemory: () -> Void
     /// Called when user wants to view current memory snapshot content
     let onViewMemory: () -> Void
+    /// Called when user wants to clear current trace history
+    let onClearTraceHistory: () -> Void
 
     @Environment(\.theme) private var theme: ThemeProtocol
     @Namespace private var stepFeedNamespace
+
+    private var hasTraceHistory: Bool {
+        !steps.isEmpty || !actionItems.isEmpty || !writtenFiles.isEmpty
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -621,6 +627,17 @@ struct IssueTrackerPanel: View {
             }
 
             Spacer()
+
+            Button(action: onClearTraceHistory) {
+                Image(systemName: "trash")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Clear traces")
+            .disabled(!hasTraceHistory)
 
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {

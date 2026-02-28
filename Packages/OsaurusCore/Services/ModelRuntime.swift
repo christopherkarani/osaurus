@@ -11,6 +11,7 @@ import MLX
 import MLXLLM
 import MLXLMCommon
 import MLXVLM
+import Terra
 
 // Force MLXVLM to be linked by referencing VLMModelFactory
 // This ensures VLM models can be loaded via the ModelFactoryRegistry
@@ -293,7 +294,7 @@ actor ModelRuntime {
         modelId: String,
         modelName: String
     ) async throws -> String {
-        var accumulated = ""
+        let prompt = messages.compactMap(\.content).joined(separator: "\n")
         let events = try await generateEventStream(
             chatBuilder: { ModelRuntime.mapOpenAIChatToMLX(messages) },
             parameters: parameters,
@@ -303,22 +304,83 @@ actor ModelRuntime {
             modelId: modelId,
             modelName: modelName
         )
-        do {
+
+        if parameters.inferenceSpanOwner == .outerEngine {
+            var accumulated = ""
+            defer { ModelRuntime.releaseGenerationMemory() }
+
             for try await ev in events {
                 switch ev {
                 case .tokens(let s):
                     accumulated += s
                 case .toolInvocation(let name, let argsJSON):
-                    ModelRuntime.releaseGenerationMemory()
                     throw ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
                 }
             }
-        } catch {
-            ModelRuntime.releaseGenerationMemory()
-            throw error
+            return accumulated
         }
-        ModelRuntime.releaseGenerationMemory()
-        return accumulated
+
+        let request = Terra.InferenceRequest(
+            model: modelName,
+            prompt: prompt,
+            promptCapture: .optIn,
+            maxOutputTokens: parameters.maxTokens,
+            temperature: parameters.temperature.map(Double.init)
+        )
+
+        return try await Terra.withInferenceSpan(request) { scope in
+            scope.setAttributes([
+                Terra.Keys.Terra.autoInstrumented: .bool(false),
+                Terra.Keys.Terra.runtime: .string("mlx"),
+                Terra.Keys.GenAI.providerName: .string("mlx"),
+                Terra.Keys.GenAI.responseModel: .string(modelName),
+                "osaurus.trace.origin": .string("sdk"),
+                "osaurus.trace.surface": .string("model_runtime"),
+                "terra.mlx.device": .string("gpu"),
+                "osaurus.model.id": .string(modelId),
+                "osaurus.tools.count": .int(tools.count),
+                "osaurus.stop_sequences.count": .int(stopSequences.count),
+                "osaurus.request.max_tokens": .int(parameters.maxTokens),
+                "osaurus.request.temperature": .double(Double(parameters.temperature ?? 0.7)),
+                Terra.Keys.GenAI.usageInputTokens: .int(max(1, prompt.count / 4)),
+                "osaurus.prompt.raw": .string(prompt),
+                "osaurus.inference.source": .string(
+                    parameters.inferenceSource.map { String(describing: $0) } ?? "unknown"
+                ),
+                "osaurus.inference.mode": .string(parameters.inferenceSource?.telemetryModeLabel ?? "chat"),
+                "osaurus.inference.channel": .string(parameters.inferenceSource?.telemetryChannelLabel ?? "unknown"),
+            ])
+
+            var accumulated = ""
+            defer {
+                let telemetryOutput = Self.splitThinkingAndContent(from: accumulated)
+                scope.setAttributes([
+                    Terra.Keys.GenAI.usageOutputTokens: .int(max(1, accumulated.count / 4)),
+                    "osaurus.response.raw": .string(telemetryOutput.content),
+                    "osaurus.response.thinking": .string(telemetryOutput.thinking),
+                    "osaurus.thinking.length": .int(telemetryOutput.thinking.count),
+                ])
+                ModelRuntime.releaseGenerationMemory()
+            }
+
+            for try await ev in events {
+                switch ev {
+                case .tokens(let s):
+                    accumulated += s
+                case .toolInvocation(let name, let argsJSON):
+                    scope.addEvent(
+                        "mlx.tool.invocation",
+                        attributes: [
+                            Terra.Keys.GenAI.toolName: .string(name),
+                            "osaurus.tool.arguments.length": .int(argsJSON.count),
+                        ]
+                    )
+                    throw ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
+                }
+            }
+
+            return accumulated
+        }
     }
 
     func streamWithTools(
@@ -330,6 +392,7 @@ actor ModelRuntime {
         modelId: String,
         modelName: String
     ) async throws -> AsyncThrowingStream<String, Error> {
+        let prompt = messages.compactMap(\.content).joined(separator: "\n")
         let events = try await generateEventStream(
             chatBuilder: { ModelRuntime.mapOpenAIChatToMLX(messages) },
             parameters: parameters,
@@ -342,25 +405,105 @@ actor ModelRuntime {
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
         let producerTask = Task {
             do {
-                for try await ev in events {
-                    // Check for task cancellation to allow early termination
-                    if Task.isCancelled {
-                        continuation.finish()
-                        ModelRuntime.releaseGenerationMemory()
-                        return
+                if parameters.inferenceSpanOwner == .outerEngine {
+                    for try await ev in events {
+                        if Task.isCancelled {
+                            continuation.finish()
+                            ModelRuntime.releaseGenerationMemory()
+                            return
+                        }
+                        switch ev {
+                        case .tokens(let s):
+                            if !s.isEmpty {
+                                continuation.yield(s)
+                            }
+                        case .toolInvocation(let name, let argsJSON):
+                            continuation.finish(
+                                throwing: ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
+                            )
+                            ModelRuntime.releaseGenerationMemory()
+                            return
+                        }
                     }
-                    switch ev {
-                    case .tokens(let s):
-                        if !s.isEmpty { continuation.yield(s) }
-                    case .toolInvocation(let name, let argsJSON):
-                        continuation.finish(
-                            throwing: ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
-                        )
-                        ModelRuntime.releaseGenerationMemory()
-                        return
+                    continuation.finish()
+                } else {
+                    let request = Terra.InferenceRequest(
+                        model: modelName,
+                        prompt: prompt,
+                        promptCapture: .optIn,
+                        maxOutputTokens: parameters.maxTokens,
+                        temperature: parameters.temperature.map(Double.init),
+                        stream: true
+                    )
+                    try await Terra.withStreamingInferenceSpan(request) { scope in
+                        var outputText = ""
+                        var outputTokenCount = 0
+                        scope.setAttributes([
+                            Terra.Keys.Terra.autoInstrumented: .bool(false),
+                            Terra.Keys.Terra.runtime: .string("mlx"),
+                            Terra.Keys.GenAI.providerName: .string("mlx"),
+                            Terra.Keys.GenAI.responseModel: .string(modelName),
+                            "osaurus.trace.origin": .string("sdk"),
+                            "osaurus.trace.surface": .string("model_runtime"),
+                            "terra.mlx.device": .string("gpu"),
+                            "osaurus.model.id": .string(modelId),
+                            "osaurus.tools.count": .int(tools.count),
+                            "osaurus.stop_sequences.count": .int(stopSequences.count),
+                            "osaurus.request.max_tokens": .int(parameters.maxTokens),
+                            "osaurus.request.temperature": .double(Double(parameters.temperature ?? 0.7)),
+                            Terra.Keys.GenAI.usageInputTokens: .int(max(1, prompt.count / 4)),
+                            "osaurus.prompt.raw": .string(prompt),
+                            "osaurus.inference.source": .string(
+                                parameters.inferenceSource.map { String(describing: $0) } ?? "unknown"
+                            ),
+                            "osaurus.inference.mode": .string(parameters.inferenceSource?.telemetryModeLabel ?? "chat"),
+                            "osaurus.inference.channel": .string(
+                                parameters.inferenceSource?.telemetryChannelLabel ?? "unknown"
+                            ),
+                        ])
+                        defer {
+                            let telemetryOutput = Self.splitThinkingAndContent(from: outputText)
+                            scope.setAttributes([
+                                Terra.Keys.GenAI.usageOutputTokens: .int(outputTokenCount),
+                                "osaurus.response.raw": .string(telemetryOutput.content),
+                                "osaurus.response.thinking": .string(telemetryOutput.thinking),
+                                "osaurus.thinking.length": .int(telemetryOutput.thinking.count),
+                            ])
+                        }
+
+                        for try await ev in events {
+                            if Task.isCancelled {
+                                continuation.finish()
+                                ModelRuntime.releaseGenerationMemory()
+                                return
+                            }
+                            switch ev {
+                            case .tokens(let s):
+                                if !s.isEmpty {
+                                    outputTokenCount += max(1, s.count / 4)
+                                    outputText += s
+                                    scope.recordChunk()
+                                    scope.recordOutputTokenCount(outputTokenCount)
+                                    continuation.yield(s)
+                                }
+                            case .toolInvocation(let name, let argsJSON):
+                                scope.addEvent(
+                                    "mlx.tool.invocation",
+                                    attributes: [
+                                        Terra.Keys.GenAI.toolName: .string(name),
+                                        "osaurus.tool.arguments.length": .int(argsJSON.count),
+                                    ]
+                                )
+                                continuation.finish(
+                                    throwing: ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
+                                )
+                                ModelRuntime.releaseGenerationMemory()
+                                return
+                            }
+                        }
+                        continuation.finish()
                     }
                 }
-                continuation.finish()
             } catch {
                 // Handle cancellation gracefully
                 if Task.isCancelled {
@@ -379,6 +522,13 @@ actor ModelRuntime {
         }
 
         return stream
+    }
+
+    private nonisolated static func splitThinkingAndContent(from text: String) -> (content: String, thinking: String) {
+        var splitter = ThinkingTagSplitter()
+        let (content, thinking) = splitter.split(text)
+        let (finalContent, finalThinking) = splitter.finalize()
+        return (content + finalContent, thinking + finalThinking)
     }
 
     nonisolated static func makeGenerateParameters(

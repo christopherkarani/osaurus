@@ -7,6 +7,11 @@
 
 import Foundation
 
+enum InferenceSpanOwner: Sendable {
+    case service
+    case outerEngine
+}
+
 struct GenerationParameters: Sendable {
     let temperature: Float?
     let maxTokens: Int
@@ -14,6 +19,26 @@ struct GenerationParameters: Sendable {
     let topPOverride: Float?
     /// Optional repetition penalty (applies when supported by backend)
     let repetitionPenalty: Float?
+    /// Original request source for telemetry classification.
+    let inferenceSource: RequestSource?
+    /// Controls whether this service should open its own inference span.
+    let inferenceSpanOwner: InferenceSpanOwner
+
+    init(
+        temperature: Float?,
+        maxTokens: Int,
+        topPOverride: Float?,
+        repetitionPenalty: Float?,
+        inferenceSource: RequestSource? = nil,
+        inferenceSpanOwner: InferenceSpanOwner = .service
+    ) {
+        self.temperature = temperature
+        self.maxTokens = maxTokens
+        self.topPOverride = topPOverride
+        self.repetitionPenalty = repetitionPenalty
+        self.inferenceSource = inferenceSource
+        self.inferenceSpanOwner = inferenceSpanOwner
+    }
 }
 
 struct ServiceToolInvocation: Error, Sendable {

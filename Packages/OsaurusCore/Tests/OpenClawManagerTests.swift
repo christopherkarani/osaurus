@@ -1705,6 +1705,166 @@ struct OpenClawManagerTests {
     }
 
     @Test
+    func addProvider_minimaxLegacyPreset_canonicalizesToAnthropicConfig() async throws {
+        let manager = OpenClawManager.shared
+
+        actor PatchRecorder {
+            var raw: String?
+            func record(raw: String) { self.raw = raw }
+            func payload() -> String? { raw }
+        }
+        let recorder = PatchRecorder()
+
+        OpenClawManager._testSetGatewayHooks(
+            .init(
+                channelsStatus: { [] },
+                modelsList: { [] },
+                health: { [:] },
+                configGetFull: {
+                    ConfigGetResult(config: nil, baseHash: "base-hash-minimax")
+                },
+                configPatch: { raw, _ in
+                    await recorder.record(raw: raw)
+                    return ConfigPatchResult(ok: true, path: nil, restart: false)
+                }
+            )
+        )
+        defer { OpenClawManager._testSetGatewayHooks(nil) }
+
+        let configuredModelCount = try await manager.addProvider(
+            id: "minimax",
+            baseUrl: "https://api.minimax.io/v1",
+            apiCompatibility: "openai-completions",
+            apiKey: "sk-minimax-test",
+            seedModelsFromEndpoint: false,
+            requireSeededModels: false
+        )
+
+        #expect(configuredModelCount == 0)
+
+        let rawPatch = try #require(await recorder.payload())
+        let patchData = try #require(rawPatch.data(using: .utf8))
+        let jsonObject = try JSONSerialization.jsonObject(with: patchData)
+        let json = try #require(jsonObject as? [String: Any])
+        let modelsSection = json["models"] as? [String: Any]
+        let providers = modelsSection?["providers"] as? [String: Any]
+        let minimax = providers?["minimax"] as? [String: Any]
+
+        #expect((minimax?["api"] as? String) == "anthropic-messages")
+        #expect((minimax?["baseUrl"] as? String) == "https://api.minimax.io/anthropic")
+        #expect((minimax?["apiKey"] as? String) == "sk-minimax-test")
+        #expect((minimax?["models"] as? [[String: Any]])?.isEmpty == true)
+    }
+
+    @Test
+    func migrateLegacyMiniMaxProviderEndpointIfNeeded_rewritesLegacyV1EndpointAndAPI() async throws {
+        let manager = OpenClawManager.shared
+
+        actor PatchRecorder {
+            var raw: String?
+            var calls = 0
+            func record(raw: String) {
+                self.raw = raw
+                calls += 1
+            }
+            func snapshot() -> (String?, Int) { (raw, calls) }
+        }
+        let recorder = PatchRecorder()
+
+        let legacyConfig: [String: OpenClawProtocol.AnyCodable] = [
+            "models": OpenClawProtocol.AnyCodable([
+                "providers": OpenClawProtocol.AnyCodable([
+                    "minimax": OpenClawProtocol.AnyCodable([
+                        "baseUrl": OpenClawProtocol.AnyCodable("https://api.minimax.io/v1"),
+                        "api": OpenClawProtocol.AnyCodable("openai-completions"),
+                        "apiKey": OpenClawProtocol.AnyCodable("sk-minimax-test"),
+                        "models": OpenClawProtocol.AnyCodable([])
+                    ])
+                ])
+            ])
+        ]
+
+        OpenClawManager._testSetGatewayHooks(
+            .init(
+                channelsStatus: { [] },
+                modelsList: { [] },
+                health: { [:] },
+                configGetFull: {
+                    ConfigGetResult(config: legacyConfig, baseHash: "base-hash-minimax-legacy")
+                },
+                configPatch: { raw, _ in
+                    await recorder.record(raw: raw)
+                    return ConfigPatchResult(ok: true, path: nil, restart: false)
+                }
+            )
+        )
+        defer { OpenClawManager._testSetGatewayHooks(nil) }
+
+        let migrated = try await manager.migrateLegacyMiniMaxProviderEndpointIfNeeded()
+        #expect(migrated == true)
+
+        let (rawPatch, callCount) = await recorder.snapshot()
+        #expect(callCount == 1)
+
+        let rawPatchValue = try #require(rawPatch)
+        let patchData = try #require(rawPatchValue.data(using: .utf8))
+        let jsonObject = try JSONSerialization.jsonObject(with: patchData)
+        let json = try #require(jsonObject as? [String: Any])
+        let modelsSection = json["models"] as? [String: Any]
+        let providers = modelsSection?["providers"] as? [String: Any]
+        let minimax = providers?["minimax"] as? [String: Any]
+
+        #expect((minimax?["baseUrl"] as? String) == "https://api.minimax.io/anthropic")
+        #expect((minimax?["api"] as? String) == "anthropic-messages")
+        #expect((minimax?["apiKey"] as? String) == "sk-minimax-test")
+    }
+
+    @Test
+    func migrateLegacyMiniMaxProviderEndpointIfNeeded_noopWhenAlreadyCanonical() async throws {
+        let manager = OpenClawManager.shared
+
+        actor PatchRecorder {
+            var calls = 0
+            func record() { calls += 1 }
+            func callCount() -> Int { calls }
+        }
+        let recorder = PatchRecorder()
+
+        let canonicalConfig: [String: OpenClawProtocol.AnyCodable] = [
+            "models": OpenClawProtocol.AnyCodable([
+                "providers": OpenClawProtocol.AnyCodable([
+                    "minimax": OpenClawProtocol.AnyCodable([
+                        "baseUrl": OpenClawProtocol.AnyCodable("https://api.minimax.io/anthropic"),
+                        "api": OpenClawProtocol.AnyCodable("anthropic-messages"),
+                        "apiKey": OpenClawProtocol.AnyCodable("sk-minimax-test"),
+                        "models": OpenClawProtocol.AnyCodable([])
+                    ])
+                ])
+            ])
+        ]
+
+        OpenClawManager._testSetGatewayHooks(
+            .init(
+                channelsStatus: { [] },
+                modelsList: { [] },
+                health: { [:] },
+                configGetFull: {
+                    ConfigGetResult(config: canonicalConfig, baseHash: "base-hash-minimax-canonical")
+                },
+                configPatch: { _, _ in
+                    await recorder.record()
+                    return ConfigPatchResult(ok: true, path: nil, restart: false)
+                }
+            )
+        )
+        defer { OpenClawManager._testSetGatewayHooks(nil) }
+
+        let migrated = try await manager.migrateLegacyMiniMaxProviderEndpointIfNeeded()
+        #expect(migrated == false)
+        #expect(await recorder.callCount() == 0)
+    }
+
+    @Test
     func migrateLegacyKimiCodingProviderEndpointIfNeeded_rewritesLegacyMoonshotAnthropicBaseUrl() async throws {
         let manager = OpenClawManager.shared
 

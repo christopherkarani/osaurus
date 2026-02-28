@@ -7,6 +7,8 @@
 //
 
 import Foundation
+import Terra
+import OpenTelemetryApi
 
 /// Main coordinator for work execution
 public actor WorkEngine {
@@ -287,6 +289,48 @@ public actor WorkEngine {
         toolOverrides: [String: Bool]?,
         skillCatalog: [CapabilityEntry] = [],
         attemptResume: Bool = false
+    ) async throws -> ExecutionResult {
+        // Wrap entire execution in a top-level Terra span
+        return try await Terra.withAgentInvocationSpan(
+            agent: .init(name: "osaurus.work.engine", id: issue.id)
+        ) { span -> ExecutionResult in
+            // Set initial span attributes
+            span.setAttributes([
+                Terra.Keys.Terra.autoInstrumented: .bool(false),
+                Terra.Keys.Terra.runtime: .string("osaurus_sdk"),
+                Terra.Keys.GenAI.providerName: .string("osaurus"),
+                "osaurus.trace.origin": .string("sdk"),
+                "osaurus.trace.surface": .string("work_engine"),
+                "osaurus.work.issue.id": .string(issue.id),
+                "osaurus.work.task.id": .string(issue.taskId),
+                "osaurus.work.issue.title": .string(issue.title),
+                "osaurus.work.model": .string(model ?? "default"),
+                "osaurus.work.tools.count": .int(tools.count),
+            ])
+
+            return try await self.executeWithSpan(
+                issue: issue,
+                model: model,
+                systemPrompt: systemPrompt,
+                tools: tools,
+                toolOverrides: toolOverrides,
+                skillCatalog: skillCatalog,
+                attemptResume: attemptResume,
+                span: span
+            )
+        }
+    }
+
+    /// Internal execution method that runs within the Terra span context
+    private func executeWithSpan(
+        issue: Issue,
+        model: String?,
+        systemPrompt: String,
+        tools: [Tool],
+        toolOverrides: [String: Bool]?,
+        skillCatalog: [CapabilityEntry],
+        attemptResume: Bool,
+        span: Terra.Scope<Terra.AgentInvocationSpan>
     ) async throws -> ExecutionResult {
         isExecuting = true
         currentIssueId = issue.id

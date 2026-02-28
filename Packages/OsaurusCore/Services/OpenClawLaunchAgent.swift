@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import Terra
 
 public enum OpenClawLaunchAgent {
     private static let launchAgentLabel = "ai.openclaw.gateway"
@@ -44,6 +45,7 @@ public enum OpenClawLaunchAgent {
     /// Kills any process currently listening on `port` via SIGTERM, then waits
     /// up to `waitMs` milliseconds for the port to become free.
     public static func killProcessOnPort(_ port: Int, waitMs: Int = 1500) async {
+        let startedAt = Date()
         await Task.detached(priority: .utility) {
             // lsof -ti :<port> prints the PID(s) listening on that port
             let lsof = Process()
@@ -74,6 +76,17 @@ public enum OpenClawLaunchAgent {
                 if check.terminationStatus != 0 { break }  // port is free
             }
         }.value
+        _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.launchagent.kill_port", id: nil)) {
+            scope in
+            scope.setAttributes([
+                Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                Terra.Keys.Terra.openClawGateway: .bool(true),
+                Terra.Keys.GenAI.providerName: .string("openclaw"),
+                "osaurus.openclaw.launchagent.port": .int(port),
+                "osaurus.openclaw.launchagent.wait_ms": .int(waitMs),
+                "osaurus.openclaw.launchagent.latency_ms": .double(Date().timeIntervalSince(startedAt) * 1000),
+            ])
+        }
     }
 
     public static func isLoaded() async -> Bool {
@@ -118,13 +131,41 @@ public enum OpenClawLaunchAgent {
     }
 
     private static func runGatewayCommand(_ args: [String]) async -> CommandOutput {
+        let startedAt = Date()
         if let hooks {
-            return await hooks.runCommand(args)
+            let output = await hooks.runCommand(args)
+            _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.launchagent.command", id: nil)) {
+                scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                    Terra.Keys.Terra.openClawGateway: .bool(true),
+                    Terra.Keys.GenAI.providerName: .string("openclaw"),
+                    "osaurus.openclaw.launchagent.command": .string("hook"),
+                    "osaurus.openclaw.launchagent.args.count": .int(args.count),
+                    "osaurus.openclaw.launchagent.success": .bool(output.success),
+                    "osaurus.openclaw.launchagent.status": .int(Int(output.status)),
+                    "osaurus.openclaw.launchagent.latency_ms": .double(Date().timeIntervalSince(startedAt) * 1000),
+                ])
+            }
+            return output
         }
 
         let executable = OpenClawEnvironment.detectCLIPath() ?? "openclaw"
         let fullCommand = [executable, "gateway"] + args
-        return await runCommand(fullCommand)
+        let output = await runCommand(fullCommand)
+        _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.launchagent.command", id: nil)) { scope in
+            scope.setAttributes([
+                Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                Terra.Keys.Terra.openClawGateway: .bool(true),
+                Terra.Keys.GenAI.providerName: .string("openclaw"),
+                "osaurus.openclaw.launchagent.command": .string(args.first ?? "gateway"),
+                "osaurus.openclaw.launchagent.args.count": .int(args.count),
+                "osaurus.openclaw.launchagent.success": .bool(output.success),
+                "osaurus.openclaw.launchagent.status": .int(Int(output.status)),
+                "osaurus.openclaw.launchagent.latency_ms": .double(Date().timeIntervalSince(startedAt) * 1000),
+            ])
+        }
+        return output
     }
 
     private static func runCommand(_ command: [String]) async -> CommandOutput {

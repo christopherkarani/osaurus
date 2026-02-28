@@ -2,8 +2,8 @@
 //  UserMessageCardView.swift
 //  osaurus
 //
-//  A left-aligned user message card with flat styling.
-//  Uses tertiaryBackground, 12pt corner radius, no glass/shadow/edge-light.
+//  A right-aligned user message bubble with dark background and thin border.
+//  Compact width (fits content), similar to Claude.ai chat bubble style.
 //
 
 import AppKit
@@ -16,7 +16,7 @@ enum UserMessageCardStyle {
     static let hasGlass: Bool = false
     static let hasShadow: Bool = false
     static let hasEdgeLight: Bool = false
-    static let backgroundTokenName: String = "tertiaryBackground"
+    static let backgroundTokenName: String = "primaryBackground"
 }
 
 // MARK: - UserMessageCardView
@@ -47,20 +47,50 @@ struct UserMessageCardView: View {
     // MARK: - Body
 
     var body: some View {
+        if isEditing {
+            editingBubble
+        } else {
+            compactBubble
+        }
+    }
+
+    /// Compact right-aligned bubble (Claude.ai style) — hugs text content.
+    private var compactBubble: some View {
+        VStack(alignment: .trailing, spacing: 0) {
+            imageSection
+
+            if !text.isEmpty {
+                Text(text)
+                    .font(theme.font(size: CGFloat(theme.bodySize), weight: .regular))
+                    .foregroundColor(theme.primaryText)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: UserMessageCardStyle.cornerRadius, style: .continuous))
+        .overlay(cardBorder)
+        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    /// Expanded editing bubble — full width with header and edit controls.
+    private var editingBubble: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
                 .padding(.top, 12)
                 .padding(.bottom, 2)
-
-            imageSection
+                .padding(.horizontal, 16)
 
             contentSection
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16)
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: UserMessageCardStyle.cornerRadius, style: .continuous))
         .overlay(cardBorder)
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     // MARK: - Header
@@ -160,8 +190,6 @@ struct UserMessageCardView: View {
                 onConfirm: onConfirmEdit,
                 onCancel: onCancelEdit
             )
-            .padding(.top, 4)
-            .padding(.bottom, 16)
         } else if !text.isEmpty {
             MarkdownMessageView(
                 text: text,
@@ -169,8 +197,6 @@ struct UserMessageCardView: View {
                 cacheKey: turnId.uuidString,
                 isStreaming: false
             )
-            .padding(.top, 4)
-            .padding(.bottom, 16)
         }
     }
 
@@ -178,14 +204,14 @@ struct UserMessageCardView: View {
 
     private var cardBackground: some View {
         RoundedRectangle(cornerRadius: UserMessageCardStyle.cornerRadius, style: .continuous)
-            .fill(theme.tertiaryBackground)
+            .fill(theme.primaryBackground)
     }
 
     private var cardBorder: some View {
         RoundedRectangle(cornerRadius: UserMessageCardStyle.cornerRadius, style: .continuous)
             .strokeBorder(
-                theme.primaryBorder.opacity(theme.borderOpacity),
-                lineWidth: 0.5
+                theme.primaryBorder.opacity(theme.borderOpacity + 0.15),
+                lineWidth: 0.75
             )
     }
 }

@@ -139,7 +139,88 @@ struct OpenClawActivityStoreStreamingTests {
         #expect(activity.isStreaming == true)
     }
 
-    // MARK: - Test 4: Assistant Finalization When Lifecycle Ends
+    // MARK: - Test 4: Assistant Cumulative Snapshot Delta (No `text`) Does Not Duplicate
+
+    @Test @MainActor
+    func assistantDeltaCumulativeSnapshot_withoutText_doesNotDuplicate() async throws {
+        let store = OpenClawActivityStore()
+
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "assistant",
+            data: ["delta": "Hello"]
+        ))
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "assistant",
+            seq: 2,
+            data: ["delta": "Hello"]
+        ))
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "assistant",
+            seq: 3,
+            data: ["delta": "Hello world"]
+        ))
+
+        #expect(store.items.count == 1)
+        guard case .assistant(let activity) = store.items[0].kind else {
+            Issue.record("Expected assistant kind after cumulative deltas")
+            return
+        }
+
+        #expect(activity.text == "Hello world")
+        #expect(activity.isStreaming == true)
+    }
+
+    // MARK: - Test 5: Assistant Incremental Delta (No `text`) Still Appends
+
+    @Test @MainActor
+    func assistantDeltaIncremental_withoutText_appends() async throws {
+        let store = OpenClawActivityStore()
+
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "assistant",
+            data: ["delta": "Hello"]
+        ))
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "assistant",
+            seq: 2,
+            data: ["delta": " world"]
+        ))
+
+        #expect(store.items.count == 1)
+        guard case .assistant(let activity) = store.items[0].kind else {
+            Issue.record("Expected assistant kind after incremental deltas")
+            return
+        }
+
+        #expect(activity.text == "Hello world")
+    }
+
+    // MARK: - Test 6: Assistant Stale Snapshot Delta Is Ignored
+
+    @Test @MainActor
+    func assistantDeltaStaleSnapshot_withoutText_isIgnored() async throws {
+        let store = OpenClawActivityStore()
+
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "assistant",
+            data: ["delta": "Hello world"]
+        ))
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "assistant",
+            seq: 2,
+            data: ["delta": "Hello"]
+        ))
+
+        #expect(store.items.count == 1)
+        guard case .assistant(let activity) = store.items[0].kind else {
+            Issue.record("Expected assistant kind after stale snapshot delta")
+            return
+        }
+
+        #expect(activity.text == "Hello world")
+    }
+
+    // MARK: - Test 7: Assistant Finalization When Lifecycle Ends
 
     @Test @MainActor
     func assistantFinalization_whenLifecycleEnds() async throws {
@@ -188,7 +269,7 @@ struct OpenClawActivityStoreStreamingTests {
         #expect(lifecycleEnd.phase == .ended)
     }
 
-    // MARK: - Test 5: Thinking and Assistant Are Separate Items
+    // MARK: - Test 8: Thinking and Assistant Are Separate Items
 
     @Test @MainActor
     func thinkingAndAssistant_areSeparateItems() async throws {

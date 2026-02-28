@@ -9,10 +9,17 @@ import AppKit
 import Combine
 import QuartzCore
 import SwiftUI
+import Terra
 
 @MainActor
 public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     public static weak var shared: AppDelegate?
+    private static let otlpExportEnabledEnvKey = "OSAURUS_OTLP_EXPORT_ENABLED"
+    private static let otlpEndpointEnvKey = "OTEL_EXPORTER_OTLP_ENDPOINT"
+    private static let otlpTracesEndpointEnvKey = "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+    private static let otlpMetricsEndpointEnvKey = "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"
+    private static let otlpLogsEndpointEnvKey = "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"
+
     let serverController = ServerController()
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
@@ -23,8 +30,112 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     private var vadDot: NSView?
     private var openClawDot: NSView?
 
+    private static func parseBooleanEnvironment(_ value: String?) -> Bool? {
+        guard let value else { return nil }
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "1", "true", "yes", "on":
+            return true
+        case "0", "false", "no", "off":
+            return false
+        default:
+            return nil
+        }
+    }
+
+    private static func parseEnvironmentURL(_ value: String?) -> URL? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return URL(string: trimmed)
+    }
+
+    private static func endpoint(from baseURL: URL, pathComponent: String) -> URL {
+        baseURL.appendingPathComponent(pathComponent)
+    }
+
+    private static var defaultTracesEndpoint: URL {
+        URL(string: "http://localhost:4318/v1/traces")!
+    }
+
+    private static var defaultMetricsEndpoint: URL {
+        URL(string: "http://localhost:4318/v1/metrics")!
+    }
+
+    private static var defaultLogsEndpoint: URL {
+        URL(string: "http://localhost:4318/v1/logs")!
+    }
+
+    private static func resolveOpenTelemetryConfiguration() -> (configuration: Terra.OpenTelemetryConfiguration, summary: String) {
+        let env = ProcessInfo.processInfo.environment
+        let explicitExportEnabled = parseBooleanEnvironment(env[otlpExportEnabledEnvKey])
+        let shouldExport = explicitExportEnabled ?? true
+
+        guard shouldExport else {
+            return (
+                configuration: Terra.OpenTelemetryConfiguration(
+                    enableTraces: false,
+                    enableMetrics: false,
+                    enableLogs: false,
+                    enableSignposts: true,
+                    enableSessions: true
+                ),
+                summary: "disabled (set \(otlpExportEnabledEnvKey)=1 to re-enable OTLP export)"
+            )
+        }
+
+        let baseURL = parseEnvironmentURL(env[otlpEndpointEnvKey])
+        let tracesEndpoint = parseEnvironmentURL(env[otlpTracesEndpointEnvKey])
+            ?? (baseURL.map { endpoint(from: $0, pathComponent: "v1/traces") } ?? defaultTracesEndpoint)
+        let metricsEndpoint = parseEnvironmentURL(env[otlpMetricsEndpointEnvKey])
+            ?? (baseURL.map { endpoint(from: $0, pathComponent: "v1/metrics") } ?? defaultMetricsEndpoint)
+        let logsEndpoint = parseEnvironmentURL(env[otlpLogsEndpointEnvKey])
+            ?? (baseURL.map { endpoint(from: $0, pathComponent: "v1/logs") } ?? defaultLogsEndpoint)
+        return (
+            configuration: Terra.OpenTelemetryConfiguration(
+                enableTraces: true,
+                enableMetrics: true,
+                enableLogs: false,
+                enableSignposts: true,
+                enableSessions: true,
+                otlpTracesEndpoint: tracesEndpoint,
+                otlpMetricsEndpoint: metricsEndpoint,
+                otlpLogsEndpoint: logsEndpoint
+            ),
+            summary: "enabled (traces: \(tracesEndpoint.absoluteString), metrics: \(metricsEndpoint.absoluteString))"
+        )
+    }
+
     public func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
+
+        do {
+            let openTelemetry = Self.resolveOpenTelemetryConfiguration()
+            let defaultAIHosts = Terra.AutoInstrumentConfiguration().aiAPIHosts
+            let localAIHosts: Set<String> = [
+                "localhost",
+                "127.0.0.1",
+                "localhost:11434",
+                "127.0.0.1:11434",
+                "localhost:1234",
+                "127.0.0.1:1234",
+            ]
+            NSLog("Terra startup OpenTelemetry: \(openTelemetry.summary)")
+            try Terra.start(
+                .init(
+                    privacy: .init(
+                        contentPolicy: .optIn,
+                        redaction: .hashSHA256,
+                        emitLegacySHA256Attributes: true
+                    ),
+                    openTelemetry: openTelemetry.configuration,
+                    instrumentations: [.coreML],
+                    aiAPIHosts: defaultAIHosts.union(localAIHosts),
+                    profiling: .init(enableMemoryProfiler: true, enableMetalProfiler: true)
+                )
+            )
+        } catch {
+            NSLog("Terra startup failed: \(error.localizedDescription)")
+        }
 
         // Configure as regular app (show Dock icon) by default, or accessory if hidden
         let hideDockIcon = ServerConfigurationStore.load()?.hideDockIcon ?? false

@@ -1,5 +1,29 @@
 # Plan
 
+## Current Task: MLX/Qwen Trace Pipeline Fix (2026-02-27)
+- [x] Confirm plan before code changes
+
+### Implementation
+- [x] Remove duplicate MLX inference trace emission on ChatEngine-driven flows
+- [x] Preserve/propagate tool call IDs so tool execution spans correlate with inference/tool invocation traces
+- [x] Eliminate duplicate tool execution span wrappers in Work execution path
+- [x] Add explicit inference mode/channel telemetry attributes for source-aware classification
+- [x] Separate `<think>` reasoning content from final output in telemetry attributes (while preserving streamed output behavior)
+
+### Verification
+- [x] Add/update focused tests for thinking split and tool call ID propagation paths
+- [x] Run targeted OsaurusCore tests for touched areas
+
+### Review
+- [x] Root causes fixed and validated by tests
+- [x] Trace behavior manually reasoned against reported symptoms (duplication, classification, tree linkage, thinking/output split)
+- Focused tests passed:
+  - `swift test --package-path Packages/OsaurusCore --filter ChatEngineTests` (9/9)
+  - `swift test --package-path Packages/OsaurusCore --filter ThinkingTagSplitterTests` (4/4)
+  - `swift test --package-path Packages/OsaurusCore --filter TraceTreeStabilityTests` (2/2)
+  - `swift test --package-path Packages/OsaurusCore --filter WorkExecutionEngineOpenClawTests` (7/7)
+- TerraViewer support audit completed; viewer upgraded to parse/render new Osaurus fields (`osaurus.inference.mode`, `osaurus.inference.channel`, `osaurus.response.thinking`, `osaurus.thinking.length`) with new coverage in `InsightsTraceAnalysisTests` and `TraceTelemetryFocusTests`.
+
 ## Current Task: Deep Logging + Startup/Provider Stabilization
 - [x] Confirm this execution plan before code changes
 
@@ -82,9 +106,30 @@
 - [x] Document findings in this file's review section
 
 ### Review
-- Auth failure handling already has coverage via `OpenClawGatewayConnectionReconnectionTests.authFailureDisconnect_doesNotRetryReconnect` and the disconnect-classification helpers, which verify unauthorized close codes stop reconnects (`Packages/OsaurusCore/Tests/OpenClawGatewayConnectionReconnectionTests.swift:267-373`).
-- `OpenClawManager.connect()` retries once on errors mentioning “device token mismatch” (`Packages/OsaurusCore/Managers/OpenClawManager.swift:678-758`), but there are no OsaurusCore tests exercising that retry path.
-- Proposed additions: add a test-only hook for `OpenClawManager.connect()` to stub the gateway connect call, then write two `OpenClawManagerTests` (one that succeeds on the retry and one that keeps failing) to assert the hook is invoked twice and the manager’s state/diagnostics behave as expected.
+
+## Current Task: SDK vs Network Trace Distinction (2026-02-26)
+- [x] Confirm plan before patching
+
+### Implementation
+- [x] Mark MLX inference spans as SDK-origin telemetry (`terra.auto_instrumented=false`, `osaurus.trace.origin=sdk`)
+- [x] Mark Work agent spans as SDK-origin telemetry (same attributes for loop + OpenClaw gateway runs)
+- [x] Mark tool execution spans as SDK-origin telemetry (to separate from HTTP/network auto spans)
+
+### Verification
+- [x] Run `swift build --package-path Packages/OsaurusCore`
+- [x] Confirm changed files compile with no new errors
+- [x] Run focused tests for touched paths (`ModelRuntimeMappingTests`, `MCPHTTPHandlerTests`)
+
+### Review
+- SDK spans now include explicit origin metadata for Insights filtering:
+  - `terra.auto_instrumented=false`
+  - `osaurus.trace.origin=sdk`
+  - `osaurus.trace.surface` set to `model_runtime`, `work_loop`, `work_openclaw_gateway`, or `tool_registry`
+- Build verification succeeded: `swift build --package-path Packages/OsaurusCore`.
+- Focused tests passed:
+  - `swift test --package-path Packages/OsaurusCore --filter ModelRuntimeMappingTests`
+  - `swift test --package-path Packages/OsaurusCore --filter MCPHTTPHandlerTests`
+- Note: `swift test --package-path Packages/OsaurusCore --filter WorkExecutionEngineOpenClawTests` failed with existing `requestObserved` expectations in this environment; no logic changes were made to request execution flow in this patch.
 
 ## Current Task: OpenClaw Auth Mismatch Recovery
 - [x] Confirm plan for auth mismatch analysis before code suggestions
@@ -415,3 +460,294 @@
   - `swift test --filter OpenClawChatHistoryLoaderTests`
   - `swift test --filter OpenClawModelServiceTests`
   - `swift test --filter WorkExecutionEngineOpenClawTests`
+
+## Current Task: Tool Execution Telemetry Audit (2026-02-25)
+- [x] Confirm plan before research
+- [ ] Document ToolRegistry, MCPServerManager.call_tool, HTTP `/mcp/call`, ChatView tool loop, WorkExecutionEngine local loop, and WorkBatchTool call sites with file/line references
+- [ ] Extract current telemetry/logging fields emitted at each surface
+- [ ] Propose Terra tool spans/events that capture args, result/failure details, duration, and link to parent inference/agent spans
+- [ ] Summarize remaining observability gaps and recommended follow-up
+
+## Task: Runtime Inference Hotspot Audit
+- [ ] Confirm the audit plan before digging into searches and code reviews
+- [ ] Enumerate every runtime inference path outside tests/docs (FoundationModels, MLX runtime, OpenClaw flows, remote provider APIs, HTTP chat endpoints)
+- [ ] Capture file path + approximate line reference + description + observability status (InsightsService / StartupDiagnostics / none) for each hotspot
+- [ ] Summarize any instrumentation gaps or follow-ups once every hotspot is mapped
+- [ ] Audit ChatEngine, HTTPHandler, RemoteProviderService, and RemoteProviderManager runtime request/response/tool-call/error paths so that each one has file:line, current logging contents, Terra instrumentation to add, and missing attributes/events identified.
+- [ ] For every audited path list the missing attributes/events (prompt len/hash, response len/hash, provider, model, stream ttft/tps/chunk count, finish reason, tool call id, error class) and tag which ones need Terra spans/logs.
+
+## Current Task: Runtime Embedding & Safety Audit (2026-02-25)
+- [x] Confirm the audit plan before digging into embedding/safety code paths
+- [x] Search runtime code (excluding tests/docs) for embedding generation/search routines and moderation/safety execution hooks, noting whether they run or are just metadata
+- [x] Capture file/location references for any actual runtime embedding/search or safety/moderation invocations, describing observability and whether instrumentation exists
+- [x] Provide explicit confirmation of absence when no runtime embedding/safety execution is found along with supporting evidence (search commands, metadata-only files)
+
+### Review
+- [x] Findings recorded with file references and evidence supporting absence/presence of embedding and safety execution
+
+## Task: Runtime Agent Logging Audit
+- [x] Confirm plan and identify key modules for agent/tool execution logging research
+- [x] Inspect runtime agent logic (reasoning loops, orchestration, tool APIs/routing/results) outside tests/docs and record logging locations with fields
+- [x] Document per-file line numbers listing logged context fields and what is missing for each hotspot
+- [x] Summarize findings and recommendations for missing context logging
+
+## Task: Deep OpenClaw Event Flow Audit
+- [x] Confirm plan before digging into the runtime files
+- [x] Map connection setup, transport layers (ws/rpc), subscriptions/polling, event frame decoding, sequence handling, and run/session mapping with precise file/line references
+- [x] Detail lifecycle completion and reconnect/resync behavior, including how events transition through the flow
+- [ ] Summarize the end-to-end event flow with file path/line citations for delivery.
+
+### Review
+- [ ] Record final observations and any follow-up actions or uncertainties
+
+## Task: OpenClaw Event Processing Observability Audit
+- [ ] Confirm plan before research
+- [ ] Review `OpenClawModelService`, `OpenClawEventProcessor`, `OpenClawGatewayConnection`, `OpenClawActivityStore`, and `WorkSession`/`WorkEngine` integration to trace which event fields are persisted, dropped, or transformed during runtime.
+- [ ] Identify observability/logging coverage for tool calls, error handling, and stream state updates, noting missing entries or gaps in diagnostics per module (with file/line references).
+- [ ] Summarize findings with concrete file paths and line citations, highlighting fields captured/dropped and any logging gaps.
+
+### Review
+- [ ] Note any follow-up instrumentation or documentation actions.
+
+## Current Task: MLX Runtime Telemetry Audit (2026-02-25)
+- [ ] Confirm plan before research
+- [ ] Enumerate telemetry hotspots in MLXService, ModelRuntime, MLXGenerationEngine, StreamAccumulator, and FoundationModelService
+- [ ] Capture file:line, operation, existing telemetry, and missing Terra span wrappers for each hotspot
+- [ ] List input/output prompt, token/time/tool-failure capture opportunities and summarize instrumentation gaps
+
+## Task: OpenClaw Runtime Telemetry Audit
+- [ ] Confirm audit plan before digging into code
+- [ ] Enumerate runtime OpenClaw components (GatewayConnection, ModelService, EventProcessor, Manager, ActivityStore, WorkExecutionEngine/OpenClaw path, WorkSession/WorkView sync) and their entry points
+- [ ] For each hotspot, document current telemetry, capture file:line context, and identify gaps versus Terra span/event best practices
+- [ ] Draft Terra instrumentation recommendations with span hierarchy + event list (event ingestion, sequence gaps, reconnect/resync, run lifecycle, tool phases, dropped/filtered text)
+- [ ] Summarize gaps and follow-up actions
+
+### Review
+- [ ] Record final observations and any tooling/monitoring follow-ups
+
+## Current Task: OpenClaw telemetry coverage audit (2026-02-25)
+- [x] Confirm plan before research
+- [ ] Review telemetry spans and diagnostics in OpenClawGatewayConnection, OpenClawEventProcessor, OpenClawModelService, OpenClawManager, and WorkExecutionEngine OpenClaw path
+- [ ] List hotspots missing Terra spans/events/attributes with file:line references and recommended metadata additions
+
+## Task: Final Telemetry Coverage Audit (2026-02-25)
+- [ ] Confirm plan before audit
+- [ ] Enumerate instrumentation in Packages/OsaurusCore for AI runtime paths, agent loops, tool execution, OpenClaw flows, remote providers, session/manager flows, and launch/bridge operations
+- [ ] Identify concrete coverage gaps plus metadata richness and privacy/redaction exposures per file:line
+- [ ] Record minimal fix suggestions and rationale for each gap
+- [ ] Write review notes summarizing outstanding risks and follow-up actions
+
+## Current Task: ModelRuntime Swift 6 Concurrency Capture Fix (2026-02-26)
+- [x] Confirm plan before patching
+
+### Implementation
+- [x] Inspect `ModelRuntime.streamWithTools` around compiler-reported lines
+- [x] Remove cross-concurrency mutable captures for `outputTokenCount` and `outputText`
+- [x] Keep telemetry behavior unchanged (`recordChunk`, output token accounting, raw response attribute)
+
+### Verification
+- [x] Run focused Swift build/test command covering `OsaurusCore`
+- [x] Update review notes with evidence
+
+### Review
+- [x] Confirm compiler capture errors are resolved
+- Focused verification command: `swift test --package-path Packages/OsaurusCore --filter OpenClawManagerTests` (log: `/tmp/modelruntime-fix.log`, exit 1 due unrelated files).
+- Log grep confirms no remaining `ModelRuntime.swift` references for `outputTokenCount` / `outputText` capture diagnostics; current blockers are in `OpenClawManager.swift`, `OpenClawGatewayConnection.swift`, and `RemoteProviderService.swift`.
+
+## Current Task: RemoteProviderService + WorkExecutionEngine Swift 6.2 Isolation Fix (2026-02-26)
+- [x] Confirm plan before patching
+
+### Implementation
+- [x] Analyze `WorkExecutionEngine.swift` span closures (lines ~279-702) for the reported Swift 6.2 concurrency violations
+- [x] Identify the minimal behavioral-safe adjustments (message mutation, inout capture abstractions, actor helper sequencing)
+- [x] Draft and document the minimal code patch or workaround that satisfies the compiler without altering runtime behavior
+
+### Verification
+- [x] Run focused package build/test command for `Packages/OsaurusCore`
+- [x] Confirm reported diagnostics no longer appear in build output
+
+### Review
+- [x] Summarize root causes, changes, and verification evidence
+- Root causes were Swift 6.2 actor/sendable checks in span/task closures: actor-isolated helper calls from sendable closures, mutable `inout`-style message mutation in concurrently-executing closures, and optional `baseURL` dereference.
+- `RemoteProviderService` now uses static request/response helpers where needed, safe optional endpoint handling, and immutable telemetry snapshots before async `Task` spans.
+- `WorkExecutionEngine` now uses a sendable message buffer for closure-safe mutation and static pure helper methods for completion/parsing utilities called from span closures.
+- Verification used `swift build --package-path Packages/OsaurusCore` with logs at `/tmp/osauruscore-build-20260226-pass2.log` and `/tmp/osauruscore-build-20260226-pass3.log`.
+- Targeted files compile cleanly in pass3; remaining build failures are in unrelated OpenClaw files.
+
+
+## Current Task: RemoteProviderService actor-isolation line analysis (2026-02-26)
+- [x] Confirm plan before starting file inspection
+
+### Steps
+- [x] Inspect `Packages/OsaurusCore/Services/RemoteProviderService.swift` near lines 202, 222, 261, 878, 902, and 959 for Swift 6.2 actor-isolation diagnostics
+- [x] Map the actor-isolated helpers/methods involved and document the exact signature/call-site changes needed to satisfy isolation rules
+- [x] Draft minimal production-grade edits (method signatures + caller updates) that avoid behavioral regressions while resolving the violations
+- [ ] Map the actor-isolated helpers/methods involved and document the exact signature/call-site changes needed to satisfy isolation rules
+- [ ] Draft minimal production-grade edits (method signatures + caller updates) that avoid behavioral regressions while resolving the violations
+
+### Review
+- [x] Capture the proposed changes and verification plan in `tasks/todo.md`
+
+## Current Task: OpenClaw Gateway/EventProcessor Swift 6 capture fixes (2026-02-26)
+- [x] Confirm plan before patching
+
+### Implementation
+- [x] Fix `OpenClawGatewayConnection.swift` captured mutable `attempt` values in reconnect telemetry closures by using immutable per-iteration snapshots
+- [x] Fix `OpenClawGatewayConnection.swift` captured mutable `lastError`/`lastRawError` telemetry values by snapshotting final immutable values before async span closure
+- [x] Fix `OpenClawEventProcessor.swift` optional event sequence telemetry (`Int?` to `Int`) and sendable capture safety for event timestamp
+
+### Verification
+- [x] Run `swift build` for `Packages/OsaurusCore` and inspect compiler diagnostics
+- [x] Confirm no remaining errors in `OpenClawGatewayConnection.swift` and `OpenClawEventProcessor.swift`
+
+### Review
+- [x] Requested compiler errors in `OpenClawGatewayConnection.swift` and `OpenClawEventProcessor.swift` are resolved.
+- Verification command: `swift build` in `Packages/OsaurusCore` (log: `/tmp/osauruscore-swift-build.log`).
+- Remaining package errors are outside this scope in `Managers/OpenClawManager.swift` (`pollAttempt`/`recoveryAttempt` sendable captures + `isConnected` actor-isolation access).
+
+## Current Task: OpenClawManager Swift 6 capture/isolation fixes (2026-02-26)
+- [x] Confirm plan before patching
+
+### Implementation
+- [x] Replace concurrent `Task` closure captures of mutable `pollAttempt` with immutable per-closure snapshots
+- [x] Replace concurrent `Task` closure captures of mutable `recoveryAttempt` with immutable per-closure snapshots
+- [x] Replace concurrent `Task` closure access to main-actor isolated `isConnected` with an immutable snapshot captured on actor
+
+### Verification
+- [x] Run `swift build --package-path Packages/OsaurusCore`
+- [x] Confirm the reported `OpenClawManager.swift` diagnostics no longer appear
+
+### Review
+- [x] Requested Swift 6 diagnostics in `OpenClawManager.swift` are resolved.
+- Verification log: `/tmp/osauruscore-openclawmanager-fix.log`.
+- Build now completes successfully; remaining output is warning-only (deprecations + separate actor-isolated warnings in other files).
+
+- [x] Confirm plan before research
+- [x] Locate Terra/OpenTelemetry telemetry initialization across the repo (agents, runtime, tool loops, CLI) and note exact file:line locations
+- [x] Identify code paths that configure OTLP export to `localhost:4318` or default to it (include initializer calls, env defaults, and any docs referencing the endpoint)
+- [x] Propose a minimal fix (e.g., guard/flag, env check, or disabling default export when collector absent) to suppress repeated connection-refused noise when no collector is running
+- [x] Summarize findings and suggested fix in this plan for review
+
+### Implementation
+- [x] Add explicit `Terra.OpenTelemetryConfiguration` wiring in `AppDelegate` instead of relying on OTLP defaults
+- [x] Make OTLP export opt-in via env flags and default to local-only instrumentation (no network export)
+- [x] Emit a startup log indicating whether OTLP export is enabled and which endpoint is selected
+
+### Verification
+- [x] Run `swift build --package-path Packages/OsaurusCore`
+- [x] Confirm no compile regressions in `AppDelegate` telemetry bootstrap path
+
+### Review
+- `Terra.start()` in `AppDelegate` no longer relies on Terra/OpenTelemetry default OTLP endpoints.
+- Startup now resolves explicit OpenTelemetry config from env vars, with OTLP export disabled by default to avoid noisy localhost OTLP failures when no collector is present.
+## Task: Telemetry OTLP Noise Audit (2026-02-26)
+
+## Current Task: MLX + Agent Trace Audit (2026-02-26)
+- [x] Confirm plan before research
+- [ ] Locate MLX trace emission points, recording span names/attributes/kind and file/function references
+- [ ] Trace agent and tool-use span emission sites, noting schema details and surrounding telemetry logic
+- [ ] Identify schema mismatches that could break Insights rendering and flag suspected sources
+- [ ] Summarize findings for documentation and next steps
+
+### Review
+
+## Task: Insights view trace filtering investigation
+- [x] Confirm plan before research
+- [ ] Trace the Insights view load path and identify where traces/spans are fetched
+- [ ] Document the category/type filters and list regression points with file:line references
+ - OTLP can be enabled via `OSAURUS_OTLP_EXPORT_ENABLED=1`, optionally using `OTEL_EXPORTER_OTLP_ENDPOINT` or per-signal `OTEL_EXPORTER_OTLP_*_ENDPOINT`.
+ - Verification command: `swift build --package-path Packages/OsaurusCore` (build succeeded; existing unrelated warnings remain).
+
+## Current Task: MLX + Agent Trace Audit (2026-02-26)
+- [x] Confirm plan before research
+- [ ] Locate MLX trace emission points, recording span names/attributes/kind and file/function references
+- [ ] Trace agent and tool-use span emission sites, noting schema details and surrounding telemetry logic
+- [ ] Identify schema mismatches that could break Insights rendering and flag suspected sources
+- [ ] Summarize findings for documentation and next steps
+
+### Review
+
+## Current Task: Trace tree reset + clear controls (2026-02-27)
+- [x] Confirm plan before patching
+
+### Implementation
+- [x] Add regression test covering stable tool trace group identity across appended tool calls
+- [x] Persist tool trace group expansion state across streaming updates
+- [x] Stop trace rows from disappearing prematurely during streaming trace-heavy runs
+- [x] Add user-facing "Clear traces" action in Work progress sidebar wired to `OpenClawActivityStore`
+
+### Verification
+- [x] Run focused tests for updated trace/tree behavior
+- [x] Run broader `OsaurusCore` test command for regression signal
+
+### Review
+- [x] Summarize root cause, fix, and verification evidence
+- Root causes addressed: unstable tool-group block IDs (causing trace tree remount/collapse), local-only summary expansion state, and aggressive streaming block cap that dropped visible trace rows mid-run.
+- Follow-up root cause addressed: Work trace panel projection was run-scoped (`activeRunId`) and could jump to another run while the user was inspecting traces.
+- Added `TraceTreeStabilityTests` to lock stable tool-group identity and larger streaming trace window behavior.
+- Added `OpenClawActivityStore.clearTimeline()` and wired a new sidebar `Clear traces` action in `IssueTrackerPanel`/`WorkView`.
+- Added chronological display projection (`timelineItemsForDisplay`) and switched Work trace sidebar to that path to avoid auto-jumping to a different run/span while viewing.
+- Focused verification passed:
+  - `swift test --package-path Packages/OsaurusCore --filter TraceTreeStabilityTests`
+  - `swift test --package-path Packages/OsaurusCore --filter OpenClawActivityStoreEdgeCaseTests.clearTimeline_clearsItemsButKeepsRunState`
+  - `swift test --package-path Packages/OsaurusCore --filter OpenClawActivityStoreEdgeCaseTests.timelineItemsForDisplay_keepsChronologicalItemsAcrossRuns`
+  - `swift test --package-path Packages/OsaurusCore --filter OpenClawActivityStoreEdgeCaseTests.timelineItemsForFocusedRun_scopesToActiveRun`
+- Broader regression signal command run:
+  - `swift test --package-path Packages/OsaurusCore` (fails in pre-existing suites unrelated to this patch, including `WorkSessionOpenClawActivityFormattingTests`, `WorkExecutionEngineOpenClawTests`, `OpenClawManagerOnboardingTests`, and `OpenClawGatewayConnectionPhase1Tests`).
+
+## Current Task: OpenClawActivityStore assistant cumulative-delta handling (2026-02-28)
+- [x] Confirm plan before patching
+
+### Implementation
+- [x] Inspect `OpenClawActivityStore.processAssistant` and confirm cumulative-snapshot `data.delta` duplication risk
+- [x] Add minimal snapshot-aware assistant delta handling while preserving existing stream/media behavior
+- [x] Keep behavior stable for explicit `data.text` snapshots and incremental deltas
+
+### Verification
+- [x] Add regression tests in `Packages/OsaurusCore/Tests/OpenClawActivityStoreStreamingTests.swift`
+- [x] Run focused `swift test --package-path Packages/OsaurusCore --filter OpenClawActivityStoreStreamingTests`
+
+### Review
+- [x] Summarize root cause, patch, and verification evidence
+- Root cause: `processAssistant` appended `delta` whenever `text` was absent (`activity.text + delta`). If upstream sent cumulative snapshots in `delta`, assistant text duplicated (e.g., `Hello` + `Hello world`).
+- Patch: added `mergeAssistantText(currentText:fullText:delta:)` and used it for both update/create paths. It still prefers explicit `data.text`, appends incremental deltas, and replaces text when `delta` already prefixes with current text (snapshot semantics).
+- Regression tests added:
+  - `assistantDeltaCumulativeSnapshot_withoutText_doesNotDuplicate`
+  - `assistantDeltaIncremental_withoutText_appends`
+- Verification passed: `swift test --package-path Packages/OsaurusCore --filter OpenClawActivityStoreStreamingTests` (7/7 tests passing).
+
+## Current Task: Work mode hello duplication bundle (2026-02-28)
+- [x] Confirm plan before patching
+
+### Implementation
+- [x] Normalize OpenClaw stream payload handling so snapshot-style `delta` chunks cannot duplicate assistant output
+- [x] Prevent Work gateway prompt from duplicating identical issue title/description text (`hello hello`)
+- [x] Harden activity-store assistant merge logic for snapshot-like and stale duplicate deltas
+- [x] Add/adjust regression tests for stream normalization + Work prompt deduplication
+
+### Verification
+- [x] Run focused OpenClaw model service stream tests
+- [x] Run focused activity-store streaming tests
+- [x] Run focused Work execution OpenClaw tests
+
+### Review
+- [x] Summarize root cause, patch scope, and verification evidence
+- Root causes:
+  - `OpenClawModelService.streamDeltas` trusted explicit `delta` as always-incremental; snapshot-style deltas could repeat content (`Hello` + `Hello there` -> `HelloHello there`).
+  - Work gateway input could send duplicate query text when issue `title == description` and the same text also existed in user context.
+  - `OpenClawActivityStore.processAssistant` handled stale shorter snapshot-style deltas as appends.
+- Patch scope:
+  - Added payload-level delta resolver in `OpenClawModelService` that prioritizes snapshot normalization and normalizes delta-only cumulative snapshots.
+  - Updated `WorkExecutionEngine.buildOpenClawGatewayInput` to dedupe identical issue title/description and skip redundant user-context lines already represented by the issue prompt.
+  - Hardened `OpenClawActivityStore.mergeAssistantText` to ignore stale shorter deltas and keep latest text stable.
+  - Reset `WorkSession` streaming processor when adopting activity-snapshot replacement to avoid overlap with buffered deltas.
+- Regression coverage added/updated:
+  - `OpenClawModelServiceTests.streamDeltas_deltaOnlyCumulativeSnapshots_withoutText_doNotDuplicate`
+  - `OpenClawModelServiceTests.streamDeltas_agentAssistantDeltaOnlyCumulativeSnapshots_doNotDuplicate`
+  - `OpenClawActivityStoreStreamingTests.assistantDeltaStaleSnapshot_withoutText_isIgnored`
+  - `WorkExecutionEngineOpenClawTests.executeLoop_openClawRuntime_deduplicatesIssuePromptAndContext`
+- Verification evidence:
+  - `swift test --package-path Packages/OsaurusCore --filter OpenClawModelServiceTests` (22 passed)
+  - `swift test --package-path Packages/OsaurusCore --filter OpenClawActivityStoreStreamingTests` (8 passed)
+  - `swift test --package-path Packages/OsaurusCore --filter WorkExecutionEngineOpenClawTests` (8 passed)
+  - `swift test --package-path Packages/OsaurusCore --filter WorkSessionOpenClawActivityFormattingTests` (4 passed)

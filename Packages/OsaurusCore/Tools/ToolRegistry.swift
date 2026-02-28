@@ -7,6 +7,7 @@
 
 import Foundation
 import Combine
+import Terra
 
 @MainActor
 final class ToolRegistry: ObservableObject {
@@ -134,13 +135,131 @@ final class ToolRegistry: ObservableObject {
 
     /// Execute a tool by name with raw JSON arguments
     func execute(name: String, argumentsJSON: String) async throws -> String {
-        return try await execute(name: name, argumentsJSON: argumentsJSON, overrides: nil)
+        return try await execute(
+            name: name,
+            argumentsJSON: argumentsJSON,
+            overrides: nil,
+            telemetryCallId: nil
+        )
     }
 
     /// Execute a tool by name with raw JSON arguments and optional per-session overrides
     /// - Parameter overrides: Per-session tool enablement. nil = use global config only.
     ///   If provided, keys in the map override global settings for those tools.
     func execute(name: String, argumentsJSON: String, overrides: [String: Bool]?) async throws -> String {
+        return try await execute(
+            name: name,
+            argumentsJSON: argumentsJSON,
+            overrides: overrides,
+            telemetryCallId: nil
+        )
+    }
+
+    /// Execute a tool by name with optional telemetry call ID override.
+    /// Use this to preserve model-emitted tool call IDs end-to-end in trace trees.
+    func execute(
+        name: String,
+        argumentsJSON: String,
+        overrides: [String: Bool]?,
+        telemetryCallId: String?
+    ) async throws -> String {
+        let callId: String = {
+            if let telemetryCallId, !telemetryCallId.isEmpty {
+                return telemetryCallId
+            }
+            return "tool_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased())"
+        }()
+        let telemetryTool = Terra.Tool(name: name, type: "osaurus")
+        let telemetryCall = Terra.ToolCall(id: callId)
+        let argumentsObject = (try? JSONSerialization.jsonObject(with: Data(argumentsJSON.utf8))) as? [String: Any]
+        let argumentsTopLevelCount = argumentsObject?.count ?? 0
+        let argumentsValidJSON = argumentsObject != nil
+        let effectivePolicyLabel: String = {
+            if let permissioned = self.toolsByName[name] as? PermissionedTool {
+                let effective = self.configuration.policy[name] ?? permissioned.defaultPermissionPolicy
+                return String(describing: effective)
+            }
+            let effective = self.configuration.policy[name] ?? .auto
+            return String(describing: effective)
+        }()
+
+        return try await Terra.withToolExecutionSpan(tool: telemetryTool, call: telemetryCall) { scope in
+            scope.setAttributes([
+                Terra.Keys.Terra.autoInstrumented: .bool(false),
+                Terra.Keys.Terra.runtime: .string("osaurus_sdk"),
+                Terra.Keys.GenAI.providerName: .string("osaurus"),
+                "osaurus.trace.origin": .string("sdk"),
+                "osaurus.trace.surface": .string("tool_registry"),
+                "osaurus.tool.call.id": .string(callId),
+                "osaurus.tool.arguments.length": .int(argumentsJSON.count),
+                "osaurus.tool.arguments.valid_json": .bool(argumentsValidJSON),
+                "osaurus.tool.arguments.top_level_keys": .int(argumentsTopLevelCount),
+                "osaurus.tool.overrides.count": .int(overrides?.count ?? 0),
+                "osaurus.tool.overrides.enabled_count": .int(overrides?.values.filter { $0 }.count ?? 0),
+                "osaurus.tool.policy.effective": .string(effectivePolicyLabel),
+                "osaurus.tool.arguments.raw": .string(argumentsJSON),
+            ])
+            scope.addEvent(
+                "osaurus.tool.policy.decision",
+                attributes: [
+                    "osaurus.tool.policy.effective": .string(effectivePolicyLabel),
+                ]
+            )
+            let startedAt = Date()
+            scope.addEvent("osaurus.tool.execution.start")
+            do {
+                let result = try await self.executeUntraced(name: name, argumentsJSON: argumentsJSON, overrides: overrides)
+                scope.setAttributes([
+                    "osaurus.tool.result.length": .int(result.count),
+                    "osaurus.tool.execution.success": .bool(true),
+                    "osaurus.tool.duration_ms": .double(Date().timeIntervalSince(startedAt) * 1000),
+                    "osaurus.tool.result.raw": .string(result),
+                ])
+                scope.addEvent("osaurus.tool.execution.success")
+                return result
+            } catch {
+                let nsError = error as NSError
+                let errorKind: String
+                if nsError.domain == "ToolRegistry" {
+                    switch nsError.code {
+                    case 2:
+                        errorKind = "tool_disabled"
+                    case 3, 6:
+                        errorKind = "policy_denied"
+                    case 4:
+                        errorKind = "user_denied"
+                    case 7:
+                        errorKind = "missing_system_permissions"
+                    default:
+                        errorKind = "tool_registry_error"
+                    }
+                } else {
+                    errorKind = "execution_error"
+                }
+                scope.setAttributes([
+                    "osaurus.tool.execution.success": .bool(false),
+                    "osaurus.tool.duration_ms": .double(Date().timeIntervalSince(startedAt) * 1000),
+                    "osaurus.tool.error.domain": .string(nsError.domain),
+                    "osaurus.tool.error.code": .int(nsError.code),
+                    "osaurus.tool.error.kind": .string(errorKind),
+                    "osaurus.tool.error.message": .string(error.localizedDescription),
+                ])
+                scope.addEvent(
+                    "osaurus.tool.execution.failed",
+                    attributes: [
+                        "osaurus.tool.error.kind": .string(errorKind),
+                    ]
+                )
+                throw error
+            }
+        }
+    }
+
+    private func executeUntraced(
+        name: String,
+        argumentsJSON: String,
+        overrides: [String: Bool]?
+    ) async throws -> String {
         guard let tool = toolsByName[name] else {
             throw NSError(
                 domain: "ToolRegistry",

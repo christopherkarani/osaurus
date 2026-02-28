@@ -149,8 +149,6 @@ final class ModelCatalogService: ObservableObject {
         }
 
         if OpenClawManager.shared.isConnected {
-            // Keep provider readiness data fresh for all OpenClaw-aware selectors.
-            try? await OpenClawManager.shared.fetchConfiguredProviders()
             for model in OpenClawManager.shared.availableModels {
                 let providerLabel = model.provider.isEmpty ? "OpenClaw Gateway" : model.provider
                 let provider = model.provider.trimmingCharacters(in: .whitespacesAndNewlines)

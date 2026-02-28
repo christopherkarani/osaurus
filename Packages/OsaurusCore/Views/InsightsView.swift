@@ -758,6 +758,7 @@ private struct SourceBadge: View {
         switch source {
         case .chatUI: return .pink
         case .httpAPI: return .blue
+        case .agent: return .green
         }
     }
 }
@@ -767,6 +768,7 @@ extension RequestSource {
         switch self {
         case .chatUI: return "Chat"
         case .httpAPI: return "HTTP"
+        case .agent: return "Agent"
         }
     }
 }

@@ -167,7 +167,9 @@ struct WorkView: View {
     }
 
     private var focusedActivityItems: [ActivityItem] {
-        openClawManager.activityStore.timelineItemsForFocusedRun(limit: 80)
+        // Keep a stable chronological trace window while viewing. This avoids
+        // sudden run-context jumps when another run starts in the background.
+        openClawManager.activityStore.timelineItemsForDisplay(limit: 240)
     }
 
     private var latestStreamingActivity: (text: String, isStreaming: Bool) {
@@ -437,6 +439,9 @@ struct WorkView: View {
                             hideContextIndicator: session.currentTask == nil,
                             modelReady: selectedModelReady
                         )
+                        .frame(maxWidth: 720)
+                        .frame(maxWidth: .infinity)
+                        .padding(.trailing, inputTrailingOffset)
                     }
                 }
                 .frame(width: mainWidth)
@@ -538,6 +543,10 @@ struct WorkView: View {
             // Sort by timestamp (most recent first for display)
             fileOperations = allOperations.sorted { $0.timestamp > $1.timestamp }
         }
+    }
+
+    private func clearTraceHistory() {
+        openClawManager.activityStore.clearTimeline()
     }
 
     private func undoFileOperation(_ operationId: UUID) {
@@ -897,7 +906,8 @@ struct WorkView: View {
                         text: activity.text,
                         isStreaming: activity.isStreaming
                     )
-                    .padding(.horizontal, Self.contentHorizontalPadding)
+                    .frame(maxWidth: Self.maxChatContentWidth, alignment: .leading)
+                    .frame(maxWidth: .infinity)
                     .padding(.top, 12)
                 }
 
@@ -926,7 +936,8 @@ struct WorkView: View {
                     onUndoAllOperations: { undoAllFileOperations() },
                     onWrittenFileView: { path in viewRuntimeFile(path: path) },
                     onRefreshMemory: { Task { await refreshMemorySnapshot(force: true) } },
-                    onViewMemory: { viewMemorySnapshot() }
+                    onViewMemory: { viewMemorySnapshot() },
+                    onClearTraceHistory: { clearTraceHistory() }
                 )
                 .frame(width: progressSidebarWidth)
                 .padding(.vertical, 12)
@@ -1050,8 +1061,17 @@ private struct CollapsedSidebarButton: View {
 extension WorkView {
     // MARK: - Constants
 
-    private static let maxChatContentWidth: CGFloat = 700
+    private static let maxChatContentWidth: CGFloat = 720
     private static let contentHorizontalPadding: CGFloat = 20
+
+    /// Trailing offset for the input and shimmer ticker to match the
+    /// content area centering when the progress sidebar is visible.
+    var inputTrailingOffset: CGFloat {
+        guard session.currentTask != nil else { return 0 }
+        let collapsedWidth: CGFloat = 48
+        let expandedWidth = progressSidebarWidth + 12
+        return isProgressSidebarCollapsed ? collapsedWidth : expandedWidth
+    }
 
     // MARK: - Issue Detail View
 
@@ -1088,6 +1108,7 @@ extension WorkView {
                 }
             )
             .frame(maxWidth: contentWidth)
+            .frame(maxWidth: .infinity)
 
             // Scroll to bottom button
             ScrollToBottomButton(
@@ -1100,7 +1121,6 @@ extension WorkView {
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, Self.contentHorizontalPadding)
         .padding(.top, 16)
     }
 

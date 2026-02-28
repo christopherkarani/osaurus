@@ -49,3 +49,33 @@
 - Symptom: Chat UI rendered raw protocol payloads such as `---COMPLETE_TASK_START---` JSON and sometimes ended without a polished final answer.
 - Root cause pattern: only Work-mode execution parsed OpenClaw completion/control blocks; Chat-mode stream processor and history loader treated them as plain assistant text.
 - Rule: apply the same OpenClaw output formatter to both live event streaming and history hydration, and promote completion `artifact`/`summary` into user-visible markdown when control blocks contain final output.
+
+## 2026-02-26 - Swift 6 Concurrent Closure Capture Hygiene
+- Symptom: Swift compiler errors for `Reference to captured var ... in concurrently-executing code` and actor-isolated property reads inside `Task` telemetry closures.
+- Root cause pattern: loop-mutable vars (`pollAttempt`, `recoveryAttempt`) and main-actor state (`isConnected`) were read directly inside concurrently executing closures.
+- Rule: before spawning concurrent closures, snapshot mutable/actor-isolated values into immutable locals and capture only those snapshots.
+
+## 2026-02-26 - Insights Must Distinguish SDK vs Network Spans
+- Symptom: Insights/trace dashboards were dominated by HTTP/network spans, while SDK MLX/agent/tool traces were hard to isolate.
+- Root cause pattern: manual SDK spans were not explicitly tagged as non-auto/network in app-level telemetry attributes.
+- Rule: stamp SDK-created spans with explicit origin metadata (`terra.auto_instrumented=false`, `osaurus.trace.origin=sdk`, surface tag) so dashboards can filter SDK spans independently from network effects.
+
+## 2026-02-27 - Trace Tree Stability Requires Stable IDs + External Expansion State
+- Symptom: tool/trace tree collapsed or appeared to reset when new trace updates arrived; rows looked like they disappeared/reappeared.
+- Root cause pattern: dynamic block IDs changed as tool-call arrays grew, and parent expansion state lived in local `@State` that remounted on row identity churn.
+- Rule: for streaming/collapsible trees, keep item IDs stable across incremental updates and persist expansion state in shared store keyed by stable IDs (not view-local state).
+
+## 2026-02-27 - Avoid Auto-Switching Trace Panels By Active Run
+- Symptom: while inspecting one trace/span timeline, the panel jumped to another run when new background traces arrived.
+- Root cause pattern: display projection keyed to `activeRunId` causes context switches whenever a different run starts.
+- Rule: for inspection UIs, default to stable chronological projection (or explicit user-selected focus), not implicit active-run switching.
+
+## 2026-02-28 - Work Greeting Duplication Needs Input + Output Dedupe
+- Symptom: saying `hello` in Work mode produced duplicated greeting intent (`hello hello`) and repeated assistant paragraphs.
+- Root cause pattern: OpenClaw streams may encode cumulative snapshots in `delta` fields, and Work gateway prompt assembly can repeat the same query across issue/context sections.
+- Rule: treat snapshots as authoritative for stream normalization (including delta-only cumulative fallback), and dedupe semantically identical issue/context prompt segments before sending to the gateway.
+
+## 2026-02-27 - Telemetry Producer Changes Require Consumer Compatibility Checks
+- Symptom: producer-side span fixes introduced new attributes, but viewer classification/rendering still reflected legacy behavior (`chat` labeling and missing thinking panel).
+- Root cause pattern: instrumentation updates were validated in Osaurus without immediately validating TerraViewer parsing/classification keys.
+- Rule: for telemetry schema changes, patch and verify both producer (Osaurus) and primary consumer (TerraViewer) in the same change window, including tests for new attribute keys.

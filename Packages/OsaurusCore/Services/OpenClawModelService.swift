@@ -6,6 +6,7 @@
 import Foundation
 import OpenClawKit
 import OpenClawProtocol
+import Terra
 
 enum OpenClawModelServiceError: LocalizedError {
     case unsupportedModel(String?)
@@ -35,6 +36,13 @@ actor OpenClawModelService: ModelService {
         case unchanged
         case regressed
         case rewritten
+    }
+
+    private enum PayloadDeltaResolution {
+        case append(String)
+        case unchanged
+        case regressed(previous: String, next: String)
+        case rewritten(previous: String, next: String)
     }
 
     private struct AuthFailureDebugSnapshot {
@@ -127,84 +135,142 @@ actor OpenClawModelService: ModelService {
         requestedModel: String?,
         stopSequences _: [String]
     ) async throws -> AsyncThrowingStream<String, Error> {
-        let (runId, sessionKey, eventStream) = try await startGatewayRun(
-            messages: messages,
-            requestedModel: requestedModel
-        )
+        let (runId, sessionKey, eventStream) = try await Terra.withAgentInvocationSpan(
+            agent: .init(name: "openclaw.model.stream.bootstrap", id: nil)
+        ) { scope in
+            let result = try await startGatewayRun(
+                messages: messages,
+                requestedModel: requestedModel
+            )
+            scope.setAttributes([
+                Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                Terra.Keys.Terra.openClawGateway: .bool(true),
+                Terra.Keys.GenAI.providerName: .string("openclaw"),
+                "osaurus.openclaw.run.id": .string(result.runId),
+                "osaurus.openclaw.session.key": .string(result.sessionKey),
+            ])
+            return result
+        }
         let service = self
+        let requestedModelValue = requestedModel ?? ""
+        let messageCount = messages.count
 
         return AsyncThrowingStream { continuation in
             let producerTask = Task {
-                var previousAssistantSnapshot = ""
-                var hasObservedAgentLifecycleStart = false
-                var sawChatFinal = false
-                var lifecycleFallbackTask: Task<Void, Never>?
+                _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.model.stream", id: runId)) {
+                    scope in
+                    scope.setAttributes([
+                        Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                        Terra.Keys.Terra.openClawGateway: .bool(true),
+                        Terra.Keys.GenAI.providerName: .string("openclaw"),
+                        "osaurus.openclaw.run.id": .string(runId),
+                        "osaurus.openclaw.session.key": .string(sessionKey),
+                        "osaurus.openclaw.requested_model": .string(requestedModelValue),
+                        "osaurus.openclaw.messages.count": .int(messageCount),
+                    ])
 
-                func cancelLifecycleFallback() {
-                    lifecycleFallbackTask?.cancel()
-                    lifecycleFallbackTask = nil
-                }
+                    var previousAssistantSnapshot = ""
+                    var hasObservedAgentLifecycleStart = false
+                    var sawChatFinal = false
+                    var lifecycleFallbackTask: Task<Void, Never>?
 
-                func scheduleLifecycleFallback() {
-                    cancelLifecycleFallback()
-                    lifecycleFallbackTask = Task {
-                        try? await Task.sleep(nanoseconds: Self.lifecycleFinalizationGraceNanoseconds)
-                        guard !Task.isCancelled else { return }
-                        continuation.finish()
-                    }
-                }
-
-                defer { cancelLifecycleFallback() }
-
-                for await frame in eventStream {
-                    if Task.isCancelled {
-                        continuation.finish()
-                        return
+                    func cancelLifecycleFallback() {
+                        lifecycleFallbackTask?.cancel()
+                        lifecycleFallbackTask = nil
                     }
 
-                    if let chat = Self.decodeChatEvent(frame), chat.runId == runId {
-                        // Short runs may only carry assistant text in `chat.final`.
-                        // Consume both `delta` and terminal chat payload text.
-                        if chat.state == "delta" || chat.state == "final" || chat.state == "aborted" {
-                            if chat.state == "final" || chat.state == "aborted" {
-                                sawChatFinal = true
-                            }
+                    func scheduleLifecycleFallback() {
+                        cancelLifecycleFallback()
+                        lifecycleFallbackTask = Task {
+                            try? await Task.sleep(nanoseconds: Self.lifecycleFinalizationGraceNanoseconds)
+                            guard !Task.isCancelled else { return }
+                            continuation.finish()
+                        }
+                    }
 
-                            let payload = Self.extractChatTextPayload(chat.message)
+                    defer { cancelLifecycleFallback() }
 
-                            // Preferred path: explicit incremental delta from gateway.
-                            if let explicitDelta = payload.delta, !explicitDelta.isEmpty {
-                                continuation.yield(explicitDelta)
-                                if let snapshot = payload.snapshot, !snapshot.isEmpty {
-                                    previousAssistantSnapshot = snapshot
-                                } else {
-                                    previousAssistantSnapshot += explicitDelta
+                    for await frame in eventStream {
+                        if Task.isCancelled {
+                            continuation.finish()
+                            return
+                        }
+
+                        if let chat = Self.decodeChatEvent(frame), chat.runId == runId {
+                            // Short runs may only carry assistant text in `chat.final`.
+                            // Consume both `delta` and terminal chat payload text.
+                            if chat.state == "delta" || chat.state == "final" || chat.state == "aborted" {
+                                if chat.state == "final" || chat.state == "aborted" {
+                                    sawChatFinal = true
                                 }
-                            } else if let snapshot = payload.snapshot, !snapshot.isEmpty {
-                                let previousSnapshot = previousAssistantSnapshot
-                                switch Self.normalizeSnapshotTransition(
-                                    snapshot,
+
+                                let payload = Self.extractChatTextPayload(chat.message)
+
+                                switch Self.resolvePayloadDelta(
+                                    payload,
                                     previousSnapshot: &previousAssistantSnapshot
                                 ) {
                                 case .append(let delta):
-                                    if !delta.isEmpty {
-                                        continuation.yield(delta)
-                                    }
+                                    continuation.yield(delta)
                                 case .unchanged:
                                     break
-                                case .regressed:
+                                case .regressed(let previousSnapshot, let nextSnapshot):
                                     await service.emitNonPrefixSnapshotTelemetry(
                                         event: "chat.\(chat.state).snapshot_regressed",
                                         runId: runId,
                                         previousSnapshot: previousSnapshot,
-                                        nextSnapshot: snapshot
+                                        nextSnapshot: nextSnapshot
                                     )
-                                case .rewritten:
+                                case .rewritten(let previousSnapshot, let nextSnapshot):
                                     await service.emitNonPrefixSnapshotTelemetry(
                                         event: "chat.\(chat.state).snapshot_rewritten",
                                         runId: runId,
                                         previousSnapshot: previousSnapshot,
-                                        nextSnapshot: snapshot
+                                        nextSnapshot: nextSnapshot
+                                    )
+                                }
+
+                                if sawChatFinal && hasObservedAgentLifecycleStart {
+                                    scheduleLifecycleFallback()
+                                }
+                            }
+                        }
+
+                        if let agent = Self.decodeAgentEvent(frame), agent.runId == runId {
+                            let stream = Self.normalizedString(agent.stream)?.lowercased()
+                                ?? Self.decodeEventMeta(frame).stream
+                            if stream == "lifecycle" {
+                                let phase = (agent.data?["phase"]?.value as? String)?.lowercased()
+                                    ?? Self.decodeEventMeta(frame).phase
+                                    ?? ""
+                                if phase == "start" {
+                                    hasObservedAgentLifecycleStart = true
+                                }
+                            }
+                            if let payload = Self.extractAgentAssistantTextPayload(agent) {
+                                // Agent assistant updates are often where OpenClaw emits
+                                // post-tool response text in Work mode.
+                                switch Self.resolvePayloadDelta(
+                                    payload,
+                                    previousSnapshot: &previousAssistantSnapshot
+                                ) {
+                                case .append(let delta):
+                                    continuation.yield(delta)
+                                case .unchanged:
+                                    break
+                                case .regressed(let previousSnapshot, let nextSnapshot):
+                                    await service.emitNonPrefixSnapshotTelemetry(
+                                        event: "agent.assistant.snapshot_regressed",
+                                        runId: runId,
+                                        previousSnapshot: previousSnapshot,
+                                        nextSnapshot: nextSnapshot
+                                    )
+                                case .rewritten(let previousSnapshot, let nextSnapshot):
+                                    await service.emitNonPrefixSnapshotTelemetry(
+                                        event: "agent.assistant.snapshot_rewritten",
+                                        runId: runId,
+                                        previousSnapshot: previousSnapshot,
+                                        nextSnapshot: nextSnapshot
                                     )
                                 }
                             }
@@ -213,86 +279,37 @@ actor OpenClawModelService: ModelService {
                                 scheduleLifecycleFallback()
                             }
                         }
-                    }
 
-                    if let agent = Self.decodeAgentEvent(frame), agent.runId == runId {
-                        let stream = Self.normalizedString(agent.stream)?.lowercased()
-                            ?? Self.decodeEventMeta(frame).stream
-                        if stream == "lifecycle" {
-                            let phase = (agent.data?["phase"]?.value as? String)?.lowercased()
-                                ?? Self.decodeEventMeta(frame).phase
-                                ?? ""
-                            if phase == "start" {
-                                hasObservedAgentLifecycleStart = true
+                        if let terminal = Self.terminalState(
+                            for: frame,
+                            runId: runId,
+                            preferAgentLifecycle: hasObservedAgentLifecycleStart
+                        ) {
+                            cancelLifecycleFallback()
+                            switch terminal {
+                            case .success:
+                                scope.addEvent("openclaw.model.stream.success")
+                                continuation.finish()
+                            case .failure(let message):
+                                let resolved = await service.resolveGatewayFailureMessage(
+                                    primary: message,
+                                    sessionKey: sessionKey
+                                )
+                                scope.setAttributes([
+                                    "osaurus.openclaw.error.message": .string(resolved),
+                                ])
+                                scope.addEvent("openclaw.model.stream.failure")
+                                continuation.finish(
+                                    throwing: OpenClawModelServiceError.gatewayError(resolved)
+                                )
                             }
-                        }
-                        if let payload = Self.extractAgentAssistantTextPayload(agent) {
-                            // Agent assistant updates are often where OpenClaw emits
-                            // post-tool response text in Work mode.
-                            if let explicitDelta = payload.delta, !explicitDelta.isEmpty {
-                                continuation.yield(explicitDelta)
-                                if let snapshot = payload.snapshot, !snapshot.isEmpty {
-                                    previousAssistantSnapshot = snapshot
-                                } else {
-                                    previousAssistantSnapshot += explicitDelta
-                                }
-                            } else if let snapshot = payload.snapshot, !snapshot.isEmpty {
-                                let previousSnapshot = previousAssistantSnapshot
-                                switch Self.normalizeSnapshotTransition(
-                                    snapshot,
-                                    previousSnapshot: &previousAssistantSnapshot
-                                ) {
-                                case .append(let delta):
-                                    if !delta.isEmpty {
-                                        continuation.yield(delta)
-                                    }
-                                case .unchanged:
-                                    break
-                                case .regressed:
-                                    await service.emitNonPrefixSnapshotTelemetry(
-                                        event: "agent.assistant.snapshot_regressed",
-                                        runId: runId,
-                                        previousSnapshot: previousSnapshot,
-                                        nextSnapshot: snapshot
-                                    )
-                                case .rewritten:
-                                    await service.emitNonPrefixSnapshotTelemetry(
-                                        event: "agent.assistant.snapshot_rewritten",
-                                        runId: runId,
-                                        previousSnapshot: previousSnapshot,
-                                        nextSnapshot: snapshot
-                                    )
-                                }
-                            }
-                        }
-
-                        if sawChatFinal && hasObservedAgentLifecycleStart {
-                            scheduleLifecycleFallback()
+                            return
                         }
                     }
 
-                    if let terminal = Self.terminalState(
-                        for: frame,
-                        runId: runId,
-                        preferAgentLifecycle: hasObservedAgentLifecycleStart
-                    ) {
-                        cancelLifecycleFallback()
-                        switch terminal {
-                        case .success:
-                            continuation.finish()
-                        case .failure(let message):
-                            let resolved = await service.resolveGatewayFailureMessage(
-                                primary: message,
-                                sessionKey: sessionKey
-                            )
-                            continuation.finish(
-                                throwing: OpenClawModelServiceError.gatewayError(resolved)
-                            )
-                        }
-                        return
-                    }
+                    scope.addEvent("openclaw.model.stream.end_of_events")
+                    continuation.finish()
                 }
-                continuation.finish()
             }
 
             continuation.onTermination = { @Sendable _ in
@@ -308,10 +325,24 @@ actor OpenClawModelService: ModelService {
         turn: ChatTurn,
         onSync: (() -> Void)? = nil
     ) async throws {
-        let (runId, sessionKey, eventStream) = try await startGatewayRun(
-            messages: messages,
-            requestedModel: requestedModel
-        )
+        let (runId, sessionKey, eventStream) = try await Terra.withAgentInvocationSpan(
+            agent: .init(name: "openclaw.model.turn_stream.bootstrap", id: nil)
+        ) { scope in
+            let result = try await startGatewayRun(
+                messages: messages,
+                requestedModel: requestedModel
+            )
+            scope.setAttributes([
+                Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                Terra.Keys.Terra.openClawGateway: .bool(true),
+                Terra.Keys.GenAI.providerName: .string("openclaw"),
+                "osaurus.openclaw.run.id": .string(result.runId),
+                "osaurus.openclaw.session.key": .string(result.sessionKey),
+            ])
+            return result
+        }
+        let requestedModelValue = requestedModel ?? ""
+        let messageCount = messages.count
 
         let processor = OpenClawEventProcessor(
             onSequenceGap: { [connection, runId] expectedSeq, receivedSeq in
@@ -327,32 +358,67 @@ actor OpenClawModelService: ModelService {
         )
         processor.startRun(runId: runId, turn: turn)
         OpenClawManager.shared.pauseNotificationPolling()
-        defer { OpenClawManager.shared.resumeNotificationPolling() }
+        defer {
+            processor.endRun(turn: turn)
+            OpenClawManager.shared.resumeNotificationPolling()
+        }
+
+        _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.model.turn_stream.start", id: runId)) {
+            scope in
+            scope.setAttributes([
+                Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                Terra.Keys.Terra.openClawGateway: .bool(true),
+                Terra.Keys.GenAI.providerName: .string("openclaw"),
+                "osaurus.openclaw.run.id": .string(runId),
+                "osaurus.openclaw.session.key": .string(sessionKey),
+                "osaurus.openclaw.requested_model": .string(requestedModelValue),
+                "osaurus.openclaw.messages.count": .int(messageCount),
+            ])
+        }
 
         for await frame in eventStream {
             if Task.isCancelled {
-                processor.endRun(turn: turn)
                 throw CancellationError()
             }
 
             processor.processEvent(frame, turn: turn)
 
             if let terminal = Self.terminalState(for: frame, runId: runId) {
-                processor.endRun(turn: turn)
                 switch terminal {
                 case .success:
+                    _ = await Terra.withAgentInvocationSpan(
+                        agent: .init(name: "openclaw.model.turn_stream.success", id: runId)
+                    ) { scope in
+                        scope.setAttributes([
+                            Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                            Terra.Keys.Terra.openClawGateway: .bool(true),
+                            Terra.Keys.GenAI.providerName: .string("openclaw"),
+                            "osaurus.openclaw.run.id": .string(runId),
+                            "osaurus.openclaw.session.key": .string(sessionKey),
+                        ])
+                    }
                     return
                 case .failure(let message):
                     let resolved = await resolveGatewayFailureMessage(
                         primary: message,
                         sessionKey: sessionKey
                     )
+                    _ = await Terra.withAgentInvocationSpan(
+                        agent: .init(name: "openclaw.model.turn_stream.failure", id: runId)
+                    ) { scope in
+                        scope.setAttributes([
+                            Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                            Terra.Keys.Terra.openClawGateway: .bool(true),
+                            Terra.Keys.GenAI.providerName: .string("openclaw"),
+                            "osaurus.openclaw.run.id": .string(runId),
+                            "osaurus.openclaw.session.key": .string(sessionKey),
+                            "osaurus.openclaw.error.message": .string(resolved),
+                        ])
+                    }
                     throw OpenClawModelServiceError.gatewayError(resolved)
                 }
             }
         }
-
-        processor.endRun(turn: turn)
     }
 
     private func startGatewayRun(
@@ -792,6 +858,50 @@ actor OpenClawModelService: ModelService {
 
         previousSnapshot = snapshot
         return .rewritten
+    }
+
+    private static func resolvePayloadDelta(
+        _ payload: ChatTextPayload,
+        previousSnapshot: inout String
+    ) -> PayloadDeltaResolution {
+        if let snapshot = payload.snapshot, !snapshot.isEmpty {
+            let previous = previousSnapshot
+            switch normalizeSnapshotTransition(snapshot, previousSnapshot: &previousSnapshot) {
+            case .append(let delta):
+                return delta.isEmpty ? .unchanged : .append(delta)
+            case .unchanged:
+                return .unchanged
+            case .regressed:
+                return .regressed(previous: previous, next: snapshot)
+            case .rewritten:
+                return .rewritten(previous: previous, next: snapshot)
+            }
+        }
+
+        guard let explicitDelta = payload.delta, !explicitDelta.isEmpty else {
+            return .unchanged
+        }
+
+        if previousSnapshot.isEmpty {
+            previousSnapshot = explicitDelta
+            return .append(explicitDelta)
+        }
+
+        // Some OpenClaw payloads send cumulative snapshots in the `delta` field.
+        // Convert those to true increments before yielding.
+        if explicitDelta.hasPrefix(previousSnapshot) {
+            let normalizedDelta = String(explicitDelta.dropFirst(previousSnapshot.count))
+            previousSnapshot = explicitDelta
+            return normalizedDelta.isEmpty ? .unchanged : .append(normalizedDelta)
+        }
+
+        // Ignore stale duplicate snapshots that would otherwise repeat rendered text.
+        if previousSnapshot.hasPrefix(explicitDelta) {
+            return .unchanged
+        }
+
+        previousSnapshot += explicitDelta
+        return .append(explicitDelta)
     }
 
     private func emitNonPrefixSnapshotTelemetry(

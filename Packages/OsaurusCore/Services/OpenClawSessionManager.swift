@@ -5,6 +5,7 @@
 
 import Foundation
 import OpenClawProtocol
+import Terra
 
 extension Notification.Name {
     static let openClawSessionsChanged = Notification.Name("openClawSessionsChanged")
@@ -56,41 +57,78 @@ public final class OpenClawSessionManager: ObservableObject {
         includeGlobal: Bool = false,
         includeUnknown: Bool = false
     ) async throws {
-        let payload = try await connection.sessionsList(
-            limit: limit,
-            includeTitles: true,
-            includeLastMessage: true,
-            includeGlobal: includeGlobal,
-            includeUnknown: includeUnknown
-        )
+        let startedAt = Date()
+        do {
+            let payload = try await connection.sessionsList(
+                limit: limit,
+                includeTitles: true,
+                includeLastMessage: true,
+                includeGlobal: includeGlobal,
+                includeUnknown: includeUnknown
+            )
 
-        sessions = payload
-            .map { item in
-                GatewaySession(
-                    key: item.key,
-                    title: preferredTitle(for: item),
-                    lastMessage: item.lastMessagePreview,
-                    lastActiveAt: parseGatewayTimestamp(item.updatedAt),
-                    model: item.model,
-                    contextTokens: item.contextTokens
-                )
-            }
-            .sorted { lhs, rhs in
-                let lhsDate = lhs.lastActiveAt ?? .distantPast
-                let rhsDate = rhs.lastActiveAt ?? .distantPast
-                return lhsDate > rhsDate
-            }
+            sessions = payload
+                .map { item in
+                    GatewaySession(
+                        key: item.key,
+                        title: preferredTitle(for: item),
+                        lastMessage: item.lastMessagePreview,
+                        lastActiveAt: parseGatewayTimestamp(item.updatedAt),
+                        model: item.model,
+                        contextTokens: item.contextTokens
+                    )
+                }
+                .sorted { lhs, rhs in
+                    let lhsDate = lhs.lastActiveAt ?? .distantPast
+                    let rhsDate = rhs.lastActiveAt ?? .distantPast
+                    return lhsDate > rhsDate
+                }
 
-        if let activeSessionKey,
-            sessions.contains(where: { $0.key == activeSessionKey }) == false
-        {
-            self.activeSessionKey = nil
+            if let activeSessionKey,
+                sessions.contains(where: { $0.key == activeSessionKey }) == false
+            {
+                self.activeSessionKey = nil
+            }
+            postSessionsChanged()
+
+            let loadedCount = sessions.count
+            let activeKeyPresent = activeSessionKey != nil
+            _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.session.load.success", id: nil)) {
+                scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                    Terra.Keys.Terra.openClawGateway: .bool(true),
+                    Terra.Keys.GenAI.providerName: .string("openclaw"),
+                    "osaurus.openclaw.session.limit": .int(limit ?? 0),
+                    "osaurus.openclaw.session.include_global": .bool(includeGlobal),
+                    "osaurus.openclaw.session.include_unknown": .bool(includeUnknown),
+                    "osaurus.openclaw.session.count": .int(loadedCount),
+                    "osaurus.openclaw.session.active_present": .bool(activeKeyPresent),
+                    "osaurus.openclaw.session.load.latency_ms": .double(Date().timeIntervalSince(startedAt) * 1000),
+                ])
+            }
+        } catch {
+            let errorMessage = error.localizedDescription
+            _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.session.load.failed", id: nil)) {
+                scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                    Terra.Keys.Terra.openClawGateway: .bool(true),
+                    Terra.Keys.GenAI.providerName: .string("openclaw"),
+                    "osaurus.openclaw.session.limit": .int(limit ?? 0),
+                    "osaurus.openclaw.session.include_global": .bool(includeGlobal),
+                    "osaurus.openclaw.session.include_unknown": .bool(includeUnknown),
+                    "osaurus.openclaw.session.error": .string(errorMessage),
+                    "osaurus.openclaw.session.load.latency_ms": .double(Date().timeIntervalSince(startedAt) * 1000),
+                ])
+            }
+            throw error
         }
-        postSessionsChanged()
     }
 
     public func createSession(model: String?) async throws -> String {
         await migrateLegacyKimiCodingProviderEndpointIfNeeded()
+        let startedAt = Date()
 
         let requestedModel = model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let resolvedModel = await qualifyKnownKimiModelReferenceIfNeeded(requestedModel)
@@ -105,6 +143,7 @@ public final class OpenClawSessionManager: ObservableObject {
 
         do {
             let key = try await createAndLoadSession(model: resolvedModel)
+            let resolvedModelValue = resolvedModel ?? ""
             await emitSessionDiagnostic(
                 level: .info,
                 event: "session.create.success",
@@ -114,6 +153,19 @@ public final class OpenClawSessionManager: ObservableObject {
                     "sessionKey": key,
                 ]
             )
+            _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.session.create.success", id: key)) {
+                scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                    Terra.Keys.Terra.openClawGateway: .bool(true),
+                    Terra.Keys.GenAI.providerName: .string("openclaw"),
+                    "osaurus.openclaw.session.requested_model": .string(requestedModel),
+                    "osaurus.openclaw.session.resolved_model": .string(resolvedModelValue),
+                    "osaurus.openclaw.session.create.latency_ms": .double(
+                        Date().timeIntervalSince(startedAt) * 1000
+                    ),
+                ])
+            }
             return key
         } catch {
             if shouldAttemptAllowlistRecovery(for: error, requestedModel: requestedModel) {
@@ -130,6 +182,21 @@ public final class OpenClawSessionManager: ObservableObject {
                                 "sessionKey": key,
                             ]
                         )
+                        let resolvedModelValue = resolvedModel ?? ""
+                        _ = await Terra.withAgentInvocationSpan(
+                            agent: .init(name: "openclaw.session.create.success.allowlist_recovery", id: key)
+                        ) { scope in
+                            scope.setAttributes([
+                                Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                                Terra.Keys.Terra.openClawGateway: .bool(true),
+                                Terra.Keys.GenAI.providerName: .string("openclaw"),
+                                "osaurus.openclaw.session.requested_model": .string(requestedModel),
+                                "osaurus.openclaw.session.resolved_model": .string(resolvedModelValue),
+                                "osaurus.openclaw.session.create.latency_ms": .double(
+                                    Date().timeIntervalSince(startedAt) * 1000
+                                ),
+                            ])
+                        }
                         return key
                     }
                 } catch {
@@ -151,21 +218,83 @@ public final class OpenClawSessionManager: ObservableObject {
                     "error": error.localizedDescription,
                 ]
             )
+            let errorMessage = error.localizedDescription
+            _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.session.create.failed", id: nil)) {
+                scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                    Terra.Keys.Terra.openClawGateway: .bool(true),
+                    Terra.Keys.GenAI.providerName: .string("openclaw"),
+                    "osaurus.openclaw.session.requested_model": .string(requestedModel),
+                    "osaurus.openclaw.session.error": .string(errorMessage),
+                    "osaurus.openclaw.session.create.latency_ms": .double(Date().timeIntervalSince(startedAt) * 1000),
+                ])
+            }
             throw error
         }
     }
 
     public func deleteSession(key: String) async throws {
-        try await connection.sessionsDelete(key: key)
-        sessions.removeAll { $0.key == key }
-        if activeSessionKey == key {
-            activeSessionKey = nil
+        let startedAt = Date()
+        do {
+            try await connection.sessionsDelete(key: key)
+            sessions.removeAll { $0.key == key }
+            if activeSessionKey == key {
+                activeSessionKey = nil
+            }
+            postSessionsChanged()
+            _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.session.delete.success", id: key)) {
+                scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                    Terra.Keys.Terra.openClawGateway: .bool(true),
+                    Terra.Keys.GenAI.providerName: .string("openclaw"),
+                    "osaurus.openclaw.session.delete.latency_ms": .double(Date().timeIntervalSince(startedAt) * 1000),
+                ])
+            }
+        } catch {
+            let errorMessage = error.localizedDescription
+            _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.session.delete.failed", id: key)) {
+                scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                    Terra.Keys.Terra.openClawGateway: .bool(true),
+                    Terra.Keys.GenAI.providerName: .string("openclaw"),
+                    "osaurus.openclaw.session.error": .string(errorMessage),
+                    "osaurus.openclaw.session.delete.latency_ms": .double(Date().timeIntervalSince(startedAt) * 1000),
+                ])
+            }
+            throw error
         }
-        postSessionsChanged()
     }
 
     public func resetSession(key: String) async throws {
-        try await connection.sessionsReset(key: key, reason: "new")
+        let startedAt = Date()
+        do {
+            try await connection.sessionsReset(key: key, reason: "new")
+            _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.session.reset.success", id: key)) {
+                scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                    Terra.Keys.Terra.openClawGateway: .bool(true),
+                    Terra.Keys.GenAI.providerName: .string("openclaw"),
+                    "osaurus.openclaw.session.reset.latency_ms": .double(Date().timeIntervalSince(startedAt) * 1000),
+                ])
+            }
+        } catch {
+            let errorMessage = error.localizedDescription
+            _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.session.reset.failed", id: key)) {
+                scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                    Terra.Keys.Terra.openClawGateway: .bool(true),
+                    Terra.Keys.GenAI.providerName: .string("openclaw"),
+                    "osaurus.openclaw.session.error": .string(errorMessage),
+                    "osaurus.openclaw.session.reset.latency_ms": .double(Date().timeIntervalSince(startedAt) * 1000),
+                ])
+            }
+            throw error
+        }
     }
 
     public func patchSession(
@@ -173,6 +302,7 @@ public final class OpenClawSessionManager: ObservableObject {
         sendPolicy: String? = nil,
         model: String? = nil
     ) async throws {
+        let startedAt = Date()
         var params: [String: OpenClawProtocol.AnyCodable] = [:]
         if let sendPolicy, !sendPolicy.isEmpty {
             params["sendPolicy"] = OpenClawProtocol.AnyCodable(sendPolicy)
@@ -180,11 +310,67 @@ public final class OpenClawSessionManager: ObservableObject {
         if let model, !model.isEmpty {
             params["model"] = OpenClawProtocol.AnyCodable(model)
         }
-        try await connection.sessionsPatch(key: key, params: params)
+        do {
+            try await connection.sessionsPatch(key: key, params: params)
+            let sendPolicyValue = sendPolicy ?? ""
+            let modelValue = model ?? ""
+            _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.session.patch.success", id: key)) {
+                scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                    Terra.Keys.Terra.openClawGateway: .bool(true),
+                    Terra.Keys.GenAI.providerName: .string("openclaw"),
+                    "osaurus.openclaw.session.send_policy": .string(sendPolicyValue),
+                    "osaurus.openclaw.session.model": .string(modelValue),
+                    "osaurus.openclaw.session.patch.latency_ms": .double(Date().timeIntervalSince(startedAt) * 1000),
+                ])
+            }
+        } catch {
+            let errorMessage = error.localizedDescription
+            _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.session.patch.failed", id: key)) {
+                scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                    Terra.Keys.Terra.openClawGateway: .bool(true),
+                    Terra.Keys.GenAI.providerName: .string("openclaw"),
+                    "osaurus.openclaw.session.error": .string(errorMessage),
+                    "osaurus.openclaw.session.patch.latency_ms": .double(Date().timeIntervalSince(startedAt) * 1000),
+                ])
+            }
+            throw error
+        }
     }
 
     public func compactSession(key: String, maxLines: Int? = nil) async throws {
-        try await connection.sessionsCompact(key: key, maxLines: maxLines)
+        let startedAt = Date()
+        do {
+            try await connection.sessionsCompact(key: key, maxLines: maxLines)
+            _ = await Terra.withAgentInvocationSpan(
+                agent: .init(name: "openclaw.session.compact.success", id: key)
+            ) { scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                    Terra.Keys.Terra.openClawGateway: .bool(true),
+                    Terra.Keys.GenAI.providerName: .string("openclaw"),
+                    "osaurus.openclaw.session.compact.max_lines": .int(maxLines ?? 0),
+                    "osaurus.openclaw.session.compact.latency_ms": .double(Date().timeIntervalSince(startedAt) * 1000),
+                ])
+            }
+        } catch {
+            let errorMessage = error.localizedDescription
+            _ = await Terra.withAgentInvocationSpan(
+                agent: .init(name: "openclaw.session.compact.failed", id: key)
+            ) { scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                    Terra.Keys.Terra.openClawGateway: .bool(true),
+                    Terra.Keys.GenAI.providerName: .string("openclaw"),
+                    "osaurus.openclaw.session.error": .string(errorMessage),
+                    "osaurus.openclaw.session.compact.latency_ms": .double(Date().timeIntervalSince(startedAt) * 1000),
+                ])
+            }
+            throw error
+        }
     }
 
     public func setActiveSessionKey(_ key: String?) {

@@ -97,6 +97,10 @@ enum OpenClawMCPBridge {
         mode: OpenClawMCPBridgeSyncMode,
         allowUnownedOverwrite: Bool
     ) throws -> OpenClawMCPBridgeSyncResult {
+        let startedAt = Date()
+        let providerCount = providers.count
+        let modeValue = mode.rawValue
+        let targetPath = fileURL.path
         let (config, skippedProviderNames) = buildConfig(providers: providers)
         let sourceFingerprint = try sourceFingerprint(for: providers)
         let metadataURL = metadataFileURL(for: fileURL)
@@ -159,7 +163,7 @@ enum OpenClawMCPBridge {
         try metadataData.write(to: metadataURL, options: [.atomic])
         try setSecurePermissions(for: metadataURL)
 
-        return OpenClawMCPBridgeSyncResult(
+        let result = OpenClawMCPBridgeSyncResult(
             configPath: fileURL.path,
             syncedProviderCount: config.mcpServers.count,
             skippedProviderNames: skippedProviderNames,
@@ -170,9 +174,16 @@ enum OpenClawMCPBridge {
             backupPath: backupPath,
             syncedAt: now
         )
+        _ = providerCount
+        _ = modeValue
+        _ = targetPath
+        _ = startedAt
+        return result
     }
 
     static func rollbackToBackup(configFileURL: URL) throws -> Bool {
+        let startedAt = Date()
+        let configPath = configFileURL.path
         let backupURL = backupFileURL(for: configFileURL)
         let metadataURL = metadataFileURL(for: configFileURL)
         let backupMetadataURL = backupMetadataFileURL(for: configFileURL)
@@ -195,7 +206,8 @@ enum OpenClawMCPBridge {
             try fm.copyItem(at: backupMetadataURL, to: metadataURL)
             try setSecurePermissions(for: metadataURL)
         }
-
+        _ = configPath
+        _ = startedAt
         return true
     }
 

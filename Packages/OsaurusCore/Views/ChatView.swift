@@ -1086,7 +1086,8 @@ final class ChatSession: ObservableObject {
                                 resultText = try await ToolRegistry.shared.execute(
                                     name: inv.toolName,
                                     argumentsJSON: inv.jsonArguments,
-                                    overrides: executionOverrides.isEmpty ? nil : executionOverrides
+                                    overrides: executionOverrides.isEmpty ? nil : executionOverrides,
+                                    telemetryCallId: callId
                                 )
                                 if Task.isCancelled { break }
                             }

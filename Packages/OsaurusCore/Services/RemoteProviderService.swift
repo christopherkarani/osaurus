@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Terra
 
 public enum RemoteProviderFailureClass: String, Sendable, Equatable {
     case misconfiguredEndpoint = "misconfigured-endpoint"
@@ -176,28 +177,56 @@ public actor RemoteProviderService: ToolCapableService {
             throw RemoteProviderServiceError.noModelsAvailable
         }
 
-        let request = buildChatRequest(
-            messages: messages,
-            parameters: parameters,
-            model: modelName,
-            stream: false,
-            tools: nil,
-            toolChoice: nil
+        let prompt = messages.compactMap(\.content).joined(separator: "\n")
+        let spanRequest = Terra.InferenceRequest(
+            model: "\(providerPrefix)/\(modelName)",
+            prompt: prompt,
+            promptCapture: .optIn,
+            maxOutputTokens: parameters.maxTokens,
+            temperature: parameters.temperature.map(Double.init),
+            stream: false
         )
+        let providerType = self.provider.providerType
 
-        let (data, response) = try await session.data(for: try buildURLRequest(for: request))
+        return try await Terra.withInferenceSpan(spanRequest) { scope in
+            scope.setAttributes([
+                Terra.Keys.Terra.runtime: .string("remote_provider"),
+                Terra.Keys.GenAI.providerName: .string(provider.name),
+                Terra.Keys.GenAI.responseModel: .string("\(providerPrefix)/\(modelName)"),
+                "osaurus.provider.id": .string(provider.id.uuidString),
+                "osaurus.provider.name": .string(provider.name),
+                "osaurus.provider.type": .string(provider.providerType.rawValue),
+                Terra.Keys.GenAI.usageInputTokens: .int(max(1, prompt.count / 4)),
+                "osaurus.prompt.raw": .string(prompt),
+            ])
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw RemoteProviderServiceError.invalidResponse
+            let request = Self.buildChatRequest(
+                messages: messages,
+                parameters: parameters,
+                model: modelName,
+                stream: false,
+                tools: nil,
+                toolChoice: nil
+            )
+
+            let (data, response) = try await session.data(for: try buildURLRequest(for: request))
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw RemoteProviderServiceError.invalidResponse
+            }
+
+            if httpResponse.statusCode >= 400 {
+                let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
+                throw RemoteProviderServiceError.requestFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
+            }
+
+            let (content, _) = try Self.parseResponse(data, providerType: providerType)
+            scope.setAttributes([
+                Terra.Keys.GenAI.usageOutputTokens: .int(max(1, (content ?? "").count / 4)),
+                "osaurus.response.raw": .string(content ?? ""),
+            ])
+            return content ?? ""
         }
-
-        if httpResponse.statusCode >= 400 {
-            let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw RemoteProviderServiceError.requestFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
-        }
-
-        let (content, _) = try parseResponse(data)
-        return content ?? ""
     }
 
     func streamDeltas(
@@ -210,7 +239,7 @@ public actor RemoteProviderService: ToolCapableService {
             throw RemoteProviderServiceError.noModelsAvailable
         }
 
-        var request = buildChatRequest(
+        var request = Self.buildChatRequest(
             messages: messages,
             parameters: parameters,
             model: modelName,
@@ -227,14 +256,40 @@ public actor RemoteProviderService: ToolCapableService {
         let urlRequest = try buildURLRequest(for: request)
         let currentSession = self.session
         let providerType = self.provider.providerType
+        let telemetryPrompt = messages.compactMap(\.content).joined(separator: "\n")
+        let telemetryProviderName = provider.name
+        let telemetryModelName = modelName
+        let telemetryEndpoint = provider.baseURL?.absoluteString ?? "<invalid-url>"
 
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+                    _ = await Terra.withAgentInvocationSpan(agent: .init(name: "remote_provider.stream_deltas.start", id: nil)) {
+                scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("remote_provider"),
+                    Terra.Keys.GenAI.providerName: .string(telemetryProviderName),
+                    Terra.Keys.GenAI.responseModel: .string(telemetryModelName),
+                    "osaurus.remote.endpoint": .string(telemetryEndpoint),
+                    "osaurus.prompt.raw": .string(telemetryPrompt),
+                    Terra.Keys.GenAI.usageInputTokens: .int(max(1, telemetryPrompt.count / 4)),
+                    "osaurus.stop_sequences.count": .int(stopSequences.count),
+                ])
+            }
 
         let producerTask = Task {
             do {
                 let (bytes, response) = try await currentSession.bytes(for: urlRequest)
 
                 guard let httpResponse = response as? HTTPURLResponse else {
+                                            _ = await Terra.withAgentInvocationSpan(
+                            agent: .init(name: "remote_provider.stream_deltas.invalid_response", id: nil)
+                        ) { scope in
+                            scope.setAttributes([
+                                Terra.Keys.Terra.runtime: .string("remote_provider"),
+                                Terra.Keys.GenAI.providerName: .string(telemetryProviderName),
+                                Terra.Keys.GenAI.responseModel: .string(telemetryModelName),
+                                "osaurus.remote.endpoint": .string(telemetryEndpoint),
+                            ])
+                        }
                     continuation.finish(throwing: RemoteProviderServiceError.invalidResponse)
                     return
                 }
@@ -245,6 +300,18 @@ public actor RemoteProviderService: ToolCapableService {
                         errorData.append(byte)
                     }
                     let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
+                                            _ = await Terra.withAgentInvocationSpan(
+                            agent: .init(name: "remote_provider.stream_deltas.failed_http", id: nil)
+                        ) { scope in
+                            scope.setAttributes([
+                                Terra.Keys.Terra.runtime: .string("remote_provider"),
+                                Terra.Keys.GenAI.providerName: .string(telemetryProviderName),
+                                Terra.Keys.GenAI.responseModel: .string(telemetryModelName),
+                                "osaurus.remote.endpoint": .string(telemetryEndpoint),
+                                "osaurus.remote.http.status": .int(httpResponse.statusCode),
+                                "osaurus.remote.error.message": .string(errorMessage),
+                            ])
+                        }
                     continuation.finish(
                         throwing: RemoteProviderServiceError.requestFailed(
                             "HTTP \(httpResponse.statusCode): \(errorMessage)"
@@ -256,6 +323,8 @@ public actor RemoteProviderService: ToolCapableService {
                 // Track accumulated tool calls by index (even in streamDeltas for robustness)
                 var accumulatedToolCalls: [Int: (id: String?, name: String?, args: String, thoughtSignature: String?)] =
                     [:]
+                var streamBytes = 0
+                var streamChunks = 0
 
                 // Parse SSE stream with UTF-8 decoding and inactivity timeout
                 var buffer = ""
@@ -277,6 +346,7 @@ public actor RemoteProviderService: ToolCapableService {
                     else {
                         break
                     }
+                    streamBytes += 1
 
                     utf8Buffer.append(byte)
                     if let decoded = String(data: utf8Buffer, encoding: .utf8) {
@@ -299,10 +369,29 @@ public actor RemoteProviderService: ToolCapableService {
 
                         // Parse SSE data line
                         if line.hasPrefix("data: ") {
+                            streamChunks += 1
                             let dataContent = String(line.dropFirst(6))
 
                             // Check for stream end (OpenAI format)
                             if dataContent.trimmingCharacters(in: .whitespaces) == "[DONE]" {
+                                let emittedToolCall = Self.makeToolInvocation(from: accumulatedToolCalls) != nil
+                                let streamBytesSnapshot = streamBytes
+                                let streamChunksSnapshot = streamChunks
+                                let toolCallCandidateCount = accumulatedToolCalls.count
+                                                                    _ = await Terra.withAgentInvocationSpan(
+                                        agent: .init(name: "remote_provider.stream_deltas.done", id: nil)
+                                    ) { scope in
+                                        scope.setAttributes([
+                                            Terra.Keys.Terra.runtime: .string("remote_provider"),
+                                            Terra.Keys.GenAI.providerName: .string(telemetryProviderName),
+                                            Terra.Keys.GenAI.responseModel: .string(telemetryModelName),
+                                            "osaurus.remote.endpoint": .string(telemetryEndpoint),
+                                            "osaurus.remote.done.emitted_tool_call": .bool(emittedToolCall),
+                                            "osaurus.remote.stream.bytes": .int(streamBytesSnapshot),
+                                            "osaurus.remote.stream.chunks": .int(streamChunksSnapshot),
+                                            "osaurus.remote.stream.tool_call_candidates": .int(toolCallCandidateCount),
+                                        ])
+                                    }
                                 if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls) {
                                     continuation.finish(throwing: invocation)
                                     return
@@ -364,6 +453,20 @@ public actor RemoteProviderService: ToolCapableService {
 
                                         // Check for finish reason
                                         if let finishReason = chunk.candidates?.first?.finishReason {
+                                            let finishReasonValue = finishReason
+                                            let toolCandidates = accumulatedToolCalls.count
+                                                                                            _ = await Terra.withAgentInvocationSpan(
+                                                    agent: .init(name: "remote_provider.stream_deltas.finish_reason", id: nil)
+                                                ) { scope in
+                                                    scope.setAttributes([
+                                                        Terra.Keys.Terra.runtime: .string("remote_provider"),
+                                                        Terra.Keys.GenAI.providerName: .string(telemetryProviderName),
+                                                        Terra.Keys.GenAI.responseModel: .string(telemetryModelName),
+                                                        "osaurus.remote.endpoint": .string(telemetryEndpoint),
+                                                        "osaurus.remote.finish_reason": .string(finishReasonValue),
+                                                        "osaurus.remote.stream.tool_call_candidates": .int(toolCandidates),
+                                                    ])
+                                                }
                                             if finishReason == "SAFETY" {
                                                 continuation.finish(
                                                     throwing: RemoteProviderServiceError.requestFailed(
@@ -554,11 +657,36 @@ public actor RemoteProviderService: ToolCapableService {
                                             !finishReason.isEmpty,
                                             let invocation = Self.makeToolInvocation(from: accumulatedToolCalls)
                                         {
+                                            let finishReasonValue = finishReason
+                                                                                            _ = await Terra.withAgentInvocationSpan(
+                                                    agent: .init(name: "remote_provider.stream_deltas.finish_reason", id: nil)
+                                                ) { scope in
+                                                    scope.setAttributes([
+                                                        Terra.Keys.Terra.runtime: .string("remote_provider"),
+                                                        Terra.Keys.GenAI.providerName: .string(telemetryProviderName),
+                                                        Terra.Keys.GenAI.responseModel: .string(telemetryModelName),
+                                                        "osaurus.remote.endpoint": .string(telemetryEndpoint),
+                                                        "osaurus.remote.finish_reason": .string(finishReasonValue),
+                                                        Terra.Keys.GenAI.toolName: .string(invocation.toolName),
+                                                    ])
+                                                }
                                             continuation.finish(throwing: invocation)
                                             return
                                         }
                                     }
                                 } catch {
+                                    let parseErrorMessage = error.localizedDescription
+                                                                            _ = await Terra.withAgentInvocationSpan(
+                                            agent: .init(name: "remote_provider.stream_deltas.parse_failed", id: nil)
+                                        ) { scope in
+                                            scope.setAttributes([
+                                                Terra.Keys.Terra.runtime: .string("remote_provider"),
+                                                Terra.Keys.GenAI.providerName: .string(telemetryProviderName),
+                                                Terra.Keys.GenAI.responseModel: .string(telemetryModelName),
+                                                "osaurus.remote.endpoint": .string(telemetryEndpoint),
+                                                "osaurus.remote.error.message": .string(parseErrorMessage),
+                                            ])
+                                        }
                                     // Log parsing errors for debugging
                                     print(
                                         "[Osaurus] Warning: Failed to parse SSE chunk in streamDeltas: \(error.localizedDescription)"
@@ -625,6 +753,18 @@ public actor RemoteProviderService: ToolCapableService {
                                     }
                                 }
                             } catch {
+                                let parseErrorMessage = error.localizedDescription
+                                                                    _ = await Terra.withAgentInvocationSpan(
+                                        agent: .init(name: "remote_provider.stream_deltas.trailing_parse_failed", id: nil)
+                                    ) { scope in
+                                        scope.setAttributes([
+                                            Terra.Keys.Terra.runtime: .string("remote_provider"),
+                                            Terra.Keys.GenAI.providerName: .string(telemetryProviderName),
+                                            Terra.Keys.GenAI.responseModel: .string(telemetryModelName),
+                                            "osaurus.remote.endpoint": .string(telemetryEndpoint),
+                                            "osaurus.remote.error.message": .string(parseErrorMessage),
+                                        ])
+                                    }
                                 // Leftover buffer parse failures are non-fatal
                             }
                         }
@@ -637,8 +777,37 @@ public actor RemoteProviderService: ToolCapableService {
                     return
                 }
 
+                let streamBytesSnapshot = streamBytes
+                let streamChunksSnapshot = streamChunks
+                let toolCallCandidateCount = accumulatedToolCalls.count
+                                    _ = await Terra.withAgentInvocationSpan(
+                        agent: .init(name: "remote_provider.stream_deltas.completed", id: nil)
+                    ) { scope in
+                        scope.setAttributes([
+                            Terra.Keys.Terra.runtime: .string("remote_provider"),
+                            Terra.Keys.GenAI.providerName: .string(telemetryProviderName),
+                            Terra.Keys.GenAI.responseModel: .string(telemetryModelName),
+                            "osaurus.remote.endpoint": .string(telemetryEndpoint),
+                            "osaurus.remote.stream.bytes": .int(streamBytesSnapshot),
+                            "osaurus.remote.stream.chunks": .int(streamChunksSnapshot),
+                            "osaurus.remote.stream.tool_call_candidates": .int(toolCallCandidateCount),
+                        ])
+                    }
+
                 continuation.finish()
             } catch {
+                let errorMessage = error.localizedDescription
+                                    _ = await Terra.withAgentInvocationSpan(
+                        agent: .init(name: "remote_provider.stream_deltas.failed", id: nil)
+                    ) { scope in
+                        scope.setAttributes([
+                            Terra.Keys.Terra.runtime: .string("remote_provider"),
+                            Terra.Keys.GenAI.providerName: .string(telemetryProviderName),
+                            Terra.Keys.GenAI.responseModel: .string(telemetryModelName),
+                            "osaurus.remote.endpoint": .string(telemetryEndpoint),
+                            "osaurus.remote.error.message": .string(errorMessage),
+                        ])
+                    }
                 if Task.isCancelled {
                     continuation.finish()
                 } else {
@@ -668,43 +837,78 @@ public actor RemoteProviderService: ToolCapableService {
             throw RemoteProviderServiceError.noModelsAvailable
         }
 
-        var request = buildChatRequest(
-            messages: messages,
-            parameters: parameters,
-            model: modelName,
-            stream: false,
-            tools: tools.isEmpty ? nil : tools,
-            toolChoice: toolChoice
+        let prompt = messages.compactMap(\.content).joined(separator: "\n")
+        let spanRequest = Terra.InferenceRequest(
+            model: "\(providerPrefix)/\(modelName)",
+            prompt: prompt,
+            promptCapture: .optIn,
+            maxOutputTokens: parameters.maxTokens,
+            temperature: parameters.temperature.map(Double.init),
+            stream: false
         )
+        let providerType = self.provider.providerType
 
-        if !stopSequences.isEmpty {
-            request.stop = stopSequences
-        }
+        return try await Terra.withInferenceSpan(spanRequest) { scope in
+            scope.setAttributes([
+                Terra.Keys.Terra.runtime: .string("remote_provider"),
+                Terra.Keys.GenAI.providerName: .string(provider.name),
+                Terra.Keys.GenAI.responseModel: .string("\(providerPrefix)/\(modelName)"),
+                "osaurus.provider.id": .string(provider.id.uuidString),
+                "osaurus.provider.name": .string(provider.name),
+                "osaurus.provider.type": .string(provider.providerType.rawValue),
+                "osaurus.tools.count": .int(tools.count),
+                Terra.Keys.GenAI.usageInputTokens: .int(max(1, prompt.count / 4)),
+                "osaurus.prompt.raw": .string(prompt),
+            ])
 
-        let (data, response) = try await session.data(for: try buildURLRequest(for: request))
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw RemoteProviderServiceError.invalidResponse
-        }
-
-        if httpResponse.statusCode >= 400 {
-            let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw RemoteProviderServiceError.requestFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
-        }
-
-        let (content, toolCalls) = try parseResponse(data)
-
-        // Check for tool calls
-        if let toolCalls = toolCalls, let firstCall = toolCalls.first {
-            throw ServiceToolInvocation(
-                toolName: firstCall.function.name,
-                jsonArguments: firstCall.function.arguments,
-                toolCallId: firstCall.id,
-                geminiThoughtSignature: firstCall.geminiThoughtSignature
+            var request = Self.buildChatRequest(
+                messages: messages,
+                parameters: parameters,
+                model: modelName,
+                stream: false,
+                tools: tools.isEmpty ? nil : tools,
+                toolChoice: toolChoice
             )
-        }
 
-        return content ?? ""
+            if !stopSequences.isEmpty {
+                request.stop = stopSequences
+            }
+
+            let (data, response) = try await session.data(for: try buildURLRequest(for: request))
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw RemoteProviderServiceError.invalidResponse
+            }
+
+            if httpResponse.statusCode >= 400 {
+                let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
+                throw RemoteProviderServiceError.requestFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
+            }
+
+            let (content, toolCalls) = try Self.parseResponse(data, providerType: providerType)
+
+            if let toolCalls = toolCalls, let firstCall = toolCalls.first {
+                scope.addEvent(
+                    "remote_provider.tool_invocation",
+                    attributes: [
+                        Terra.Keys.GenAI.toolName: .string(firstCall.function.name),
+                        "osaurus.tool.arguments.raw": .string(firstCall.function.arguments),
+                    ]
+                )
+                throw ServiceToolInvocation(
+                    toolName: firstCall.function.name,
+                    jsonArguments: firstCall.function.arguments,
+                    toolCallId: firstCall.id,
+                    geminiThoughtSignature: firstCall.geminiThoughtSignature
+                )
+            }
+
+            scope.setAttributes([
+                Terra.Keys.GenAI.usageOutputTokens: .int(max(1, (content ?? "").count / 4)),
+                "osaurus.response.raw": .string(content ?? ""),
+            ])
+            return content ?? ""
+        }
     }
 
     func streamWithTools(
@@ -719,7 +923,7 @@ public actor RemoteProviderService: ToolCapableService {
             throw RemoteProviderServiceError.noModelsAvailable
         }
 
-        var request = buildChatRequest(
+        var request = Self.buildChatRequest(
             messages: messages,
             parameters: parameters,
             model: modelName,
@@ -735,14 +939,42 @@ public actor RemoteProviderService: ToolCapableService {
         let urlRequest = try buildURLRequest(for: request)
         let currentSession = self.session
         let providerType = self.provider.providerType
+        let telemetryPrompt = messages.compactMap(\.content).joined(separator: "\n")
+        let telemetryProviderName = provider.name
+        let telemetryModelName = modelName
+        let telemetryEndpoint = provider.baseURL?.absoluteString ?? "<invalid-url>"
 
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+                    _ = await Terra.withAgentInvocationSpan(
+                agent: .init(name: "remote_provider.stream_with_tools.start", id: nil)
+            ) { scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("remote_provider"),
+                    Terra.Keys.GenAI.providerName: .string(telemetryProviderName),
+                    Terra.Keys.GenAI.responseModel: .string(telemetryModelName),
+                    "osaurus.remote.endpoint": .string(telemetryEndpoint),
+                    "osaurus.prompt.raw": .string(telemetryPrompt),
+                    Terra.Keys.GenAI.usageInputTokens: .int(max(1, telemetryPrompt.count / 4)),
+                    "osaurus.stop_sequences.count": .int(stopSequences.count),
+                    "osaurus.tools.count": .int(tools.count),
+                ])
+            }
 
         let producerTask = Task {
             do {
                 let (bytes, response) = try await currentSession.bytes(for: urlRequest)
 
                 guard let httpResponse = response as? HTTPURLResponse else {
+                                            _ = await Terra.withAgentInvocationSpan(
+                            agent: .init(name: "remote_provider.stream_with_tools.invalid_response", id: nil)
+                        ) { scope in
+                            scope.setAttributes([
+                                Terra.Keys.Terra.runtime: .string("remote_provider"),
+                                Terra.Keys.GenAI.providerName: .string(telemetryProviderName),
+                                Terra.Keys.GenAI.responseModel: .string(telemetryModelName),
+                                "osaurus.remote.endpoint": .string(telemetryEndpoint),
+                            ])
+                        }
                     continuation.finish(throwing: RemoteProviderServiceError.invalidResponse)
                     return
                 }
@@ -753,6 +985,18 @@ public actor RemoteProviderService: ToolCapableService {
                         errorData.append(byte)
                     }
                     let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
+                                            _ = await Terra.withAgentInvocationSpan(
+                            agent: .init(name: "remote_provider.stream_with_tools.failed_http", id: nil)
+                        ) { scope in
+                            scope.setAttributes([
+                                Terra.Keys.Terra.runtime: .string("remote_provider"),
+                                Terra.Keys.GenAI.providerName: .string(telemetryProviderName),
+                                Terra.Keys.GenAI.responseModel: .string(telemetryModelName),
+                                "osaurus.remote.endpoint": .string(telemetryEndpoint),
+                                "osaurus.remote.http.status": .int(httpResponse.statusCode),
+                                "osaurus.remote.error.message": .string(errorMessage),
+                            ])
+                        }
                     continuation.finish(
                         throwing: RemoteProviderServiceError.requestFailed(
                             "HTTP \(httpResponse.statusCode): \(errorMessage)"
@@ -767,6 +1011,8 @@ public actor RemoteProviderService: ToolCapableService {
 
                 // Track if we've seen any finish reason (for edge case handling)
                 var lastFinishReason: String?
+                var streamBytes = 0
+                var streamChunks = 0
 
                 // Accumulate yielded text content for fallback tool call detection.
                 // Some models (e.g., Llama) embed tool calls inline in text instead
@@ -793,6 +1039,7 @@ public actor RemoteProviderService: ToolCapableService {
                     else {
                         break
                     }
+                    streamBytes += 1
 
                     utf8Buffer.append(byte)
                     if let decoded = String(data: utf8Buffer, encoding: .utf8) {
@@ -813,9 +1060,35 @@ public actor RemoteProviderService: ToolCapableService {
                         }
 
                         if line.hasPrefix("data: ") {
+                            streamChunks += 1
                             let dataContent = String(line.dropFirst(6))
 
                             if dataContent.trimmingCharacters(in: .whitespaces) == "[DONE]" {
+                                let emittedStructuredToolCall = Self.makeToolInvocation(from: accumulatedToolCalls) != nil
+                                let emittedFallbackToolCall = !accumulatedContent.isEmpty && !tools.isEmpty
+                                    && ToolDetection.detectInlineToolCall(in: accumulatedContent, tools: tools) != nil
+                                let streamBytesSnapshot = streamBytes
+                                let streamChunksSnapshot = streamChunks
+                                let toolCallCandidateCount = accumulatedToolCalls.count
+                                                                    _ = await Terra.withAgentInvocationSpan(
+                                        agent: .init(name: "remote_provider.stream_with_tools.done", id: nil)
+                                    ) { scope in
+                                        scope.setAttributes([
+                                            Terra.Keys.Terra.runtime: .string("remote_provider"),
+                                            Terra.Keys.GenAI.providerName: .string(telemetryProviderName),
+                                            Terra.Keys.GenAI.responseModel: .string(telemetryModelName),
+                                            "osaurus.remote.endpoint": .string(telemetryEndpoint),
+                                            "osaurus.remote.done.emitted_structured_tool_call": .bool(
+                                                emittedStructuredToolCall
+                                            ),
+                                            "osaurus.remote.done.emitted_fallback_tool_call": .bool(
+                                                emittedFallbackToolCall
+                                            ),
+                                            "osaurus.remote.stream.bytes": .int(streamBytesSnapshot),
+                                            "osaurus.remote.stream.chunks": .int(streamChunksSnapshot),
+                                            "osaurus.remote.stream.tool_call_candidates": .int(toolCallCandidateCount),
+                                        ])
+                                    }
                                 if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls) {
                                     print("[Osaurus] Stream [DONE]: Emitting tool call '\(invocation.toolName)'")
                                     continuation.finish(throwing: invocation)
@@ -902,6 +1175,20 @@ public actor RemoteProviderService: ToolCapableService {
                                         // Check for finish reason
                                         if let finishReason = chunk.candidates?.first?.finishReason {
                                             lastFinishReason = finishReason
+                                            let finishReasonValue = finishReason
+                                            let toolCandidates = accumulatedToolCalls.count
+                                                                                            _ = await Terra.withAgentInvocationSpan(
+                                                    agent: .init(name: "remote_provider.stream_with_tools.finish_reason", id: nil)
+                                                ) { scope in
+                                                    scope.setAttributes([
+                                                        Terra.Keys.Terra.runtime: .string("remote_provider"),
+                                                        Terra.Keys.GenAI.providerName: .string(telemetryProviderName),
+                                                        Terra.Keys.GenAI.responseModel: .string(telemetryModelName),
+                                                        "osaurus.remote.endpoint": .string(telemetryEndpoint),
+                                                        "osaurus.remote.finish_reason": .string(finishReasonValue),
+                                                        "osaurus.remote.stream.tool_call_candidates": .int(toolCandidates),
+                                                    ])
+                                                }
 
                                             if finishReason == "SAFETY" {
                                                 continuation.finish(
@@ -982,6 +1269,25 @@ public actor RemoteProviderService: ToolCapableService {
                                                 ) {
                                                     if let stopReason = deltaEvent.delta.stop_reason {
                                                         lastFinishReason = stopReason
+                                                        let stopReasonValue = stopReason
+                                                                                                                    _ = await Terra.withAgentInvocationSpan(
+                                                                agent: .init(
+                                                                    name: "remote_provider.stream_with_tools.finish_reason",
+                                                                    id: nil
+                                                                )
+                                                            ) { scope in
+                                                                scope.setAttributes([
+                                                                    Terra.Keys.Terra.runtime: .string("remote_provider"),
+                                                                    Terra.Keys.GenAI.providerName: .string(
+                                                                        telemetryProviderName
+                                                                    ),
+                                                                    Terra.Keys.GenAI.responseModel: .string(
+                                                                        telemetryModelName
+                                                                    ),
+                                                                    "osaurus.remote.endpoint": .string(telemetryEndpoint),
+                                                                    "osaurus.remote.finish_reason": .string(stopReasonValue),
+                                                                ])
+                                                            }
                                                     }
                                                 }
                                             case "message_stop":
@@ -1121,6 +1427,20 @@ public actor RemoteProviderService: ToolCapableService {
                                             !finishReason.isEmpty
                                         {
                                             lastFinishReason = finishReason
+                                            let finishReasonValue = finishReason
+                                            let toolCallCandidateCount = accumulatedToolCalls.count
+                                                                                            _ = await Terra.withAgentInvocationSpan(
+                                                    agent: .init(name: "remote_provider.stream_with_tools.finish_reason", id: nil)
+                                                ) { scope in
+                                                    scope.setAttributes([
+                                                        Terra.Keys.Terra.runtime: .string("remote_provider"),
+                                                        Terra.Keys.GenAI.providerName: .string(telemetryProviderName),
+                                                        Terra.Keys.GenAI.responseModel: .string(telemetryModelName),
+                                                        "osaurus.remote.endpoint": .string(telemetryEndpoint),
+                                                        "osaurus.remote.finish_reason": .string(finishReasonValue),
+                                                        "osaurus.remote.stream.tool_call_candidates": .int(toolCallCandidateCount),
+                                                    ])
+                                                }
                                             if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls) {
                                                 print(
                                                     "[Osaurus] Emitting tool call '\(invocation.toolName)' on finish_reason '\(finishReason)'"
@@ -1131,6 +1451,18 @@ public actor RemoteProviderService: ToolCapableService {
                                         }
                                     }
                                 } catch {
+                                    let parseErrorMessage = error.localizedDescription
+                                                                            _ = await Terra.withAgentInvocationSpan(
+                                            agent: .init(name: "remote_provider.stream_with_tools.parse_failed", id: nil)
+                                        ) { scope in
+                                            scope.setAttributes([
+                                                Terra.Keys.Terra.runtime: .string("remote_provider"),
+                                                Terra.Keys.GenAI.providerName: .string(telemetryProviderName),
+                                                Terra.Keys.GenAI.responseModel: .string(telemetryModelName),
+                                                "osaurus.remote.endpoint": .string(telemetryEndpoint),
+                                                "osaurus.remote.error.message": .string(parseErrorMessage),
+                                            ])
+                                        }
                                     // Log parsing errors for debugging instead of silently ignoring
                                     print(
                                         "[Osaurus] Warning: Failed to parse SSE chunk: \(error.localizedDescription)"
@@ -1157,6 +1489,22 @@ public actor RemoteProviderService: ToolCapableService {
                         tools: tools
                     )
                 {
+                    let streamBytesSnapshot = streamBytes
+                    let streamChunksSnapshot = streamChunks
+                                            _ = await Terra.withAgentInvocationSpan(
+                            agent: .init(name: "remote_provider.stream_with_tools.inline_tool_fallback", id: nil)
+                        ) { scope in
+                            scope.setAttributes([
+                                Terra.Keys.Terra.runtime: .string("remote_provider"),
+                                Terra.Keys.GenAI.providerName: .string(telemetryProviderName),
+                                Terra.Keys.GenAI.responseModel: .string(telemetryModelName),
+                                "osaurus.remote.endpoint": .string(telemetryEndpoint),
+                                Terra.Keys.GenAI.toolName: .string(name),
+                                "osaurus.tool.arguments.length": .int(args.count),
+                                "osaurus.remote.stream.bytes": .int(streamBytesSnapshot),
+                                "osaurus.remote.stream.chunks": .int(streamChunksSnapshot),
+                            ])
+                        }
                     print("[Osaurus] Fallback: Detected inline tool call '\(name)' in text")
                     continuation.finish(
                         throwing: ServiceToolInvocation(
@@ -1168,9 +1516,39 @@ public actor RemoteProviderService: ToolCapableService {
                     return
                 }
 
+                let streamBytesSnapshot = streamBytes
+                let streamChunksSnapshot = streamChunks
+                let toolCallCandidateCount = accumulatedToolCalls.count
+                let lastFinishReasonSnapshot = lastFinishReason ?? ""
+                                    _ = await Terra.withAgentInvocationSpan(
+                        agent: .init(name: "remote_provider.stream_with_tools.completed", id: nil)
+                    ) { scope in
+                        scope.setAttributes([
+                            Terra.Keys.Terra.runtime: .string("remote_provider"),
+                            Terra.Keys.GenAI.providerName: .string(telemetryProviderName),
+                            Terra.Keys.GenAI.responseModel: .string(telemetryModelName),
+                            "osaurus.remote.endpoint": .string(telemetryEndpoint),
+                            "osaurus.remote.stream.bytes": .int(streamBytesSnapshot),
+                            "osaurus.remote.stream.chunks": .int(streamChunksSnapshot),
+                            "osaurus.remote.stream.tool_call_candidates": .int(toolCallCandidateCount),
+                            "osaurus.remote.stream.last_finish_reason": .string(lastFinishReasonSnapshot),
+                        ])
+                    }
                 continuation.finish()
             } catch {
                 // Handle cancellation gracefully
+                let errorMessage = error.localizedDescription
+                                    _ = await Terra.withAgentInvocationSpan(
+                        agent: .init(name: "remote_provider.stream_with_tools.failed", id: nil)
+                    ) { scope in
+                        scope.setAttributes([
+                            Terra.Keys.Terra.runtime: .string("remote_provider"),
+                            Terra.Keys.GenAI.providerName: .string(telemetryProviderName),
+                            Terra.Keys.GenAI.responseModel: .string(telemetryModelName),
+                            "osaurus.remote.endpoint": .string(telemetryEndpoint),
+                            "osaurus.remote.error.message": .string(errorMessage),
+                        ])
+                    }
                 if Task.isCancelled {
                     continuation.finish()
                 } else {
@@ -1231,9 +1609,26 @@ public actor RemoteProviderService: ToolCapableService {
             let name = first.value.name
         else { return nil }
 
+        let validatedArguments = validateToolCallJSON(first.value.args)
+        let callID = first.value.id ?? "remote_tool_\(UUID().uuidString.lowercased())"
+        Task {
+            _ = await Terra.withToolExecutionSpan(
+                tool: .init(name: name, type: "remote_provider.stream"),
+                call: .init(id: callID)
+            ) { scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("remote_provider"),
+                    Terra.Keys.GenAI.toolName: .string(name),
+                    "osaurus.tool.arguments.length": .int(validatedArguments.count),
+                    "osaurus.remote.stream.tool_call.index": .int(first.key),
+                    "osaurus.remote.stream.tool_call.candidate_count": .int(accumulated.count),
+                ])
+            }
+        }
+
         return ServiceToolInvocation(
             toolName: name,
-            jsonArguments: validateToolCallJSON(first.value.args),
+            jsonArguments: validatedArguments,
             toolCallId: first.value.id,
             geminiThoughtSignature: first.value.thoughtSignature
         )
@@ -1316,7 +1711,7 @@ public actor RemoteProviderService: ToolCapableService {
     }
 
     /// Build a chat completion request structure
-    private func buildChatRequest(
+    private static func buildChatRequest(
         messages: [ChatMessage],
         parameters: GenerationParameters,
         model: String,
@@ -1410,8 +1805,11 @@ public actor RemoteProviderService: ToolCapableService {
     }
 
     /// Parse response based on provider type
-    private func parseResponse(_ data: Data) throws -> (content: String?, toolCalls: [ToolCall]?) {
-        switch provider.providerType {
+    private static func parseResponse(
+        _ data: Data,
+        providerType: RemoteProviderType
+    ) throws -> (content: String?, toolCalls: [ToolCall]?) {
+        switch providerType {
         case .anthropic:
             let response = try JSONDecoder().decode(AnthropicMessagesResponse.self, from: data)
             var textContent = ""

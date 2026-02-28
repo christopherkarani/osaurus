@@ -37,6 +37,29 @@ struct ToolCallLog: Identifiable, Sendable {
 enum RequestSource: String, Sendable, CaseIterable {
     case chatUI = "Chat UI"
     case httpAPI = "HTTP API"
+    case agent = "Agent"
+}
+
+extension RequestSource {
+    var telemetryModeLabel: String {
+        switch self {
+        case .agent:
+            return "agent"
+        case .chatUI, .httpAPI:
+            return "chat"
+        }
+    }
+
+    var telemetryChannelLabel: String {
+        switch self {
+        case .chatUI:
+            return "chat_ui"
+        case .httpAPI:
+            return "http_api"
+        case .agent:
+            return "agent"
+        }
+    }
 }
 
 /// Represents a single request log entry with optional inference data

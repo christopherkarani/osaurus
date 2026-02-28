@@ -192,6 +192,43 @@ struct WorkExecutionEngineOpenClawTests {
     }
 
     @Test
+    func executeLoop_openClawRuntime_deduplicatesIssuePromptAndContext() async throws {
+        let recorder = StreamRequestRecorder()
+        let engine = WorkExecutionEngine(
+            chatEngine: StubWorkChatEngine(
+                deltas: ["Done."],
+                recorder: recorder
+            )
+        )
+
+        var messages = [ChatMessage(role: "user", content: "hello")]
+        let issue = Issue(taskId: "task-dedupe", title: "hello", description: "hello")
+
+        _ = try await engine.executeLoop(
+            issue: issue,
+            messages: &messages,
+            systemPrompt: "System",
+            model: "openclaw:session-1",
+            tools: [],
+            toolOverrides: nil,
+            onIterationStart: { _ in },
+            onDelta: { _, _ in },
+            onToolCall: { _, _, _ in },
+            onStatusUpdate: { _ in },
+            onArtifact: { _ in },
+            onTokensConsumed: { _, _ in }
+        )
+
+        let requests = await recorder.all()
+        #expect(requests.count == 1)
+        let prompt = requests.first?.messages.first?.content ?? ""
+
+        #expect(prompt.contains("Issue:\nhello"))
+        #expect(prompt.contains("Issue:\nhello\nhello") == false)
+        #expect(prompt.contains("Conversation context:\n[user]\nhello") == false)
+    }
+
+    @Test
     func executeLoop_openClawPreSessionIdentifier_rejected() async throws {
         let recorder = StreamRequestRecorder()
         let engine = WorkExecutionEngine(

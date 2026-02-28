@@ -58,6 +58,8 @@ final class InsightsService: ObservableObject {
                 if log.source != .chatUI { return false }
             case .httpAPI:
                 if log.source != .httpAPI { return false }
+            case .agent:
+                if log.source != .agent { return false }
             }
 
             // Method filter
@@ -141,6 +143,7 @@ enum SourceFilter: String, CaseIterable {
     case all = "All"
     case chatUI = "Chat"
     case httpAPI = "HTTP"
+    case agent = "Agent"
 }
 
 enum MethodFilter: String, CaseIterable {

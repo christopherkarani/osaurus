@@ -272,6 +272,42 @@ struct OpenClawActivityStoreEdgeCaseTests {
         #expect(store.items.count == 1)
     }
 
+    @Test @MainActor
+    func clearTimeline_clearsItemsButKeepsRunState() async throws {
+        let store = OpenClawActivityStore()
+
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "lifecycle",
+            runId: "run-clear-test",
+            data: ["phase": "start"]
+        ))
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "thinking",
+            runId: "run-clear-test",
+            seq: 2,
+            data: ["text": "initial thinking"]
+        ))
+
+        #expect(store.items.count == 2)
+        #expect(store.isRunActive == true)
+        #expect(store.activeRunId == "run-clear-test")
+
+        store.clearTimeline()
+
+        #expect(store.items.isEmpty)
+        #expect(store.isRunActive == true)
+        #expect(store.activeRunId == "run-clear-test")
+
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "thinking",
+            runId: "run-clear-test",
+            seq: 3,
+            data: ["delta": "new chunk"]
+        ))
+
+        #expect(store.items.count == 1)
+    }
+
     // MARK: - Multi-Run Tracking Tests
 
     @Test @MainActor
@@ -413,6 +449,43 @@ struct OpenClawActivityStoreEdgeCaseTests {
         let timeline = store.timelineItemsForFocusedRun(limit: 20)
         #expect(timeline.count == 2)
         #expect(timeline.allSatisfy { $0.runId == "run-2" })
+    }
+
+    @Test @MainActor
+    func timelineItemsForDisplay_keepsChronologicalItemsAcrossRuns() async throws {
+        let store = OpenClawActivityStore()
+
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "lifecycle",
+            runId: "run-1",
+            seq: 1,
+            data: ["phase": "start"]
+        ))
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "thinking",
+            runId: "run-1",
+            seq: 2,
+            data: ["text": "Run 1 thinking"]
+        ))
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "lifecycle",
+            runId: "run-2",
+            seq: 3,
+            data: ["phase": "start"]
+        ))
+        store.processEventFrame(makeAgentEventFrame(
+            stream: "thinking",
+            runId: "run-2",
+            seq: 4,
+            data: ["text": "Run 2 thinking"]
+        ))
+
+        let displayItems = store.timelineItemsForDisplay(limit: 20)
+        #expect(displayItems.count == 4)
+        #expect(displayItems[0].runId == "run-1")
+        #expect(displayItems[1].runId == "run-1")
+        #expect(displayItems[2].runId == "run-2")
+        #expect(displayItems[3].runId == "run-2")
     }
 
     @Test @MainActor

@@ -7,9 +7,19 @@
 //
 
 import Foundation
+import Terra
+import OpenTelemetryApi
 
 /// Execution engine for running work tasks via reasoning loop
 public actor WorkExecutionEngine {
+    private final class ChatMessageBuffer: @unchecked Sendable {
+        var messages: [ChatMessage]
+
+        init(_ messages: [ChatMessage]) {
+            self.messages = messages
+        }
+    }
+
     /// The chat engine for LLM calls
     private let chatEngine: ChatEngineProtocol
 
@@ -20,7 +30,7 @@ public actor WorkExecutionEngine {
         chatEngine: ChatEngineProtocol? = nil,
         openClawWorkspaceFilesLoader: OpenClawWorkspaceFilesLoader? = nil
     ) {
-        self.chatEngine = chatEngine ?? ChatEngine(source: .chatUI)
+        self.chatEngine = chatEngine ?? ChatEngine(source: .agent)
         self.openClawWorkspaceFilesLoader =
             openClawWorkspaceFilesLoader ?? Self.defaultOpenClawWorkspaceFilesLoader
     }
@@ -31,6 +41,7 @@ public actor WorkExecutionEngine {
     private static let toolExecutionTimeout: UInt64 = 120
 
     /// Executes a tool call with a timeout to prevent indefinite hangs.
+    /// Uses ToolRegistry span instrumentation with preserved model tool-call IDs.
     private func executeToolCall(
         _ invocation: ServiceToolInvocation,
         overrides: [String: Bool]?,
@@ -45,11 +56,12 @@ public actor WorkExecutionEngine {
 
         let result: String = await withTaskGroup(of: String?.self) { group in
             group.addTask {
-                await self.executeToolInBackground(
+                return await self.executeToolInBackground(
                     name: invocation.toolName,
                     argumentsJSON: invocation.jsonArguments,
                     overrides: overrides,
-                    issueId: issueId
+                    issueId: issueId,
+                    telemetryCallId: callId
                 )
             }
             group.addTask {
@@ -86,7 +98,8 @@ public actor WorkExecutionEngine {
         name: String,
         argumentsJSON: String,
         overrides: [String: Bool]?,
-        issueId: String
+        issueId: String,
+        telemetryCallId: String
     ) async -> String {
         do {
             // Wrap with execution context so folder tools can log operations
@@ -94,7 +107,8 @@ public actor WorkExecutionEngine {
                 try await ToolRegistry.shared.execute(
                     name: name,
                     argumentsJSON: argumentsJSON,
-                    overrides: overrides
+                    overrides: overrides,
+                    telemetryCallId: telemetryCallId
                 )
             }
         } catch {
@@ -226,209 +240,292 @@ public actor WorkExecutionEngine {
             )
         }
 
-        var iteration = 0
-        var totalToolCalls = 0
-        var toolsUsed: [String] = []
-        var consecutiveTextOnly = 0
-        var lastResponseContent = ""
+        let messageBuffer = ChatMessageBuffer(messages)
+        let loopResult: LoopResult = try await Terra.withAgentInvocationSpan(
+            agent: .init(name: "osaurus.work.loop", id: issue.id)
+        ) { scope -> LoopResult in
+            scope.setAttributes([
+                Terra.Keys.Terra.autoInstrumented: .bool(false),
+                Terra.Keys.Terra.runtime: .string("osaurus_sdk"),
+                Terra.Keys.GenAI.providerName: .string("osaurus"),
+                "osaurus.trace.origin": .string("sdk"),
+                "osaurus.trace.surface": .string("work_loop"),
+                "osaurus.work.model": .string(model ?? "default"),
+                "osaurus.work.max_iterations": .int(maxIterations),
+                "osaurus.work.tools.count": .int(tools.count),
+                "osaurus.work.context_length": .int(contextLength ?? 0),
+                "osaurus.work.system_prompt.length": .int(systemPrompt.count),
+                "osaurus.work.request.temperature": .double(Double(temperature ?? 0.3)),
+                "osaurus.work.request.max_tokens": .int(maxTokens ?? 4096),
+                "osaurus.work.request.top_p": .double(Double(topPOverride ?? 1)),
+            ])
 
-        // Set up context budget manager if context length is known
-        var budgetManager: ContextBudgetManager? = nil
-        if let ctxLen = contextLength {
-            var manager = ContextBudgetManager(contextLength: ctxLen)
-            manager.reserveByCharCount(.systemPrompt, characters: systemPrompt.count)
-            manager.reserve(.tools, tokens: toolTokenEstimate)
-            manager.reserve(.memory, tokens: 0)
-            manager.reserve(.response, tokens: maxTokens ?? 4096)
-            budgetManager = manager
-        }
+            var iteration = 0
+            var totalToolCalls = 0
+            var toolsUsed: [String] = []
+            var consecutiveTextOnly = 0
+            var lastResponseContent = ""
 
-        while iteration < maxIterations {
-            iteration += 1
-            try Task.checkCancellation()
-
-            await onIterationStart(iteration)
-
-            await onStatusUpdate("Iteration \(iteration)")
-
-            // Trim messages to fit context budget (no-op if within budget or no limit known)
-            let effectiveMessages: [ChatMessage]
-            if let manager = budgetManager {
-                effectiveMessages = manager.trimMessages(messages)
-            } else {
-                effectiveMessages = messages
+            defer {
+                scope.setAttributes([
+                    "osaurus.work.total_iterations": .int(iteration),
+                    "osaurus.work.total_tool_calls": .int(totalToolCalls),
+                    "osaurus.work.tools_used.count": .int(toolsUsed.count),
+                ])
             }
 
-            // Build full messages with system prompt
-            let fullMessages = [ChatMessage(role: "system", content: systemPrompt)] + effectiveMessages
-
-            // Create request with all available tools - model picks which to use
-            let request = ChatCompletionRequest(
-                model: model ?? "default",
-                messages: fullMessages,
-                temperature: temperature ?? 0.3,
-                max_tokens: maxTokens ?? 4096,
-                stream: nil,
-                top_p: topPOverride,
-                frequency_penalty: nil,
-                presence_penalty: nil,
-                stop: nil,
-                n: nil,
-                tools: tools.isEmpty ? nil : tools,
-                tool_choice: nil,
-                session_id: nil
-            )
-
-            // Stream response
-            var responseContent = ""
-            var toolInvoked: ServiceToolInvocation?
-
-            do {
-                let stream = try await chatEngine.streamChat(request: request)
-                for try await delta in stream {
-                    responseContent += delta
-                    await onDelta(delta, iteration)
-                }
-            } catch let invocation as ServiceToolInvocation {
-                toolInvoked = invocation
+            // Set up context budget manager if context length is known
+            var budgetManager: ContextBudgetManager? = nil
+            if let ctxLen = contextLength {
+                var manager = ContextBudgetManager(contextLength: ctxLen)
+                manager.reserveByCharCount(.systemPrompt, characters: systemPrompt.count)
+                manager.reserve(.tools, tokens: toolTokenEstimate)
+                manager.reserve(.memory, tokens: 0)
+                manager.reserve(.response, tokens: maxTokens ?? 4096)
+                budgetManager = manager
             }
 
-            lastResponseContent = responseContent
+            while iteration < maxIterations {
+                iteration += 1
+                scope.addEvent("osaurus.work.iteration.start", attributes: ["osaurus.work.iteration": .int(iteration)])
+                try Task.checkCancellation()
 
-            // Estimate token consumption for this iteration
-            // Rough estimate: ~4 characters per token (varies by model/tokenizer)
-            let inputChars = fullMessages.reduce(0) { $0 + ($1.content?.count ?? 0) } + systemPrompt.count
-            let outputChars = responseContent.count + (toolInvoked?.jsonArguments.count ?? 0)
-            let estimatedInputTokens = max(1, inputChars / 4)
-            let estimatedOutputTokens = max(1, outputChars / 4)
-            await onTokensConsumed(estimatedInputTokens, estimatedOutputTokens)
+                await onIterationStart(iteration)
 
-            // If pure text response (no tool call) - check if model signals completion
-            if toolInvoked == nil {
-                messages.append(ChatMessage(role: "assistant", content: responseContent))
+                await onStatusUpdate("Iteration \(iteration)")
 
-                // Check for completion signals in the response
-                if isCompletionSignal(responseContent) {
-                    let summary = extractCompletionSummary(from: responseContent)
-                    return .completed(summary: summary, artifact: nil)
+                // Trim messages to fit context budget (no-op if within budget or no limit known)
+                let effectiveMessages: [ChatMessage]
+                if let manager = budgetManager {
+                    effectiveMessages = manager.trimMessages(messageBuffer.messages)
+                } else {
+                    effectiveMessages = messageBuffer.messages
                 }
 
-                // Track consecutive text-only responses to detect models that can't use tools
-                consecutiveTextOnly += 1
-                if consecutiveTextOnly >= Self.maxConsecutiveTextOnlyResponses {
-                    print(
-                        "[WorkExecutionEngine] \(consecutiveTextOnly) consecutive text-only responses"
-                            + " — aborting to prevent infinite loop"
-                    )
-                    let summary = extractCompletionSummary(from: responseContent)
-                    let fallback =
-                        summary.isEmpty
-                        ? String(responseContent.prefix(500))
-                        : summary
-                    return .completed(summary: fallback, artifact: nil)
-                }
+                // Build full messages with system prompt
+                let fullMessages = [ChatMessage(role: "system", content: systemPrompt)] + effectiveMessages
 
-                // Model is reasoning but hasn't called a tool yet - prompt to continue
-                // This helps models that reason out loud before acting
-                messages.append(ChatMessage(role: "user", content: "Continue with the next action."))
-                continue
-            }
-
-            // Model successfully called a tool - reset consecutive text-only counter
-            consecutiveTextOnly = 0
-
-            // Tool call - execute it
-            let invocation = toolInvoked!
-            totalToolCalls += 1
-            if !toolsUsed.contains(invocation.toolName) {
-                toolsUsed.append(invocation.toolName)
-            }
-
-            // Check for meta-tool signals before execution
-            switch invocation.toolName {
-            case "complete_task":
-                // Parse the complete_task arguments to get summary and artifact
-                let (summary, artifact) = parseCompleteTaskArgs(invocation.jsonArguments, taskId: issue.taskId)
-                return .completed(summary: summary, artifact: artifact)
-
-            case "request_clarification":
-                // Parse clarification request
-                let clarification = parseClarificationArgs(invocation.jsonArguments)
-                return .needsClarification(clarification)
-
-            default:
-                break
-            }
-
-            // Execute the tool
-            let result = try await executeToolCall(invocation, overrides: toolOverrides, issueId: issue.id)
-            await onToolCall(invocation.toolName, invocation.jsonArguments, result.result)
-
-            // Clean response content - strip any leaked function-call JSON patterns
-            let cleanedContent = StringCleaning.stripFunctionCallLeakage(responseContent, toolName: invocation.toolName)
-
-            // Append tool call + result to conversation
-            if cleanedContent.isEmpty {
-                messages.append(
-                    ChatMessage(role: "assistant", content: nil, tool_calls: [result.toolCall], tool_call_id: nil)
+                // Create request with all available tools - model picks which to use
+                let request = ChatCompletionRequest(
+                    model: model ?? "default",
+                    messages: fullMessages,
+                    temperature: temperature ?? 0.3,
+                    max_tokens: maxTokens ?? 4096,
+                    stream: nil,
+                    top_p: topPOverride,
+                    frequency_penalty: nil,
+                    presence_penalty: nil,
+                    stop: nil,
+                    n: nil,
+                    tools: tools.isEmpty ? nil : tools,
+                    tool_choice: nil,
+                    session_id: nil
                 )
-            } else {
-                messages.append(
+
+                // Stream response
+                var responseContent = ""
+                var toolInvoked: ServiceToolInvocation?
+
+                do {
+                    let stream = try await chatEngine.streamChat(request: request)
+                    for try await delta in stream {
+                        responseContent += delta
+                        await onDelta(delta, iteration)
+                    }
+                } catch let invocation as ServiceToolInvocation {
+                    toolInvoked = invocation
+                }
+
+                lastResponseContent = responseContent
+
+                // Estimate token consumption for this iteration
+                // Rough estimate: ~4 characters per token (varies by model/tokenizer)
+                let inputChars = fullMessages.reduce(0) { $0 + ($1.content?.count ?? 0) } + systemPrompt.count
+                let outputChars = responseContent.count + (toolInvoked?.jsonArguments.count ?? 0)
+                let estimatedInputTokens = max(1, inputChars / 4)
+                let estimatedOutputTokens = max(1, outputChars / 4)
+                await onTokensConsumed(estimatedInputTokens, estimatedOutputTokens)
+                scope.addEvent(
+                    "osaurus.work.iteration.tokens",
+                    attributes: [
+                        "osaurus.work.iteration": .int(iteration),
+                        Terra.Keys.GenAI.usageInputTokens: .int(estimatedInputTokens),
+                        Terra.Keys.GenAI.usageOutputTokens: .int(estimatedOutputTokens),
+                    ]
+                )
+
+                // Emit a consolidated iteration-completed event with full context
+                scope.addEvent(
+                    "osaurus.work.iteration.completed",
+                    attributes: [
+                        "osaurus.work.iteration": .int(iteration),
+                        "osaurus.work.response.length": .int(responseContent.count),
+                        "osaurus.work.response.has_tool_call": .bool(toolInvoked != nil),
+                        "osaurus.work.tools_used_so_far": .string(toolsUsed.joined(separator: ",")),
+                        "osaurus.work.tool.name": .string(toolInvoked?.toolName ?? ""),
+                    ]
+                )
+
+                // If pure text response (no tool call) - check if model signals completion
+                if toolInvoked == nil {
+                    messageBuffer.messages.append(ChatMessage(role: "assistant", content: responseContent))
+                    scope.addEvent(
+                        "osaurus.work.iteration.text_response",
+                        attributes: [
+                            "osaurus.work.iteration": .int(iteration),
+                            "osaurus.work.response.length": .int(responseContent.count),
+                        ]
+                    )
+
+                    // Check for completion signals in the response
+                    if Self.isCompletionSignal(responseContent) {
+                        scope.addEvent("osaurus.work.completed.signal", attributes: ["osaurus.work.iteration": .int(iteration)])
+                        let summary = Self.extractCompletionSummary(from: responseContent)
+                        return LoopResult.completed(summary: summary, artifact: nil)
+                    }
+
+                    // Track consecutive text-only responses to detect models that can't use tools
+                    consecutiveTextOnly += 1
+                    if consecutiveTextOnly >= Self.maxConsecutiveTextOnlyResponses {
+                        print(
+                            "[WorkExecutionEngine] \(consecutiveTextOnly) consecutive text-only responses"
+                                + " — aborting to prevent infinite loop"
+                        )
+                        scope.addEvent(
+                            "osaurus.work.completed.text_only_guard",
+                            attributes: ["osaurus.work.consecutive_text_only": .int(consecutiveTextOnly)]
+                        )
+                        let summary = Self.extractCompletionSummary(from: responseContent)
+                        let fallback =
+                            summary.isEmpty
+                            ? String(responseContent.prefix(500))
+                            : summary
+                        return LoopResult.completed(summary: fallback, artifact: nil)
+                    }
+
+                    // Model is reasoning but hasn't called a tool yet - prompt to continue
+                    // This helps models that reason out loud before acting
+                    messageBuffer.messages.append(ChatMessage(role: "user", content: "Continue with the next action."))
+                    continue
+                }
+
+                // Model successfully called a tool - reset consecutive text-only counter
+                consecutiveTextOnly = 0
+
+                // Tool call - execute it
+                let invocation = toolInvoked!
+                totalToolCalls += 1
+                if !toolsUsed.contains(invocation.toolName) {
+                    toolsUsed.append(invocation.toolName)
+                }
+
+                scope.addEvent(
+                    "osaurus.work.tool.invocation",
+                    attributes: [
+                        Terra.Keys.GenAI.toolName: .string(invocation.toolName),
+                        "osaurus.work.iteration": .int(iteration),
+                        "osaurus.work.tool_args.length": .int(invocation.jsonArguments.count),
+                        "osaurus.work.tool_call_id": .string(invocation.toolCallId ?? ""),
+                    ]
+                )
+
+                // Check for meta-tool signals before execution
+                switch invocation.toolName {
+                case "complete_task":
+                    // Parse the complete_task arguments to get summary and artifact
+                    let (summary, artifact) = Self.parseCompleteTaskArgs(invocation.jsonArguments, taskId: issue.taskId)
+                    return LoopResult.completed(summary: summary, artifact: artifact)
+
+                case "request_clarification":
+                    // Parse clarification request
+                    let clarification = Self.parseClarificationArgs(invocation.jsonArguments)
+                    return LoopResult.needsClarification(clarification)
+
+                default:
+                    break
+                }
+
+                // Execute the tool
+                let result = try await executeToolCall(invocation, overrides: toolOverrides, issueId: issue.id)
+                scope.addEvent(
+                    "osaurus.work.tool.completed",
+                    attributes: [
+                        Terra.Keys.GenAI.toolName: .string(invocation.toolName),
+                        "osaurus.work.iteration": .int(iteration),
+                        "osaurus.work.tool_result.length": .int(result.result.count),
+                        "osaurus.work.tool_success": .bool(!result.result.hasPrefix("[REJECTED]")),
+                    ]
+                )
+                await onToolCall(invocation.toolName, invocation.jsonArguments, result.result)
+
+                // Clean response content - strip any leaked function-call JSON patterns
+                let cleanedContent = StringCleaning.stripFunctionCallLeakage(responseContent, toolName: invocation.toolName)
+
+                // Append tool call + result to conversation
+                if cleanedContent.isEmpty {
+                    messageBuffer.messages.append(
+                        ChatMessage(role: "assistant", content: nil, tool_calls: [result.toolCall], tool_call_id: nil)
+                    )
+                } else {
+                    messageBuffer.messages.append(
+                        ChatMessage(
+                            role: "assistant",
+                            content: cleanedContent,
+                            tool_calls: [result.toolCall],
+                            tool_call_id: nil
+                        )
+                    )
+                }
+                messageBuffer.messages.append(
                     ChatMessage(
-                        role: "assistant",
-                        content: cleanedContent,
-                        tool_calls: [result.toolCall],
-                        tool_call_id: nil
+                        role: "tool",
+                        content: result.result,
+                        tool_calls: nil,
+                        tool_call_id: result.toolCall.id
                     )
                 )
-            }
-            messages.append(
-                ChatMessage(
-                    role: "tool",
-                    content: result.result,
-                    tool_calls: nil,
-                    tool_call_id: result.toolCall.id
-                )
-            )
 
-            // Log the tool call event
-            _ = try? IssueStore.createEvent(
-                IssueEvent.withPayload(
-                    issueId: issue.id,
-                    eventType: .toolCallCompleted,
-                    payload: EventPayload.ToolCallCompleted(
-                        toolName: invocation.toolName,
-                        iteration: iteration,
-                        arguments: invocation.jsonArguments,
-                        result: result.result,
-                        success: !result.result.hasPrefix("[REJECTED]")
+                // Log the tool call event
+                _ = try? IssueStore.createEvent(
+                    IssueEvent.withPayload(
+                        issueId: issue.id,
+                        eventType: .toolCallCompleted,
+                        payload: EventPayload.ToolCallCompleted(
+                            toolName: invocation.toolName,
+                            iteration: iteration,
+                            arguments: invocation.jsonArguments,
+                            result: result.result,
+                            success: !result.result.hasPrefix("[REJECTED]")
+                        )
                     )
                 )
-            )
 
-            // Handle semi-meta-tools (execute but also process results)
-            switch invocation.toolName {
-            case "create_issue":
-                await onStatusUpdate("Created follow-up issue")
+                // Handle semi-meta-tools (execute but also process results)
+                switch invocation.toolName {
+                case "create_issue":
+                    await onStatusUpdate("Created follow-up issue")
 
-            case "generate_artifact":
-                // Extract artifact from tool result and notify delegate
-                if let artifact = parseGeneratedArtifact(from: result.result, taskId: issue.taskId) {
-                    await onArtifact(artifact)
-                    await onStatusUpdate("Generated artifact: \(artifact.filename)")
+                case "generate_artifact":
+                    // Extract artifact from tool result and notify delegate
+                    if let artifact = Self.parseGeneratedArtifact(from: result.result, taskId: issue.taskId) {
+                        await onArtifact(artifact)
+                        await onStatusUpdate("Generated artifact: \(artifact.filename)")
+                    }
+
+                default:
+                    break
                 }
-
-            default:
-                break
             }
-        }
 
-        // Hit iteration limit
-        return .iterationLimitReached(
-            totalIterations: iteration,
-            totalToolCalls: totalToolCalls,
-            lastResponseContent: lastResponseContent
-        )
+            // Hit iteration limit
+            return LoopResult.iterationLimitReached(
+                totalIterations: iteration,
+                totalToolCalls: totalToolCalls,
+                lastResponseContent: lastResponseContent
+            )
+        }
+        messages = messageBuffer.messages
+        return loopResult
     }
 
     private static func isOpenClawRequestedModel(_ model: String?) -> Bool {
@@ -464,157 +561,226 @@ public actor WorkExecutionEngine {
             )
         }
 
-        try Task.checkCancellation()
-        await onIterationStart(1)
-        await onStatusUpdate("Running via OpenClaw gateway")
+        let messageBuffer = ChatMessageBuffer(messages)
+        let loopResult: LoopResult = try await Terra.withAgentInvocationSpan(
+            agent: .init(name: "osaurus.work.openclaw.gateway", id: issue.id)
+        ) { scope -> LoopResult in
+            scope.setAttributes([
+                Terra.Keys.Terra.autoInstrumented: .bool(false),
+                Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                Terra.Keys.Terra.openClawGateway: .bool(true),
+                Terra.Keys.GenAI.providerName: .string("openclaw"),
+                "osaurus.trace.origin": .string("sdk"),
+                "osaurus.trace.surface": .string("work_openclaw_gateway"),
+                "osaurus.work.model": .string(model),
+                "osaurus.work.issue.id": .string(issue.id),
+                "osaurus.work.task.id": .string(issue.taskId),
+                "osaurus.work.issue.title": .string(issue.title),
+                "osaurus.work.request.temperature": .double(Double(temperature ?? 0.3)),
+                "osaurus.work.request.max_tokens": .int(maxTokens ?? 4096),
+                "osaurus.work.request.top_p": .double(Double(topPOverride ?? 1)),
+            ])
 
-        let gatewayInput = buildOpenClawGatewayInput(
-            issue: issue,
-            systemPrompt: systemPrompt,
-            messages: messages
-        )
+            try Task.checkCancellation()
+            await onIterationStart(1)
+            await onStatusUpdate("Running via OpenClaw gateway")
 
-        let request = ChatCompletionRequest(
-            model: model,
-            messages: [ChatMessage(role: "user", content: gatewayInput)],
-            temperature: temperature ?? 0.3,
-            max_tokens: maxTokens ?? 4096,
-            stream: nil,
-            top_p: topPOverride,
-            frequency_penalty: nil,
-            presence_penalty: nil,
-            stop: nil,
-            n: nil,
-            tools: nil,
-            tool_choice: nil,
-            session_id: nil
-        )
+            let gatewayInput = Self.buildOpenClawGatewayInput(
+                issue: issue,
+                systemPrompt: systemPrompt,
+                messages: messageBuffer.messages
+            )
+            scope.setAttributes([
+                "osaurus.prompt.raw": .string(gatewayInput),
+                "osaurus.work.gateway_input.length": .int(gatewayInput.count),
+                Terra.Keys.GenAI.usageInputTokens: .int(max(1, gatewayInput.count / 4)),
+            ])
 
-        var rawResponseContent = ""
-        var visibleResponseContent = ""
-        var outputFilter = OpenClawOutputFilter()
-        do {
-            let stream = try await chatEngine.streamChat(request: request)
-            for try await delta in stream {
-                try Task.checkCancellation()
-                rawResponseContent += delta
-                let visibleDelta = outputFilter.consume(delta)
-                if !visibleDelta.isEmpty {
-                    visibleResponseContent += visibleDelta
-                    await onDelta(visibleDelta, 1)
+            let request = ChatCompletionRequest(
+                model: model,
+                messages: [ChatMessage(role: "user", content: gatewayInput)],
+                temperature: temperature ?? 0.3,
+                max_tokens: maxTokens ?? 4096,
+                stream: nil,
+                top_p: topPOverride,
+                frequency_penalty: nil,
+                presence_penalty: nil,
+                stop: nil,
+                n: nil,
+                tools: nil,
+                tool_choice: nil,
+                session_id: nil
+            )
+
+            var rawResponseContent = ""
+            var visibleResponseContent = ""
+            var outputFilter = OpenClawOutputFilter()
+            do {
+                let stream = try await chatEngine.streamChat(request: request)
+                for try await delta in stream {
+                    try Task.checkCancellation()
+                    rawResponseContent += delta
+                    let visibleDelta = outputFilter.consume(delta)
+                    if !visibleDelta.isEmpty {
+                        visibleResponseContent += visibleDelta
+                        await onDelta(visibleDelta, 1)
+                    }
+                }
+                let tail = outputFilter.finalize()
+                if !tail.isEmpty {
+                    visibleResponseContent += tail
+                    await onDelta(tail, 1)
+                }
+            } catch is ServiceToolInvocation {
+                throw WorkExecutionError.toolExecutionFailed(
+                    "Unexpected local tool invocation during OpenClaw gateway execution."
+                )
+            }
+
+            let estimatedInputTokens = max(1, gatewayInput.count / 4)
+            let estimatedOutputTokens = max(1, rawResponseContent.count / 4)
+            await onTokensConsumed(estimatedInputTokens, estimatedOutputTokens)
+            scope.setAttributes([
+                Terra.Keys.GenAI.usageOutputTokens: .int(estimatedOutputTokens),
+                "osaurus.response.raw": .string(rawResponseContent),
+                "osaurus.response.visible.length": .int(visibleResponseContent.count),
+            ])
+
+            let cleanedVisibleResponse = Self.sanitizeOpenClawVisibleResponse(visibleResponseContent)
+            let trimmedResponse = cleanedVisibleResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+            messageBuffer.messages.append(ChatMessage(role: "user", content: gatewayInput))
+            if !trimmedResponse.isEmpty {
+                messageBuffer.messages.append(ChatMessage(role: "assistant", content: trimmedResponse))
+            }
+
+            if let clarificationJSON = Self.extractLastJSONBlock(
+                from: rawResponseContent,
+                startMarker: Self.clarificationStartMarker,
+                endMarker: Self.clarificationEndMarker
+            ) {
+                scope.addEvent(
+                    "osaurus.work.needs_clarification",
+                    attributes: [
+                        "osaurus.work.clarification.payload.length": .int(clarificationJSON.count),
+                    ]
+                )
+                let clarification = Self.parseClarificationArgs(clarificationJSON)
+                return LoopResult.needsClarification(clarification)
+            }
+
+            var completionSummary = Self.extractCompletionSummary(from: trimmedResponse)
+            var completionArtifact: Artifact?
+            if let completionJSON = Self.extractLastJSONBlock(
+                from: rawResponseContent,
+                startMarker: Self.completeTaskStartMarker,
+                endMarker: Self.completeTaskEndMarker
+            ) {
+                scope.addEvent(
+                    "osaurus.work.completion.block.detected",
+                    attributes: [
+                        "osaurus.work.completion.payload.length": .int(completionJSON.count),
+                    ]
+                )
+                let parsed = Self.parseCompleteTaskArgs(completionJSON, taskId: issue.taskId)
+                completionSummary = parsed.0
+                completionArtifact = parsed.1
+            }
+
+            var generatedArtifacts: [Artifact] = Self.parseGeneratedArtifacts(
+                from: rawResponseContent,
+                taskId: issue.taskId
+            )
+            scope.setAttributes([
+                "osaurus.work.generated_artifacts.count": .int(generatedArtifacts.count),
+            ])
+            if let completionArtifact {
+                generatedArtifacts.removeAll {
+                    $0.filename.caseInsensitiveCompare(completionArtifact.filename) == .orderedSame
+                        && $0.content == completionArtifact.content
                 }
             }
-            let tail = outputFilter.finalize()
-            if !tail.isEmpty {
-                visibleResponseContent += tail
-                await onDelta(tail, 1)
+            for artifact in generatedArtifacts {
+                await onArtifact(artifact)
             }
-        } catch is ServiceToolInvocation {
-            throw WorkExecutionError.toolExecutionFailed(
-                "Unexpected local tool invocation during OpenClaw gateway execution."
+
+            let importedWorkspaceFiles = await importOpenClawWorkspaceArtifacts(taskId: issue.taskId)
+            scope.setAttributes([
+                "osaurus.work.workspace_artifacts.imported.count": .int(importedWorkspaceFiles.count),
+            ])
+            var workspaceFinalArtifact: Artifact?
+            for fileArtifact in importedWorkspaceFiles {
+                if let completionArtifact,
+                    completionArtifact.filename.caseInsensitiveCompare(fileArtifact.filename) == .orderedSame,
+                    completionArtifact.content == fileArtifact.content
+                {
+                    continue
+                }
+
+                if completionArtifact == nil,
+                    workspaceFinalArtifact == nil,
+                    Self.isPreferredWorkspaceFinalArtifact(filename: fileArtifact.filename)
+                {
+                    workspaceFinalArtifact = Artifact(
+                        taskId: fileArtifact.taskId,
+                        filename: fileArtifact.filename,
+                        content: fileArtifact.content,
+                        contentType: fileArtifact.contentType,
+                        isFinalResult: true
+                    )
+                    continue
+                }
+
+                await onArtifact(fileArtifact)
+            }
+
+            let finalArtifact = completionArtifact ?? workspaceFinalArtifact
+
+            if completionSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                completionSummary = trimmedResponse.isEmpty
+                    ? "OpenClaw run completed."
+                    : Self.extractCompletionSummary(from: trimmedResponse)
+            }
+
+            scope.setAttributes([
+                "osaurus.work.completion.summary": .string(completionSummary),
+                "osaurus.work.completion.has_final_artifact": .bool(finalArtifact != nil),
+            ])
+            return LoopResult.completed(
+                summary: completionSummary,
+                artifact: finalArtifact
             )
         }
-
-        let estimatedInputTokens = max(1, gatewayInput.count / 4)
-        let estimatedOutputTokens = max(1, rawResponseContent.count / 4)
-        await onTokensConsumed(estimatedInputTokens, estimatedOutputTokens)
-
-        let cleanedVisibleResponse = sanitizeOpenClawVisibleResponse(visibleResponseContent)
-        let trimmedResponse = cleanedVisibleResponse.trimmingCharacters(in: .whitespacesAndNewlines)
-        messages.append(ChatMessage(role: "user", content: gatewayInput))
-        if !trimmedResponse.isEmpty {
-            messages.append(ChatMessage(role: "assistant", content: trimmedResponse))
-        }
-
-        if let clarificationJSON = extractLastJSONBlock(
-            from: rawResponseContent,
-            startMarker: Self.clarificationStartMarker,
-            endMarker: Self.clarificationEndMarker
-        ) {
-            let clarification = parseClarificationArgs(clarificationJSON)
-            return .needsClarification(clarification)
-        }
-
-        var completionSummary = extractCompletionSummary(from: trimmedResponse)
-        var completionArtifact: Artifact?
-        if let completionJSON = extractLastJSONBlock(
-            from: rawResponseContent,
-            startMarker: Self.completeTaskStartMarker,
-            endMarker: Self.completeTaskEndMarker
-        ) {
-            let parsed = parseCompleteTaskArgs(completionJSON, taskId: issue.taskId)
-            completionSummary = parsed.0
-            completionArtifact = parsed.1
-        }
-
-        var generatedArtifacts: [Artifact] = parseGeneratedArtifacts(
-            from: rawResponseContent,
-            taskId: issue.taskId
-        )
-        if let completionArtifact {
-            generatedArtifacts.removeAll {
-                $0.filename.caseInsensitiveCompare(completionArtifact.filename) == .orderedSame
-                    && $0.content == completionArtifact.content
-            }
-        }
-        for artifact in generatedArtifacts {
-            await onArtifact(artifact)
-        }
-
-        let importedWorkspaceFiles = await importOpenClawWorkspaceArtifacts(taskId: issue.taskId)
-        var workspaceFinalArtifact: Artifact?
-        for fileArtifact in importedWorkspaceFiles {
-            if let completionArtifact,
-                completionArtifact.filename.caseInsensitiveCompare(fileArtifact.filename) == .orderedSame,
-                completionArtifact.content == fileArtifact.content
-            {
-                continue
-            }
-
-            if completionArtifact == nil,
-                workspaceFinalArtifact == nil,
-                Self.isPreferredWorkspaceFinalArtifact(filename: fileArtifact.filename)
-            {
-                workspaceFinalArtifact = Artifact(
-                    taskId: fileArtifact.taskId,
-                    filename: fileArtifact.filename,
-                    content: fileArtifact.content,
-                    contentType: fileArtifact.contentType,
-                    isFinalResult: true
-                )
-                continue
-            }
-
-            await onArtifact(fileArtifact)
-        }
-
-        let finalArtifact = completionArtifact ?? workspaceFinalArtifact
-
-        if completionSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            completionSummary = trimmedResponse.isEmpty
-                ? "OpenClaw run completed."
-                : extractCompletionSummary(from: trimmedResponse)
-        }
-
-        return .completed(
-            summary: completionSummary,
-            artifact: finalArtifact
-        )
+        messages = messageBuffer.messages
+        return loopResult
     }
 
-    private func buildOpenClawGatewayInput(
+    private static func buildOpenClawGatewayInput(
         issue: Issue,
         systemPrompt: String,
         messages: [ChatMessage]
     ) -> String {
+        let issueTitle = issue.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let issueDescription = issue.description?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var issueLines: [String] = []
+        if !issueTitle.isEmpty {
+            issueLines.append(issueTitle)
+        }
+        if let issueDescription, !issueDescription.isEmpty,
+           normalizedPromptComparisonText(issueDescription) != normalizedPromptComparisonText(issueTitle)
+        {
+            issueLines.append(issueDescription)
+        }
+
+        let dedupeUserInputs = Set(issueLines.map { normalizedPromptComparisonText($0) })
+
         var sections: [String] = []
         sections.append(
             """
             You are executing an Osaurus Work issue through the OpenClaw gateway.
 
             Issue:
-            \(issue.title)
-            \(issue.description ?? "")
+            \(issueLines.joined(separator: "\n"))
             """
         )
         sections.append("System instructions:\n\(systemPrompt)")
@@ -622,6 +788,12 @@ public actor WorkExecutionEngine {
         let contextLines = messages.compactMap { message -> String? in
             let text = (message.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
+            if message.role.caseInsensitiveCompare("user") == .orderedSame {
+                let normalized = normalizedPromptComparisonText(text)
+                if dedupeUserInputs.contains(normalized) {
+                    return nil
+                }
+            }
             return "[\(message.role)]\n\(text)"
         }
         if !contextLines.isEmpty {
@@ -655,24 +827,31 @@ public actor WorkExecutionEngine {
         return sections.joined(separator: "\n\n")
     }
 
-    private func sanitizeOpenClawVisibleResponse(_ raw: String) -> String {
+    private static func normalizedPromptComparisonText(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .lowercased()
+    }
+
+    private static func sanitizeOpenClawVisibleResponse(_ raw: String) -> String {
         var cleaned = raw
         if let markerRange = cleaned.range(of: "\nSystem:\n") {
             cleaned = String(cleaned[..<markerRange.lowerBound])
         } else if cleaned.hasPrefix("System:\n") {
             cleaned = ""
         }
-        cleaned = stripTaggedBlocks(
+        cleaned = Self.stripTaggedBlocks(
             from: cleaned,
             startMarker: Self.clarificationStartMarker,
             endMarker: Self.clarificationEndMarker
         )
-        cleaned = stripTaggedBlocks(
+        cleaned = Self.stripTaggedBlocks(
             from: cleaned,
             startMarker: Self.completeTaskStartMarker,
             endMarker: Self.completeTaskEndMarker
         )
-        cleaned = stripTaggedBlocks(
+        cleaned = Self.stripTaggedBlocks(
             from: cleaned,
             startMarker: Self.generatedArtifactStartMarker,
             endMarker: Self.generatedArtifactEndMarker
@@ -682,7 +861,7 @@ public actor WorkExecutionEngine {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func stripTaggedBlocks(
+    private static func stripTaggedBlocks(
         from text: String,
         startMarker: String,
         endMarker: String
@@ -696,7 +875,7 @@ public actor WorkExecutionEngine {
         return output
     }
 
-    private func extractLastJSONBlock(
+    private static func extractLastJSONBlock(
         from text: String,
         startMarker: String,
         endMarker: String
@@ -709,7 +888,7 @@ public actor WorkExecutionEngine {
             let end = text.range(of: endMarker, range: start.upperBound..<text.endIndex)
         {
             let candidate = String(text[start.upperBound..<end.lowerBound])
-            let normalized = normalizeJSONBlock(candidate)
+            let normalized = Self.normalizeJSONBlock(candidate)
             if !normalized.isEmpty {
                 payload = normalized
             }
@@ -719,7 +898,7 @@ public actor WorkExecutionEngine {
         return payload
     }
 
-    private func normalizeJSONBlock(_ raw: String) -> String {
+    private static func normalizeJSONBlock(_ raw: String) -> String {
         var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if value.hasPrefix("```") {
             if let firstNewline = value.firstIndex(of: "\n") {
@@ -733,7 +912,7 @@ public actor WorkExecutionEngine {
         return value
     }
 
-    private func parseGeneratedArtifacts(from response: String, taskId: String) -> [Artifact] {
+    private static func parseGeneratedArtifacts(from response: String, taskId: String) -> [Artifact] {
         var artifacts: [Artifact] = []
         var cursor = response.startIndex
 
@@ -742,7 +921,7 @@ public actor WorkExecutionEngine {
             let end = response.range(of: Self.generatedArtifactEndMarker, range: start.upperBound..<response.endIndex)
         {
             let block = String(response[start.lowerBound..<end.upperBound])
-            if let artifact = parseGeneratedArtifact(from: block, taskId: taskId) {
+            if let artifact = Self.parseGeneratedArtifact(from: block, taskId: taskId) {
                 artifacts.append(artifact)
             }
             cursor = end.upperBound
@@ -880,16 +1059,24 @@ public actor WorkExecutionEngine {
             }
         }()
 
+        /// Strips ---MARKER_START--- ... ---MARKER_END--- control blocks from the stream.
+        private var controlBlockFilter = OpenClawControlBlockStreamFilter()
         private var inSystemTrace = false
         private var systemBoundaryBuffer = ""
 
         mutating func consume(_ chunk: String) -> String {
             guard !chunk.isEmpty else { return "" }
+
+            // First pass: strip ---MARKER--- control blocks before any further processing.
+            let afterBlocks = controlBlockFilter.consume(chunk)
+            guard !afterBlocks.isEmpty else { return "" }
+
+            // Second pass: suppress everything from the System: trace boundary onward.
             if inSystemTrace {
                 return ""
             }
 
-            let combined = systemBoundaryBuffer + chunk
+            let combined = systemBoundaryBuffer + afterBlocks
             systemBoundaryBuffer = ""
 
             if let markerRange = firstSystemMarkerRange(in: combined) {
@@ -923,18 +1110,19 @@ public actor WorkExecutionEngine {
         }
 
         mutating func finalize() -> String {
+            let blockTail = controlBlockFilter.finalize()
             guard !inSystemTrace else {
                 systemBoundaryBuffer = ""
                 return ""
             }
-            let tail = systemBoundaryBuffer
+            let tail = systemBoundaryBuffer + blockTail
             systemBoundaryBuffer = ""
             return tail
         }
     }
 
     /// Parses generate_artifact tool result to extract the artifact
-    private func parseGeneratedArtifact(from result: String, taskId: String) -> Artifact? {
+    private static func parseGeneratedArtifact(from result: String, taskId: String) -> Artifact? {
         guard let startRange = result.range(of: Self.generatedArtifactStartMarker),
             let endRange = result.range(of: Self.generatedArtifactEndMarker, range: startRange.upperBound..<result.endIndex)
         else {
@@ -1047,7 +1235,7 @@ public actor WorkExecutionEngine {
     }
 
     /// Checks if the response signals task completion (without using complete_task tool)
-    private func isCompletionSignal(_ content: String) -> Bool {
+    private static func isCompletionSignal(_ content: String) -> Bool {
         let upperContent = content.uppercased()
         // Look for explicit completion markers
         let completionPhrases = [
@@ -1063,7 +1251,7 @@ public actor WorkExecutionEngine {
     }
 
     /// Extracts a completion summary from a text response
-    private func extractCompletionSummary(from content: String) -> String {
+    private static func extractCompletionSummary(from content: String) -> String {
         // Try to find a summary section
         let lines = content.components(separatedBy: .newlines)
         var summaryLines: [String] = []
@@ -1087,7 +1275,7 @@ public actor WorkExecutionEngine {
     }
 
     /// Parses complete_task tool arguments
-    private func parseCompleteTaskArgs(_ jsonArgs: String, taskId: String) -> (String, Artifact?) {
+    private static func parseCompleteTaskArgs(_ jsonArgs: String, taskId: String) -> (String, Artifact?) {
         struct CompleteTaskArgs: Decodable {
             let summary: String
             let success: Bool?
@@ -1122,7 +1310,7 @@ public actor WorkExecutionEngine {
     }
 
     /// Parses request_clarification tool arguments
-    private func parseClarificationArgs(_ jsonArgs: String) -> ClarificationRequest {
+    private static func parseClarificationArgs(_ jsonArgs: String) -> ClarificationRequest {
         struct ClarificationArgs: Decodable {
             let question: String
             let options: [String]?

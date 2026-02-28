@@ -21,4 +21,14 @@ struct OpenClawProviderPresetTests {
         #expect(preset.needsKey == true)
         #expect(preset.consoleURL == "https://www.kimi.com/code/en")
     }
+
+    @Test
+    func minimaxPreset_usesCorrectDefaults() {
+        let preset = OpenClawProviderPreset.minimax
+        #expect(preset.providerId == "minimax")
+        #expect(preset.baseUrl == "https://api.minimax.io/v1")
+        #expect(preset.apiCompatibility == "openai-completions")
+        #expect(preset.needsKey == true)
+        #expect(preset.consoleURL == "https://platform.minimax.io/user-center/basic-information/interface-key")
+    }
 }

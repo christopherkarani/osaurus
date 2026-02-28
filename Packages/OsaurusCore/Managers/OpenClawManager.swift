@@ -7,6 +7,7 @@ import Combine
 import Foundation
 import OpenClawKit
 import OpenClawProtocol
+import Terra
 
 extension Foundation.Notification.Name {
     static let openClawGatewayStatusChanged = Foundation.Notification.Name("openClawGatewayStatusChanged")
@@ -636,6 +637,17 @@ public final class OpenClawManager: ObservableObject {
                     "endpoint": gatewayEndpointSummary,
                 ]
             )
+            let rejectedEndpoint = gatewayEndpointSummary
+            _ = await Terra.withAgentInvocationSpan(
+                agent: .init(name: "openclaw.manager.gateway_start.rejected", id: nil)
+            ) { scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                    Terra.Keys.Terra.openClawGateway: .bool(true),
+                    Terra.Keys.GenAI.providerName: .string("openclaw"),
+                    "osaurus.openclaw.gateway.start.endpoint": .string(rejectedEndpoint),
+                ])
+            }
             throw NSError(
                 domain: "OpenClawManager",
                 code: 14,
@@ -655,6 +667,21 @@ public final class OpenClawManager: ObservableObject {
                 "port": "\(OpenClawEnvironment.gatewayPort(from: configuration))",
             ]
         )
+        let beginEndpoint = gatewayEndpointSummary
+        let beginBindMode = configuration.bindMode.rawValue
+        let beginPort = OpenClawEnvironment.gatewayPort(from: configuration)
+        _ = await Terra.withAgentInvocationSpan(
+            agent: .init(name: "openclaw.manager.gateway_start.begin", id: nil)
+        ) { scope in
+            scope.setAttributes([
+                Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                Terra.Keys.Terra.openClawGateway: .bool(true),
+                Terra.Keys.GenAI.providerName: .string("openclaw"),
+                "osaurus.openclaw.gateway.start.endpoint": .string(beginEndpoint),
+                "osaurus.openclaw.gateway.start.bind_mode": .string(beginBindMode),
+                "osaurus.openclaw.gateway.start.port": .int(beginPort),
+            ])
+        }
 
         if !configuration.isEnabled {
             configuration.isEnabled = true
@@ -687,6 +714,20 @@ public final class OpenClawManager: ObservableObject {
                     "error": error,
                 ]
             )
+            let installFailedEndpoint = gatewayEndpointSummary
+            let installFailedError = error
+            _ = await Terra.withAgentInvocationSpan(
+                agent: .init(name: "openclaw.manager.gateway_start.install_failed", id: nil)
+            ) { scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                    Terra.Keys.Terra.openClawGateway: .bool(true),
+                    Terra.Keys.GenAI.providerName: .string("openclaw"),
+                    "osaurus.openclaw.gateway.start.endpoint": .string(installFailedEndpoint),
+                    "osaurus.openclaw.gateway.start.elapsed_ms": .int(elapsedMs),
+                    "osaurus.openclaw.gateway.start.error": .string(installFailedError),
+                ])
+            }
             gatewayStatus = .failed(error)
             phase = .gatewayFailed(error)
             lastError = error
@@ -722,6 +763,21 @@ public final class OpenClawManager: ObservableObject {
                 lastError = nil
                 postGatewayStatusChanged()
                 emitToastEvent(.started)
+                let successElapsedMs = Int(Date().timeIntervalSince(startTime) * 1000)
+                let successPollAttempt = pollAttempt
+                let successConnected = isConnected
+                _ = await Terra.withAgentInvocationSpan(
+                    agent: .init(name: "openclaw.manager.gateway_start.success", id: nil)
+                ) { scope in
+                    scope.setAttributes([
+                        Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                        Terra.Keys.Terra.openClawGateway: .bool(true),
+                        Terra.Keys.GenAI.providerName: .string("openclaw"),
+                        "osaurus.openclaw.gateway.start.poll_attempts": .int(successPollAttempt),
+                        "osaurus.openclaw.gateway.start.elapsed_ms": .int(successElapsedMs),
+                        "osaurus.openclaw.gateway.start.connected": .bool(successConnected),
+                    ])
+                }
                 return
             } catch {
                 lastPollError = error.localizedDescription
@@ -735,6 +791,21 @@ public final class OpenClawManager: ObservableObject {
                         "error": error.localizedDescription,
                     ]
                 )
+                let pollErrorMessage = error.localizedDescription
+                let failedPollAttempt = pollAttempt
+                let failedPollElapsedMs = pollElapsedMs
+                _ = await Terra.withAgentInvocationSpan(
+                    agent: .init(name: "openclaw.manager.gateway_start.poll_failed", id: nil)
+                ) { scope in
+                    scope.setAttributes([
+                        Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                        Terra.Keys.Terra.openClawGateway: .bool(true),
+                        Terra.Keys.GenAI.providerName: .string("openclaw"),
+                        "osaurus.openclaw.gateway.start.poll_attempt": .int(failedPollAttempt),
+                        "osaurus.openclaw.gateway.start.poll_elapsed_ms": .int(failedPollElapsedMs),
+                        "osaurus.openclaw.gateway.start.poll_error": .string(pollErrorMessage),
+                    ])
+                }
             }
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
@@ -750,6 +821,19 @@ public final class OpenClawManager: ObservableObject {
                 "error": message,
             ]
         )
+        let timeoutPollAttempt = pollAttempt
+        _ = await Terra.withAgentInvocationSpan(
+            agent: .init(name: "openclaw.manager.gateway_start.timeout", id: nil)
+        ) { scope in
+            scope.setAttributes([
+                Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                Terra.Keys.Terra.openClawGateway: .bool(true),
+                Terra.Keys.GenAI.providerName: .string("openclaw"),
+                "osaurus.openclaw.gateway.start.poll_attempts": .int(timeoutPollAttempt),
+                "osaurus.openclaw.gateway.start.elapsed_ms": .int(elapsedMs),
+                "osaurus.openclaw.gateway.start.error": .string(message),
+            ])
+        }
         gatewayStatus = .failed(message)
         phase = .gatewayFailed(message)
         lastError = message
@@ -774,6 +858,7 @@ public final class OpenClawManager: ObservableObject {
     }
 
     public func connect() async throws {
+        let connectStartedAt = Date()
         guard gatewayStatus == .running || hasCustomGatewayURL else {
             await emitStartupDiagnostic(
                 level: .warning,
@@ -824,6 +909,20 @@ public final class OpenClawManager: ObservableObject {
             event: "openclaw.connect.begin",
             context: preConnectDiagnosticContext
         )
+        let connectBeginURL = endpoints.webSocketURL.absoluteString
+        let connectBeginCredentialSource = credentialResolution.source.rawValue
+        let connectBeginCredentialConfigured = credentialResolution.credential?.isEmpty == false
+        _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.manager.connect.begin", id: nil)) {
+            scope in
+            scope.setAttributes([
+                Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                Terra.Keys.Terra.openClawGateway: .bool(true),
+                Terra.Keys.GenAI.providerName: .string("openclaw"),
+                "osaurus.openclaw.manager.connect.url": .string(connectBeginURL),
+                "osaurus.openclaw.manager.connect.credential_source": .string(connectBeginCredentialSource),
+                "osaurus.openclaw.manager.connect.credential_configured": .bool(connectBeginCredentialConfigured),
+            ])
+        }
 
         connectionState = .connecting
         phase = .connecting
@@ -851,6 +950,19 @@ public final class OpenClawManager: ObservableObject {
                     "webSocketURL": endpoints.webSocketURL.absoluteString,
                 ]
             )
+            let connectURL = endpoints.webSocketURL.absoluteString
+            _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.manager.connect.success", id: nil))
+            { scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                    Terra.Keys.Terra.openClawGateway: .bool(true),
+                    Terra.Keys.GenAI.providerName: .string("openclaw"),
+                    "osaurus.openclaw.manager.connect.url": .string(connectURL),
+                    "osaurus.openclaw.manager.connect.latency_ms": .double(
+                        Date().timeIntervalSince(connectStartedAt) * 1000
+                    ),
+                ])
+            }
         } catch {
             var terminalError = error
             if shouldAttemptLocalAuthRecovery(for: error.localizedDescription, endpoint: endpoints.webSocketURL) {
@@ -886,6 +998,21 @@ public final class OpenClawManager: ObservableObject {
                             "webSocketURL": endpoints.webSocketURL.absoluteString,
                         ]
                     )
+                    let recoveryBeginURL = endpoints.webSocketURL.absoluteString
+                    let recoveryBeginSource = candidate.source.rawValue
+                    let recoveryBeginAttempt = recoveryAttempt
+                    _ = await Terra.withAgentInvocationSpan(
+                        agent: .init(name: "openclaw.manager.connect.recovery_candidate.begin", id: nil)
+                    ) { scope in
+                        scope.setAttributes([
+                            Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                            Terra.Keys.Terra.openClawGateway: .bool(true),
+                            Terra.Keys.GenAI.providerName: .string("openclaw"),
+                            "osaurus.openclaw.manager.connect.url": .string(recoveryBeginURL),
+                            "osaurus.openclaw.manager.connect.recovery_source": .string(recoveryBeginSource),
+                            "osaurus.openclaw.manager.connect.recovery_attempt": .int(recoveryBeginAttempt),
+                        ])
+                    }
                     do {
                         try await gatewayConnect(
                             url: endpoints.webSocketURL,
@@ -910,6 +1037,24 @@ public final class OpenClawManager: ObservableObject {
                                 "webSocketURL": endpoints.webSocketURL.absoluteString,
                             ]
                         )
+                        let recoveryURL = endpoints.webSocketURL.absoluteString
+                        let recoverySource = candidate.source.rawValue
+                        let recoverySuccessAttempt = recoveryAttempt
+                        _ = await Terra.withAgentInvocationSpan(
+                            agent: .init(name: "openclaw.manager.connect.success.auth_recovery", id: nil)
+                        ) { scope in
+                            scope.setAttributes([
+                                Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                                Terra.Keys.Terra.openClawGateway: .bool(true),
+                                Terra.Keys.GenAI.providerName: .string("openclaw"),
+                                "osaurus.openclaw.manager.connect.url": .string(recoveryURL),
+                                "osaurus.openclaw.manager.connect.recovery_source": .string(recoverySource),
+                                "osaurus.openclaw.manager.connect.recovery_attempt": .int(recoverySuccessAttempt),
+                                "osaurus.openclaw.manager.connect.latency_ms": .double(
+                                    Date().timeIntervalSince(connectStartedAt) * 1000
+                                ),
+                            ])
+                        }
                         return
                     } catch {
                         terminalError = error
@@ -928,6 +1073,24 @@ public final class OpenClawManager: ObservableObject {
                                 "webSocketURL": endpoints.webSocketURL.absoluteString,
                             ]
                         )
+                        let recoveryFailedURL = endpoints.webSocketURL.absoluteString
+                        let recoveryFailedSource = candidate.source.rawValue
+                        let recoveryFailedMessage = error.localizedDescription
+                        let recoveryFailedAttempt = recoveryAttempt
+                        _ = await Terra.withAgentInvocationSpan(
+                            agent: .init(name: "openclaw.manager.connect.recovery_candidate.failed", id: nil)
+                        ) { scope in
+                            scope.setAttributes([
+                                Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                                Terra.Keys.Terra.openClawGateway: .bool(true),
+                                Terra.Keys.GenAI.providerName: .string("openclaw"),
+                                "osaurus.openclaw.manager.connect.url": .string(recoveryFailedURL),
+                                "osaurus.openclaw.manager.connect.recovery_source": .string(recoveryFailedSource),
+                                "osaurus.openclaw.manager.connect.recovery_attempt": .int(recoveryFailedAttempt),
+                                "osaurus.openclaw.manager.connect.recovery_error": .string(recoveryFailedMessage),
+                                "osaurus.openclaw.manager.connect.recovery_continue": .bool(continueRecovery),
+                            ])
+                        }
                         if !continueRecovery {
                             break
                         }
@@ -948,6 +1111,21 @@ public final class OpenClawManager: ObservableObject {
                     "error": terminalError.localizedDescription,
                 ]
             )
+            let failedURL = endpoints.webSocketURL.absoluteString
+            let failedMessage = terminalError.localizedDescription
+            _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.manager.connect.failed", id: nil))
+                { scope in
+                    scope.setAttributes([
+                        Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                        Terra.Keys.Terra.openClawGateway: .bool(true),
+                        Terra.Keys.GenAI.providerName: .string("openclaw"),
+                        "osaurus.openclaw.manager.connect.url": .string(failedURL),
+                        "osaurus.openclaw.manager.connect.latency_ms": .double(
+                            Date().timeIntervalSince(connectStartedAt) * 1000
+                        ),
+                        "osaurus.openclaw.manager.connect.error": .string(failedMessage),
+                    ])
+                }
             throw terminalError
         }
     }
@@ -960,11 +1138,20 @@ public final class OpenClawManager: ObservableObject {
 
     public func refreshStatus() async {
         guard isConnected else { return }
+        let refreshStartedAt = Date()
         await emitStartupDiagnostic(
             level: .debug,
             event: "openclaw.refresh.begin",
             context: [:]
         )
+        _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.manager.refresh.begin", id: nil)) {
+            scope in
+            scope.setAttributes([
+                Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                Terra.Keys.Terra.openClawGateway: .bool(true),
+                Terra.Keys.GenAI.providerName: .string("openclaw"),
+            ])
+        }
 
         do {
             async let modelsTask = gatewayModelsList()
@@ -1007,6 +1194,23 @@ public final class OpenClawManager: ObservableObject {
                     "modelCount": "\(availableModels.count)",
                 ]
             )
+            let channelCount = channels.count
+            let modelCount = availableModels.count
+            let heartbeatOn = heartbeatEnabled
+            _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.manager.refresh.success", id: nil))
+            { scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                    Terra.Keys.Terra.openClawGateway: .bool(true),
+                    Terra.Keys.GenAI.providerName: .string("openclaw"),
+                    "osaurus.openclaw.manager.refresh.channel_count": .int(channelCount),
+                    "osaurus.openclaw.manager.refresh.model_count": .int(modelCount),
+                    "osaurus.openclaw.manager.refresh.heartbeat_enabled": .bool(heartbeatOn),
+                    "osaurus.openclaw.manager.refresh.latency_ms": .double(
+                        Date().timeIntervalSince(refreshStartedAt) * 1000
+                    ),
+                ])
+            }
         } catch {
             let message = "Status refresh failed: \(error.localizedDescription)"
             lastError = message
@@ -1019,6 +1223,18 @@ public final class OpenClawManager: ObservableObject {
                 event: "openclaw.refresh.failed",
                 context: ["error": message]
             )
+            _ = await Terra.withAgentInvocationSpan(agent: .init(name: "openclaw.manager.refresh.failed", id: nil)) {
+                scope in
+                scope.setAttributes([
+                    Terra.Keys.Terra.runtime: .string("openclaw_gateway"),
+                    Terra.Keys.Terra.openClawGateway: .bool(true),
+                    Terra.Keys.GenAI.providerName: .string("openclaw"),
+                    "osaurus.openclaw.manager.refresh.error": .string(message),
+                    "osaurus.openclaw.manager.refresh.latency_ms": .double(
+                        Date().timeIntervalSince(refreshStartedAt) * 1000
+                    ),
+                ])
+            }
         }
     }
 
@@ -1570,7 +1786,11 @@ public final class OpenClawManager: ObservableObject {
             providerId: normalizedProviderID,
             baseURL: baseUrl
         )
-        let normalizedAPI = apiCompatibility.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedAPI = Self.canonicalProviderAPICompatibility(
+            providerId: normalizedProviderID,
+            baseURL: normalizedBaseURL,
+            apiCompatibility: apiCompatibility
+        )
         let normalizedAPIKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
         let discoveredModels: [ProviderSeedModel]
         if seedModelsFromEndpoint {
@@ -1730,6 +1950,57 @@ public final class OpenClawManager: ObservableObject {
         return result != nil
     }
 
+    /// Migrates legacy MiniMax provider configs from OpenAI-style `/v1` endpoints
+    /// to OpenClaw's canonical Anthropic-compatible endpoint.
+    @discardableResult
+    public func migrateLegacyMiniMaxProviderEndpointIfNeeded() async throws -> Bool {
+        let result = try await applyProviderConfigMutation(providerId: "minimax") { existingProvider, _ in
+            guard let existingProvider else {
+                return .skip
+            }
+
+            var providerEntry = Self.normalizeJSONValue(existingProvider) as? [String: Any] ?? [:]
+            guard let rawBaseURL = providerEntry["baseUrl"] as? String else {
+                return .skip
+            }
+
+            let trimmedBaseURL = rawBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            let rawAPI = (providerEntry["api"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                ?? ""
+
+            let canonicalBaseURL = Self.canonicalProviderBaseURL(
+                providerId: "minimax",
+                baseURL: trimmedBaseURL
+            )
+            let canonicalAPI = Self.canonicalProviderAPICompatibility(
+                providerId: "minimax",
+                baseURL: canonicalBaseURL,
+                apiCompatibility: rawAPI
+            )
+
+            guard canonicalBaseURL != trimmedBaseURL || canonicalAPI != rawAPI else {
+                return .skip
+            }
+
+            providerEntry["baseUrl"] = canonicalBaseURL
+            providerEntry["api"] = canonicalAPI
+            return .set(provider: providerEntry, allowlistEntries: [:])
+        }
+
+        if result?.restart == true {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            if !isConnected && gatewayStatus == .running {
+                try? await connect()
+            }
+        }
+
+        if result != nil {
+            providerReadinessOverrides.removeValue(forKey: "minimax")
+        }
+        return result != nil
+    }
+
     public func updateProviderAPIKey(id: String, apiKey: String) async throws {
         let providerID = id.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1801,6 +2072,16 @@ public final class OpenClawManager: ObservableObject {
     }
 
     public func fetchConfiguredProviders() async throws {
+        do {
+            _ = try await migrateLegacyMiniMaxProviderEndpointIfNeeded()
+        } catch {
+            await emitStartupDiagnostic(
+                level: .warning,
+                event: "openclaw.providers.minimaxMigration.failed",
+                context: ["error": error.localizedDescription]
+            )
+        }
+
         do {
             _ = try await migrateLegacyKimiCodingProviderEndpointIfNeeded()
         } catch {
@@ -2567,15 +2848,103 @@ public final class OpenClawManager: ObservableObject {
         return normalizedPath.hasPrefix("/anthropic/")
     }
 
+    private static func isMinimaxHost(_ host: String) -> Bool {
+        let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalizedHost == "api.minimax.io"
+            || normalizedHost.hasSuffix(".minimax.io")
+            || normalizedHost == "api.minimaxi.com"
+            || normalizedHost.hasSuffix(".minimaxi.com")
+    }
+
+    private static func minimaxCanonicalBaseURL(for host: String) -> String {
+        let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalizedHost == "api.minimaxi.com" || normalizedHost.hasSuffix(".minimaxi.com") {
+            return "https://api.minimaxi.com/anthropic"
+        }
+        return "https://api.minimax.io/anthropic"
+    }
+
+    private static func isLegacyMinimaxEndpoint(_ rawURL: String) -> Bool {
+        guard let components = URLComponents(string: rawURL),
+              let host = components.host,
+              isMinimaxHost(host)
+        else {
+            return false
+        }
+
+        let normalizedPath = components.path
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        if normalizedPath.isEmpty || normalizedPath == "/" {
+            return true
+        }
+        if normalizedPath == "/v1"
+            || normalizedPath == "/v1/"
+            || normalizedPath.hasPrefix("/v1/")
+        {
+            return true
+        }
+        return false
+    }
+
+    private static func isMinimaxAnthropicEndpoint(_ rawURL: String) -> Bool {
+        guard let components = URLComponents(string: rawURL),
+              let host = components.host,
+              isMinimaxHost(host)
+        else {
+            return false
+        }
+
+        let normalizedPath = components.path
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return normalizedPath == "/anthropic"
+            || normalizedPath == "/anthropic/"
+            || normalizedPath.hasPrefix("/anthropic/")
+    }
+
     private static func canonicalProviderBaseURL(providerId: String, baseURL: String) -> String {
         let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard providerId == "kimi-coding" else {
+        guard providerId == "kimi-coding" || providerId == "minimax" else {
             return trimmed
         }
-        if isLegacyKimiCodingEndpoint(trimmed) {
-            return kimiCodingCanonicalBaseURL
+
+        switch providerId {
+        case "kimi-coding":
+            if isLegacyKimiCodingEndpoint(trimmed) {
+                return kimiCodingCanonicalBaseURL
+            }
+            return trimmed
+        case "minimax":
+            guard let components = URLComponents(string: trimmed),
+                  let host = components.host,
+                  isMinimaxHost(host)
+            else {
+                return trimmed
+            }
+            if isLegacyMinimaxEndpoint(trimmed) || isMinimaxAnthropicEndpoint(trimmed) {
+                return minimaxCanonicalBaseURL(for: host)
+            }
+            return trimmed
+        default:
+            return trimmed
         }
-        return trimmed
+    }
+
+    private static func canonicalProviderAPICompatibility(
+        providerId: String,
+        baseURL: String,
+        apiCompatibility: String
+    ) -> String {
+        let trimmed = apiCompatibility.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard providerId == "minimax" else {
+            return trimmed
+        }
+        guard isLegacyMinimaxEndpoint(baseURL) || isMinimaxAnthropicEndpoint(baseURL) else {
+            return trimmed
+        }
+        return "anthropic-messages"
     }
 
     private static func desiredAllowlistEntries(

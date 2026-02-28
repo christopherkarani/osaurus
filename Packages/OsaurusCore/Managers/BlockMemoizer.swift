@@ -21,7 +21,9 @@ final class BlockMemoizer {
     private var lastThinkingLen = 0
     private var lastVersion = -1
     private var lastSuppressAssistantText = false
-    private let maxBlocks = 80
+    // Keep more trace rows while streaming so users can inspect longer
+    // tool/thinking sequences without rows disappearing mid-run.
+    private let maxBlocks = 240
 
     /// Maps each block's turnId to its visual group's header turnId.
     /// Updated alongside blocks in `blocks(from:...)`.

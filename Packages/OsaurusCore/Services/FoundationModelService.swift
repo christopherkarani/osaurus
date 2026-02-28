@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Terra
 
 #if canImport(FoundationModels)
     import FoundationModels
@@ -47,23 +48,44 @@ actor FoundationModelService: ToolCapableService {
         temperature: Float,
         maxTokens: Int
     ) async throws -> String {
-        #if canImport(FoundationModels)
-            if #available(macOS 26.0, *) {
-                let session = LanguageModelSession()
+        let request = Terra.InferenceRequest(
+            model: "apple/foundation-model",
+            prompt: prompt,
+            promptCapture: .optIn,
+            maxOutputTokens: maxTokens,
+            temperature: Double(temperature),
+            stream: false
+        )
+        return try await Terra.withInferenceSpan(request) { scope in
+            scope.setAttributes([
+                Terra.Keys.Terra.runtime: .string("foundation_models"),
+                Terra.Keys.GenAI.providerName: .string("apple"),
+                Terra.Keys.GenAI.responseModel: .string("apple/foundation-model"),
+                Terra.Keys.GenAI.usageInputTokens: .int(max(1, prompt.count / 4)),
+                "osaurus.prompt.raw": .string(prompt),
+            ])
+            #if canImport(FoundationModels)
+                if #available(macOS 26.0, *) {
+                    let session = LanguageModelSession()
 
-                let options = GenerationOptions(
-                    sampling: nil,
-                    temperature: Double(temperature),
-                    maximumResponseTokens: maxTokens
-                )
-                let response = try await session.respond(to: prompt, options: options)
-                return response.content
-            } else {
+                    let options = GenerationOptions(
+                        sampling: nil,
+                        temperature: Double(temperature),
+                        maximumResponseTokens: maxTokens
+                    )
+                    let response = try await session.respond(to: prompt, options: options)
+                    scope.setAttributes([
+                        Terra.Keys.GenAI.usageOutputTokens: .int(max(1, response.content.count / 4)),
+                        "osaurus.response.raw": .string(response.content),
+                    ])
+                    return response.content
+                } else {
+                    throw FoundationModelServiceError.notAvailable
+                }
+            #else
                 throw FoundationModelServiceError.notAvailable
-            }
-        #else
-            throw FoundationModelServiceError.notAvailable
-        #endif
+            #endif
+        }
     }
 
     func streamDeltas(
@@ -73,6 +95,10 @@ actor FoundationModelService: ToolCapableService {
         stopSequences: [String]
     ) async throws -> AsyncThrowingStream<String, Error> {
         let prompt = OpenAIPromptBuilder.buildPrompt(from: messages)
+        let telemetryModel = requestedModel ?? "apple/foundation-model"
+        let telemetryTemperature = Double(parameters.temperature ?? 0.7)
+        let telemetryMaxTokens = parameters.maxTokens
+        let telemetryStopCount = stopSequences.count
         #if canImport(FoundationModels)
             if #available(macOS 26.0, *) {
                 let session = LanguageModelSession()
@@ -85,39 +111,72 @@ actor FoundationModelService: ToolCapableService {
 
                 let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
                 let producerTask = Task {
-                    var previous = ""
-                    do {
-                        var iterator = session.streamResponse(to: prompt, options: options).makeAsyncIterator()
-                        while let snapshot = try await iterator.next() {
-                            // Check for task cancellation to allow early termination
+                    let request = Terra.InferenceRequest(
+                        model: telemetryModel,
+                        prompt: prompt,
+                        promptCapture: .optIn,
+                        maxOutputTokens: telemetryMaxTokens,
+                        temperature: telemetryTemperature,
+                        stream: true
+                    )
+                    _ = await Terra.withStreamingInferenceSpan(request) { scope in
+                        scope.setAttributes([
+                            Terra.Keys.Terra.runtime: .string("foundation_models"),
+                            Terra.Keys.GenAI.providerName: .string("apple"),
+                            Terra.Keys.GenAI.responseModel: .string(telemetryModel),
+                            Terra.Keys.GenAI.usageInputTokens: .int(max(1, prompt.count / 4)),
+                            "osaurus.prompt.raw": .string(prompt),
+                            "osaurus.request.temperature": .double(telemetryTemperature),
+                            "osaurus.request.max_tokens": .int(telemetryMaxTokens),
+                            "osaurus.stop_sequences.count": .int(telemetryStopCount),
+                        ])
+
+                        var previous = ""
+                        do {
+                            var iterator = session.streamResponse(to: prompt, options: options).makeAsyncIterator()
+                            while let snapshot = try await iterator.next() {
+                                // Check for task cancellation to allow early termination
+                                if Task.isCancelled {
+                                    continuation.finish()
+                                    return
+                                }
+                                var current = snapshot.content
+                                if !stopSequences.isEmpty,
+                                    let r = stopSequences.compactMap({ current.range(of: $0)?.lowerBound }).first
+                                {
+                                    current = String(current[..<r])
+                                }
+                                let delta: String
+                                if current.hasPrefix(previous) {
+                                    delta = String(current.dropFirst(previous.count))
+                                } else {
+                                    delta = current
+                                }
+                                if !delta.isEmpty {
+                                    continuation.yield(delta)
+                                    scope.recordChunk()
+                                }
+                                previous = current
+                            }
+                            let outputLength = previous.count
+                            scope.setAttributes([
+                                Terra.Keys.GenAI.usageOutputTokens: .int(max(1, outputLength / 4)),
+                                "osaurus.response.raw": .string(previous),
+                            ])
+                            scope.addEvent("foundation.stream_deltas.completed")
+                            continuation.finish()
+                        } catch {
+                            // Handle cancellation gracefully
+                            let errorMessage = error.localizedDescription
+                            scope.setAttributes([
+                                "osaurus.error.message": .string(errorMessage),
+                            ])
+                            scope.addEvent("foundation.stream_deltas.failed")
                             if Task.isCancelled {
                                 continuation.finish()
-                                return
-                            }
-                            var current = snapshot.content
-                            if !stopSequences.isEmpty,
-                                let r = stopSequences.compactMap({ current.range(of: $0)?.lowerBound }).first
-                            {
-                                current = String(current[..<r])
-                            }
-                            let delta: String
-                            if current.hasPrefix(previous) {
-                                delta = String(current.dropFirst(previous.count))
                             } else {
-                                delta = current
+                                continuation.finish(throwing: error)
                             }
-                            if !delta.isEmpty {
-                                continuation.yield(delta)
-                            }
-                            previous = current
-                        }
-                        continuation.finish()
-                    } catch {
-                        // Handle cancellation gracefully
-                        if Task.isCancelled {
-                            continuation.finish()
-                        } else {
-                            continuation.finish(throwing: error)
                         }
                     }
                 }
@@ -160,6 +219,25 @@ actor FoundationModelService: ToolCapableService {
         requestedModel: String?
     ) async throws -> String {
         let prompt = OpenAIPromptBuilder.buildPrompt(from: messages)
+        let telemetryModel = requestedModel ?? "apple/foundation-model"
+        let spanRequest = Terra.InferenceRequest(
+            model: telemetryModel,
+            prompt: prompt,
+            promptCapture: .optIn,
+            maxOutputTokens: parameters.maxTokens,
+            temperature: Double(parameters.temperature ?? 0.7),
+            stream: false
+        )
+        return try await Terra.withInferenceSpan(spanRequest) { scope in
+            scope.setAttributes([
+                Terra.Keys.Terra.runtime: .string("foundation_models"),
+                Terra.Keys.GenAI.providerName: .string("apple"),
+                Terra.Keys.GenAI.responseModel: .string(telemetryModel),
+                Terra.Keys.GenAI.usageInputTokens: .int(max(1, prompt.count / 4)),
+                "osaurus.prompt.raw": .string(prompt),
+                "osaurus.tools.count": .int(tools.count),
+                "osaurus.stop_sequences.count": .int(stopSequences.count),
+            ])
         #if canImport(FoundationModels)
             if #available(macOS 26.0, *) {
                 let appleTools: [any FoundationModels.Tool] =
@@ -185,9 +263,20 @@ actor FoundationModelService: ToolCapableService {
                             }
                         }
                     }
+                    scope.setAttributes([
+                        Terra.Keys.GenAI.usageOutputTokens: .int(max(1, reply.count / 4)),
+                        "osaurus.response.raw": .string(reply),
+                    ])
                     return reply
                 } catch let error as LanguageModelSession.ToolCallError {
                     if let inv = error.underlyingError as? ToolInvocationError {
+                        scope.addEvent(
+                            "foundation.tool.invocation",
+                            attributes: [
+                                Terra.Keys.GenAI.toolName: .string(inv.toolName),
+                                "osaurus.tool.arguments.length": .int(inv.jsonArguments.count),
+                            ]
+                        )
                         // Re-throw using shared ServiceToolInvocation so callers don't need Foundation type
                         throw ServiceToolInvocation(toolName: inv.toolName, jsonArguments: inv.jsonArguments)
                     }
@@ -199,6 +288,7 @@ actor FoundationModelService: ToolCapableService {
         #else
             throw FoundationModelServiceError.notAvailable
         #endif
+        }
     }
 
     func streamWithTools(
@@ -210,6 +300,11 @@ actor FoundationModelService: ToolCapableService {
         requestedModel: String?
     ) async throws -> AsyncThrowingStream<String, Error> {
         let prompt = OpenAIPromptBuilder.buildPrompt(from: messages)
+        let telemetryModel = requestedModel ?? "apple/foundation-model"
+        let telemetryTemperature = Double(parameters.temperature ?? 0.7)
+        let telemetryMaxTokens = parameters.maxTokens
+        let telemetryStopCount = stopSequences.count
+        let telemetryToolCount = tools.count
         #if canImport(FoundationModels)
             if #available(macOS 26.0, *) {
                 let appleTools: [any FoundationModels.Tool] =
@@ -226,50 +321,96 @@ actor FoundationModelService: ToolCapableService {
                 let session = LanguageModelSession(model: .default, tools: appleTools, instructions: nil)
                 let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
                 let producerTask = Task {
-                    var previous = ""
-                    do {
-                        var iterator = session.streamResponse(to: prompt, options: options).makeAsyncIterator()
-                        while let snapshot = try await iterator.next() {
-                            // Check for task cancellation to allow early termination
+                    let request = Terra.InferenceRequest(
+                        model: telemetryModel,
+                        prompt: prompt,
+                        promptCapture: .optIn,
+                        maxOutputTokens: telemetryMaxTokens,
+                        temperature: telemetryTemperature,
+                        stream: true
+                    )
+                    _ = await Terra.withStreamingInferenceSpan(request) { scope in
+                        scope.setAttributes([
+                            Terra.Keys.Terra.runtime: .string("foundation_models"),
+                            Terra.Keys.GenAI.providerName: .string("apple"),
+                            Terra.Keys.GenAI.responseModel: .string(telemetryModel),
+                            Terra.Keys.GenAI.usageInputTokens: .int(max(1, prompt.count / 4)),
+                            "osaurus.prompt.raw": .string(prompt),
+                            "osaurus.request.temperature": .double(telemetryTemperature),
+                            "osaurus.request.max_tokens": .int(telemetryMaxTokens),
+                            "osaurus.stop_sequences.count": .int(telemetryStopCount),
+                            "osaurus.tools.count": .int(telemetryToolCount),
+                        ])
+
+                        var previous = ""
+                        do {
+                            var iterator = session.streamResponse(to: prompt, options: options).makeAsyncIterator()
+                            while let snapshot = try await iterator.next() {
+                                // Check for task cancellation to allow early termination
+                                if Task.isCancelled {
+                                    continuation.finish()
+                                    return
+                                }
+                                var current = snapshot.content
+                                if !stopSequences.isEmpty,
+                                    let r = stopSequences.compactMap({ current.range(of: $0)?.lowerBound }).first
+                                {
+                                    current = String(current[..<r])
+                                }
+                                let delta: String
+                                if current.hasPrefix(previous) {
+                                    delta = String(current.dropFirst(previous.count))
+                                } else {
+                                    delta = current
+                                }
+                                if !delta.isEmpty {
+                                    continuation.yield(delta)
+                                    scope.recordChunk()
+                                }
+                                previous = current
+                            }
+                            let outputLength = previous.count
+                            scope.setAttributes([
+                                Terra.Keys.GenAI.usageOutputTokens: .int(max(1, outputLength / 4)),
+                                "osaurus.response.raw": .string(previous),
+                            ])
+                            scope.addEvent("foundation.stream_with_tools.completed")
+                            continuation.finish()
+                        } catch let error as LanguageModelSession.ToolCallError {
+                            if let inv = error.underlyingError as? ToolInvocationError {
+                                scope.addEvent(
+                                    "foundation.tool.invocation",
+                                    attributes: [
+                                        Terra.Keys.GenAI.toolName: .string(inv.toolName),
+                                        "osaurus.tool.arguments.length": .int(inv.jsonArguments.count),
+                                    ]
+                                )
+                                continuation.finish(
+                                    throwing: ServiceToolInvocation(
+                                        toolName: inv.toolName,
+                                        jsonArguments: inv.jsonArguments
+                                    )
+                                )
+                            } else {
+                                let errorMessage = error.localizedDescription
+                                scope.setAttributes([
+                                    "osaurus.error.message": .string(errorMessage),
+                                ])
+                                scope.addEvent("foundation.stream_with_tools.failed")
+                                continuation.finish(throwing: error)
+                            }
+                        } catch {
+                            // Handle cancellation gracefully
+                            let errorMessage = error.localizedDescription
+                            scope.setAttributes([
+                                "osaurus.error.message": .string(errorMessage),
+                            ])
+                            scope.addEvent("foundation.stream_with_tools.failed")
                             if Task.isCancelled {
                                 continuation.finish()
-                                return
-                            }
-                            var current = snapshot.content
-                            if !stopSequences.isEmpty,
-                                let r = stopSequences.compactMap({ current.range(of: $0)?.lowerBound }).first
-                            {
-                                current = String(current[..<r])
-                            }
-                            let delta: String
-                            if current.hasPrefix(previous) {
-                                delta = String(current.dropFirst(previous.count))
                             } else {
-                                delta = current
+                                continuation.finish(throwing: error)
                             }
-                            if !delta.isEmpty {
-                                continuation.yield(delta)
-                            }
-                            previous = current
-                        }
-                        continuation.finish()
-                    } catch let error as LanguageModelSession.ToolCallError {
-                        if let inv = error.underlyingError as? ToolInvocationError {
-                            continuation.finish(
-                                throwing: ServiceToolInvocation(
-                                    toolName: inv.toolName,
-                                    jsonArguments: inv.jsonArguments
-                                )
-                            )
-                        } else {
-                            continuation.finish(throwing: error)
-                        }
-                    } catch {
-                        // Handle cancellation gracefully
-                        if Task.isCancelled {
-                            continuation.finish()
-                        } else {
-                            continuation.finish(throwing: error)
                         }
                     }
                 }
@@ -315,7 +456,7 @@ actor FoundationModelService: ToolCapableService {
         }
 
         @available(macOS 26.0, *)
-        private func toAppleTool(_ tool: Tool) -> any FoundationModels.Tool {
+        nonisolated private func toAppleTool(_ tool: Tool) -> any FoundationModels.Tool {
             let desc = tool.function.description ?? ""
             let schema: GenerationSchema = makeGenerationSchema(
                 from: tool.function.parameters,
@@ -327,7 +468,7 @@ actor FoundationModelService: ToolCapableService {
 
         // Convert OpenAI JSON Schema (as JSONValue) to FoundationModels GenerationSchema
         @available(macOS 26.0, *)
-        private func makeGenerationSchema(
+        nonisolated private func makeGenerationSchema(
             from parameters: JSONValue?,
             toolName: String,
             description: String?
@@ -349,7 +490,7 @@ actor FoundationModelService: ToolCapableService {
 
         // Build a DynamicGenerationSchema recursively from a minimal subset of JSON Schema
         @available(macOS 26.0, *)
-        private func dynamicSchema(from json: JSONValue, name: String) -> DynamicGenerationSchema? {
+        nonisolated private func dynamicSchema(from json: JSONValue, name: String) -> DynamicGenerationSchema? {
             switch json {
             case .object(let dict):
                 // enum of strings
@@ -461,12 +602,12 @@ actor FoundationModelService: ToolCapableService {
         }
 
         // Helpers to extract primitive values from JSONValue
-        private func jsonStringOrNil(_ value: JSONValue?) -> String? {
+        nonisolated private func jsonStringOrNil(_ value: JSONValue?) -> String? {
             guard let value else { return nil }
             if case .string(let s) = value { return s }
             return nil
         }
-        private func jsonIntOrNil(_ value: JSONValue?) -> Int? {
+        nonisolated private func jsonIntOrNil(_ value: JSONValue?) -> Int? {
             guard let value else { return nil }
             switch value {
             case .number(let d): return Int(d)
@@ -476,7 +617,7 @@ actor FoundationModelService: ToolCapableService {
         }
 
         @available(macOS 26.0, *)
-        private func shouldEnableTool(_ tool: Tool, choice: ToolChoiceOption?) -> Bool {
+        nonisolated private func shouldEnableTool(_ tool: Tool, choice: ToolChoiceOption?) -> Bool {
             guard let choice else { return true }
             switch choice {
             case .auto: return true

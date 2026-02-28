@@ -82,6 +82,15 @@ extension OpenClawActivityStore {
         activeRunId = nil
     }
 
+    /// Clears currently visible trace history while keeping lifecycle flags intact.
+    /// Useful for user-initiated "clear traces" actions in the UI.
+    public func clearTimeline() {
+        items.removeAll()
+        toolCallIndex.removeAll()
+        activeThinkingIndex = nil
+        activeAssistantIndex = nil
+    }
+
     /// Returns timeline entries for the active run, or the most recent run if idle.
     public func timelineItemsForFocusedRun(limit: Int = 40) -> [ActivityItem] {
         guard limit > 0 else { return [] }
@@ -93,6 +102,13 @@ extension OpenClawActivityStore {
             return Array(items.suffix(limit))
         }
         return Array(scoped.suffix(limit))
+    }
+
+    /// Returns timeline entries in chronological order regardless of active run.
+    /// Use this for UI surfaces where auto-switching between runs is undesirable.
+    public func timelineItemsForDisplay(limit: Int = 120) -> [ActivityItem] {
+        guard limit > 0 else { return [] }
+        return Array(items.suffix(limit))
     }
 }
 
@@ -271,18 +287,43 @@ extension OpenClawActivityStore {
         if let index = activeAssistantIndex,
            index < items.count,
            case .assistant(var activity) = items[index].kind {
-            activity.text = fullText ?? (activity.text + delta)
+            activity.text = mergeAssistantText(currentText: activity.text, fullText: fullText, delta: delta)
             activity.isStreaming = true
             if !mediaUrls.isEmpty { activity.mediaUrls.append(contentsOf: mediaUrls) }
             items[index].kind = .assistant(activity)
         } else {
             let activity = AssistantActivity(
-                text: fullText ?? delta, isStreaming: true, mediaUrls: mediaUrls, startedAt: timestamp
+                text: mergeAssistantText(currentText: "", fullText: fullText, delta: delta),
+                isStreaming: true,
+                mediaUrls: mediaUrls,
+                startedAt: timestamp
             )
             let item = ActivityItem(id: UUID(), runId: runId, timestamp: timestamp, kind: .assistant(activity))
             activeAssistantIndex = items.count
             items.append(item)
         }
+    }
+
+    private func mergeAssistantText(currentText: String, fullText: String?, delta: String) -> String {
+        if let fullText {
+            return fullText
+        }
+
+        guard !delta.isEmpty else {
+            return currentText
+        }
+
+        // Gateway assistant stream may emit cumulative snapshots in `delta`.
+        // If the new chunk already includes the prior text, treat it as replacement.
+        if !currentText.isEmpty, delta.hasPrefix(currentText) {
+            return delta
+        }
+
+        if !currentText.isEmpty, currentText.hasPrefix(delta) {
+            return currentText
+        }
+
+        return currentText + delta
     }
 }
 
