@@ -48,12 +48,15 @@ enum ThinkingTraceLogic {
 
 // MARK: - ThinkingTraceView
 
-/// Renders a model thinking/reasoning trace block.
+/// Renders a model thinking/reasoning trace as a flat action row.
 ///
-/// - While streaming: displays inline muted italic text (the thinking content).
-/// - When done (not streaming): auto-collapses to a small pill ("Thought for Xs").
-/// - The pill is clickable to expand/collapse via `ExpandedBlocksStore`.
-/// - When expanded: shows full thinking text in a capped `ScrollView`.
+/// Matches the Perplexity Computer visual language: bare SF Symbol icon,
+/// medium-weight label, chevron toggle, and an expandable thread-line
+/// section for the full thinking text.
+///
+/// - While streaming: animated brain icon, "Thinking..." label, no chevron.
+/// - When done: static icon, "Thought for Ns" label, chevron to expand.
+/// - Expanded: italic thinking text with a vertical thread line.
 struct ThinkingTraceView: View {
 
     let thinking: String
@@ -64,78 +67,113 @@ struct ThinkingTraceView: View {
 
     @Environment(\.theme) private var theme
     @EnvironmentObject private var expandedStore: ExpandedBlocksStore
+    @State private var isHovered = false
 
     private var isExpanded: Bool {
         expandedStore.isExpanded(blockId)
     }
 
+    private var collapsedLabel: String {
+        ThinkingTraceLogic.collapsedLabel(duration: duration)
+    }
+
     var body: some View {
-        if isStreaming {
-            streamingView
-        } else {
-            collapsedView
-        }
-    }
+        VStack(alignment: .leading, spacing: 0) {
+            rowHeader
+                .background(isHovered ? theme.primaryText.opacity(0.04) : Color.clear)
+                .animation(.easeInOut(duration: 0.15), value: isHovered)
 
-    // MARK: - Streaming View
-
-    /// Inline muted italic text shown while the model is still thinking.
-    private var streamingView: some View {
-        Text(thinking)
-            .font(.system(size: 13))
-            .italic()
-            .foregroundColor(theme.tertiaryText)
-            .lineLimit(4)
-            .frame(maxWidth: baseWidth, alignment: .leading)
-    }
-
-    // MARK: - Collapsed / Expandable View
-
-    /// Collapsed pill with optional expansion to full thinking text.
-    private var collapsedView: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            pillButton
-            if isExpanded {
-                expandedContent
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+            if isExpanded && !thinking.isEmpty {
+                expandedThinking
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .move(edge: .top)),
+                        removal: .opacity
+                    ))
             }
         }
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isExpanded)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isExpanded)
+        .onHover { hovering in
+            isHovered = hovering
+            if !isStreaming {
+                if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+            }
+        }
     }
 
-    /// The clickable capsule pill showing "Thought for Xs" and a chevron.
-    private var pillButton: some View {
-        Button {
-            expandedStore.toggle(blockId)
-        } label: {
-            HStack(spacing: 6) {
-                Text(ThinkingTraceLogic.collapsedLabel(duration: duration))
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
+    // MARK: - Row Header
 
-                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
+    private var rowHeader: some View {
+        Button(action: toggleExpansion) {
+            HStack(spacing: 10) {
+                // Bare icon — no container background
+                if isStreaming {
+                    Image(systemName: "brain.head.profile")
+                        .font(.system(size: 20))
+                        .foregroundColor(theme.tertiaryText)
+                        .symbolEffect(.variableColor.iterative, isActive: isStreaming)
+                        .frame(width: 24, height: 24)
+                } else {
+                    Image(systemName: "brain.head.profile")
+                        .font(.system(size: 20))
+                        .foregroundColor(theme.tertiaryText)
+                        .contentTransition(.symbolEffect(.replace.downUp))
+                        .frame(width: 24, height: 24)
+                }
+
+                Text(collapsedLabel)
+                    .font(theme.font(size: 14, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .monospacedDigit()
+
+                Spacer()
+
+                if !isStreaming {
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+                        .contentTransition(.symbolEffect(.replace))
+                }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(
-                Capsule()
-                    .fill(theme.tertiaryBackground)
-            )
+            .padding(.horizontal, 4)
+            .padding(.vertical, 7)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(isStreaming)
     }
 
-    /// Full thinking text in a height-capped scroll view.
-    private var expandedContent: some View {
-        ScrollView {
-            Text(thinking)
-                .font(.system(size: 13))
-                .foregroundColor(theme.tertiaryText)
-                .frame(maxWidth: baseWidth, alignment: .leading)
-                .textSelection(.enabled)
+    // MARK: - Expanded Thinking
+
+    private var expandedThinking: some View {
+        HStack(alignment: .top, spacing: 0) {
+            // Vertical thread line aligned with icon center
+            Rectangle()
+                .fill(Color.gray.opacity(0.2))
+                .frame(width: 2)
+                .clipShape(RoundedRectangle(cornerRadius: 1))
+                .padding(.leading, 13)
+                .scaleEffect(y: isExpanded ? 1 : 0, anchor: .top)
+
+            ScrollView {
+                Text(thinking)
+                    .font(theme.font(size: 13, weight: .regular))
+                    .foregroundColor(theme.secondaryText.opacity(0.8))
+                    .italic()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+                    .padding(10)
+            }
+            .frame(maxHeight: 300)
+            .padding(.leading, 12)
+            .padding(.bottom, 8)
         }
-        .frame(maxHeight: 300)
+    }
+
+    // MARK: - Actions
+
+    private func toggleExpansion() {
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+            expandedStore.toggle(blockId)
+        }
     }
 }
