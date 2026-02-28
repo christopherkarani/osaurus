@@ -318,17 +318,38 @@ extension ContentBlock {
                 )
             }
 
-            if turn.hasThinking {
+            // Unified activity group: when a turn has BOTH thinking AND tool calls,
+            // emit a single .activityGroup that renders them as a cohesive stream.
+            // Otherwise, emit .thinking and .toolCallGroup separately.
+            let hasToolCalls = !(turn.toolCalls ?? []).isEmpty
+
+            if turn.hasThinking && hasToolCalls {
+                // Combined thinking + tools → unified .activityGroup
+                let items = turn.toolCalls!.map { ToolCallItem(call: $0, result: turn.toolResults[$0.id]) }
                 turnBlocks.append(
-                    .thinking(
+                    .activityGroup(
                         turnId: turn.id,
-                        index: 0,
-                        text: turn.thinking,
-                        isStreaming: isStreaming && turn.contentIsEmpty,
-                        duration: nil,
+                        thinkingText: turn.thinking,
+                        thinkingIsStreaming: isStreaming && turn.contentIsEmpty,
+                        thinkingDuration: nil,
+                        calls: items,
                         position: .middle
                     )
                 )
+            } else {
+                // Thinking only (no tool calls yet)
+                if turn.hasThinking {
+                    turnBlocks.append(
+                        .thinking(
+                            turnId: turn.id,
+                            index: 0,
+                            text: turn.thinking,
+                            isStreaming: isStreaming && turn.contentIsEmpty,
+                            duration: nil,
+                            position: .middle
+                        )
+                    )
+                }
             }
 
             let shouldSuppressParagraph = suppressAssistantText && turn.role == .assistant
@@ -343,15 +364,14 @@ extension ContentBlock {
                         position: .middle
                     )
                 )
-            } else if isStreaming && !turn.hasThinking && (turn.toolCalls ?? []).isEmpty && !shouldSuppressParagraph {
+            } else if isStreaming && !turn.hasThinking && !hasToolCalls && !shouldSuppressParagraph {
                 turnBlocks.append(.typingIndicator(turnId: turn.id, position: .middle))
             }
 
-            // Emit tool calls inline per turn to preserve chronological order.
-            // Multiple tool calls within a single turn (parallel calls) are still
-            // grouped together, but tool calls from different turns are not merged.
-            if let toolCalls = turn.toolCalls, !toolCalls.isEmpty {
-                let items = toolCalls.map { ToolCallItem(call: $0, result: turn.toolResults[$0.id]) }
+            // Tool calls without thinking → standalone .toolCallGroup
+            // (preserves ParallelGroupRow for multiple parallel calls)
+            if hasToolCalls && !turn.hasThinking {
+                let items = turn.toolCalls!.map { ToolCallItem(call: $0, result: turn.toolResults[$0.id]) }
                 turnBlocks.append(.toolCallGroup(turnId: turn.id, calls: items, position: .middle))
             }
 
