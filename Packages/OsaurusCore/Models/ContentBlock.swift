@@ -15,6 +15,17 @@ enum BlockPosition: Equatable {
     case only, first, middle, last
 }
 
+// MARK: - FileSummaryItem
+
+enum FileOperation: String, Equatable {
+    case created, modified, deleted
+}
+
+struct FileSummaryItem: Equatable {
+    let path: String
+    let operation: FileOperation
+}
+
 /// A tool call with its result for grouped rendering
 struct ToolCallItem: Equatable {
     let call: ToolCall
@@ -36,6 +47,7 @@ enum ContentBlockKind: Equatable {
     case typingIndicator
     case groupSpacer
     case activityGroup(thinkingText: String, thinkingIsStreaming: Bool, thinkingDuration: TimeInterval?, calls: [ToolCallItem])
+    case fileSummary(files: [FileSummaryItem])
 
     /// Custom Equatable optimized for performance during streaming.
     /// Uses text length comparison as a cheap proxy for content change detection.
@@ -80,6 +92,9 @@ enum ContentBlockKind: Equatable {
             guard lThink.count == rThink.count else { return false }
             return lThink == rThink
 
+        case let (.fileSummary(lFiles), .fileSummary(rFiles)):
+            return lFiles == rFiles
+
         default:
             return false
         }
@@ -99,7 +114,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         switch kind {
         case let .header(role, _, _): return role
         case let .paragraph(_, _, _, role): return role
-        case .toolCallGroup, .thinking, .clarification, .typingIndicator, .groupSpacer, .activityGroup:
+        case .toolCallGroup, .thinking, .clarification, .typingIndicator, .groupSpacer, .activityGroup, .fileSummary:
             return .assistant
         case .userMessage: return .user
         }
@@ -155,7 +170,9 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
 
     static func toolCallGroup(turnId: UUID, calls: [ToolCallItem], position: BlockPosition) -> ContentBlock {
         ContentBlock(
-            id: "toolgroup-\(turnId.uuidString)-\(calls.map(\.call.id).joined(separator: "-"))",
+            // Keep ID stable per turn so expansion state and row identity survive
+            // incremental tool-call updates while a turn is streaming.
+            id: "toolgroup-\(turnId.uuidString)",
             turnId: turnId,
             kind: .toolCallGroup(calls: calls),
             position: position
@@ -219,6 +236,15 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
                 thinkingDuration: thinkingDuration,
                 calls: calls
             ),
+            position: position
+        )
+    }
+
+    static func fileSummary(turnId: UUID, files: [FileSummaryItem], position: BlockPosition) -> ContentBlock {
+        ContentBlock(
+            id: "filesummary-\(turnId.uuidString)",
+            turnId: turnId,
+            kind: .fileSummary(files: files),
             position: position
         )
     }
@@ -329,12 +355,42 @@ extension ContentBlock {
                 turnBlocks.append(.toolCallGroup(turnId: turn.id, calls: items, position: .middle))
             }
 
+            // Emit file summary when a turn contains >=2 file-mutation tool calls
+            let fileSummaryItems = Self.extractFileSummaryItems(from: turn)
+            if fileSummaryItems.count >= 2 {
+                turnBlocks.append(.fileSummary(turnId: turn.id, files: fileSummaryItems, position: .middle))
+            }
+
             blocks.append(contentsOf: assignPositions(to: turnBlocks))
             previousRole = turn.role
             previousTurnId = turn.id
         }
 
         return blocks
+    }
+
+    // MARK: - File Summary Extraction
+
+    private static let fileMutationPatterns = [
+        "write", "create", "edit", "patch", "str_replace",
+        "delete", "rm", "move", "rename", "copy",
+    ]
+
+    private static func extractFileSummaryItems(from turn: ChatTurn) -> [FileSummaryItem] {
+        guard let toolCalls = turn.toolCalls else { return [] }
+        return toolCalls.compactMap { call in
+            let name = call.function.name.lowercased()
+            guard fileMutationPatterns.contains(where: { name.contains($0) }) else { return nil }
+            guard let data = call.function.arguments.data(using: .utf8),
+                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let path = json["path"] as? String ?? json["file"] as? String ?? json["file_path"] as? String
+            else { return nil }
+            let op: FileOperation =
+                name.contains("delete") || name.contains("rm") ? .deleted
+                : name.contains("create") || name.contains("write") ? .created
+                : .modified
+            return FileSummaryItem(path: path, operation: op)
+        }
     }
 
     private static func assignPositions(to blocks: [ContentBlock]) -> [ContentBlock] {

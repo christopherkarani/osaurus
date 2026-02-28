@@ -89,7 +89,7 @@ struct ContentBlockView: View, Equatable {
             .padding(.bottom, isLastInTurn ? 16 : 4)
 
         case let .toolCallGroup(calls):
-            ToolCallSummaryCard(calls: calls)
+            ToolCallSummaryCard(calls: calls, blockId: block.id)
                 .padding(.top, 6)
                 .padding(.bottom, 16)
 
@@ -136,6 +136,15 @@ struct ContentBlockView: View, Equatable {
                 .padding(.bottom, isLastInTurn ? 16 : 8)
 
         case .groupSpacer:
+            EmptyView()
+
+        case .activityGroup:
+            EmptyView()  // TODO: Task 8 — wire ActivityGroupView
+
+        case .fileSummary:
+            EmptyView()  // TODO: Task 8 — wire FileSummaryCardView
+
+        @unknown default:
             EmptyView()
         }
     }
