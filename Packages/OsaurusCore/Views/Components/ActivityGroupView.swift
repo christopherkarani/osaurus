@@ -57,9 +57,16 @@ struct ActivityGroupView: View {
                     insertion: .opacity.combined(with: .offset(y: 6)),
                     removal: .opacity
                 ))
+                .animation(
+                    .spring(response: 0.25, dampingFraction: 0.75)
+                        .delay(Double(index) * 0.08),
+                    value: calls.count
+                )
             }
         }
         .animation(.spring(response: 0.25, dampingFraction: 0.75), value: calls.count)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Activity group with \(calls.count) actions")
     }
 }
 

@@ -21,6 +21,7 @@ struct ToolActionRow: View {
     @State private var isHovered = false
     @State private var showRedirectField = false
     @State private var redirectText = ""
+    @State private var settleScale: CGFloat = 1.0
 
     @Environment(\.theme) private var theme
     @EnvironmentObject private var expandedStore: ExpandedBlocksStore
@@ -41,6 +42,7 @@ struct ToolActionRow: View {
             rowHeader
                 .background(isHovered ? theme.primaryText.opacity(0.04) : Color.clear)
                 .animation(.easeInOut(duration: 0.15), value: isHovered)
+                .shimmerEffect(isActive: isRunning, accentColor: theme.accentColor.opacity(0.5), period: 2.5)
 
             if isExpanded {
                 expandedContent
@@ -57,10 +59,22 @@ struct ToolActionRow: View {
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isExpanded)
         .animation(.spring(response: 0.3, dampingFraction: 0.9), value: showRedirectField)
+        .scaleEffect(settleScale)
         .onHover { hovering in
             isHovered = hovering
             if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
         }
+        .onChange(of: result) { oldValue, newValue in
+            if oldValue == nil && newValue != nil {
+                settleScale = 1.01
+                withAnimation(.easeOut(duration: 0.2)) {
+                    settleScale = 1.0
+                }
+            }
+        }
+        .accessibilityLabel(title)
+        .accessibilityValue(isRunning ? "Running" : "Complete")
+        .accessibilityHint(isRunning ? "" : "Double-click to expand")
     }
 
     // MARK: - Row Header
@@ -118,6 +132,7 @@ struct ToolActionRow: View {
             Image(systemName: "xmark.circle")
                 .font(.system(size: 20))
                 .foregroundColor(theme.errorColor)
+                .symbolEffect(.bounce.down, value: isRejected)
                 .frame(width: 24, height: 24)
         } else {
             Image(systemName: iconName)

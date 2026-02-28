@@ -28,6 +28,7 @@ enum ShimmerEffectLogic {
 struct ShimmerEffectModifier: ViewModifier {
     let isActive: Bool
     let accentColor: Color
+    let period: Double
 
     @State private var phase: CGFloat = 0
 
@@ -47,7 +48,7 @@ struct ShimmerEffectModifier: ViewModifier {
                     )
                     .onAppear {
                         withAnimation(
-                            .linear(duration: ShimmerEffectLogic.sweepDuration)
+                            .linear(duration: period)
                                 .repeatForever(autoreverses: false)
                         ) {
                             phase = 1
@@ -63,7 +64,7 @@ struct ShimmerEffectModifier: ViewModifier {
 // MARK: - View Extension
 
 extension View {
-    func shimmerEffect(isActive: Bool, accentColor: Color) -> some View {
-        modifier(ShimmerEffectModifier(isActive: isActive, accentColor: accentColor))
+    func shimmerEffect(isActive: Bool, accentColor: Color, period: Double = ShimmerEffectLogic.sweepDuration) -> some View {
+        modifier(ShimmerEffectModifier(isActive: isActive, accentColor: accentColor, period: period))
     }
 }
