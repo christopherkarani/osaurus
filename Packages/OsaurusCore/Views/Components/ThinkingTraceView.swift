@@ -68,6 +68,7 @@ struct ThinkingTraceView: View {
     @Environment(\.theme) private var theme
     @EnvironmentObject private var expandedStore: ExpandedBlocksStore
     @State private var isHovered = false
+    @State private var thinkingPulseOpacity: Double = 0.6
 
     private var isExpanded: Bool {
         expandedStore.isExpanded(blockId)
@@ -98,6 +99,25 @@ struct ThinkingTraceView: View {
                 if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
             }
         }
+        .onAppear {
+            if isStreaming {
+                withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
+                    thinkingPulseOpacity = 1.0
+                }
+            }
+        }
+        .onChange(of: isStreaming) { _, streaming in
+            if streaming {
+                thinkingPulseOpacity = 0.6
+                withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
+                    thinkingPulseOpacity = 1.0
+                }
+            } else {
+                withAnimation(.easeOut(duration: 0.3)) {
+                    thinkingPulseOpacity = 1.0
+                }
+            }
+        }
     }
 
     // MARK: - Row Header
@@ -124,6 +144,7 @@ struct ThinkingTraceView: View {
                     .font(theme.font(size: 14, weight: .medium))
                     .foregroundColor(theme.secondaryText)
                     .monospacedDigit()
+                    .opacity(isStreaming ? thinkingPulseOpacity : 1.0)
 
                 Spacer()
 
@@ -161,6 +182,7 @@ struct ThinkingTraceView: View {
                     .italic()
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
+                    .textShimmer(isActive: isStreaming, accentColor: theme.accentColor, period: 2.5)
                     .padding(10)
             }
             .frame(maxHeight: 300)
