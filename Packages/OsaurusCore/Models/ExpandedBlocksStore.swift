@@ -44,4 +44,14 @@ final class ExpandedBlocksStore: ObservableObject, @unchecked Sendable {
     func collapse(_ id: String) {
         expandedIds.remove(id)
     }
+
+    /// Collapse all currently tracked expanded blocks.
+    func collapseAll() {
+        expandedIds.removeAll()
+    }
+
+    /// Expand all known block IDs (use sparingly — prefer collapseAll).
+    func expandAll(ids: [String]) {
+        ids.forEach { expandedIds.insert($0) }
+    }
 }
