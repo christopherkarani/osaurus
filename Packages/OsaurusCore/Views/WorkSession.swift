@@ -164,6 +164,15 @@ public final class WorkSession: ObservableObject {
         turnsVersion += 1
     }
 
+    /// Injects a user message into the live execution stream without canceling execution.
+    /// Used by the redirect affordance on running tool rows.
+    func injectContext(_ text: String) {
+        let injectedTurn = ChatTurn(role: .user, content: text)
+        liveExecutionTurns.append(injectedTurn)
+        notifyTurnsChanged()
+        // TODO: Pass to the running WorkEngine when injectUserMessage is implemented
+    }
+
     /// Returns the last assistant turn, or creates one if needed
     private func lastAssistantTurn() -> ChatTurn {
         if let turn = liveExecutionTurns.last(where: { $0.role == .assistant }) {
@@ -411,7 +420,9 @@ public final class WorkSession: ObservableObject {
         preferredSelection: String?
     ) {
         let openClawSelections = Self.openClawSelectionOptions(from: allOptions)
-        modelOptions = openClawSelections
+        if modelOptions != openClawSelections {
+            modelOptions = openClawSelections
+        }
 
         let resolvedSelection =
             normalizedOpenClawSelectionIdentifier(from: selectedModel)
@@ -419,7 +430,9 @@ public final class WorkSession: ObservableObject {
             ?? normalizedOpenClawSelectionIdentifier(from: windowState?.session.selectedModel)
             ?? inferDefaultOpenClawSelectionIdentifier(from: openClawSelections)
 
-        selectedModel = resolvedSelection
+        if selectedModel != resolvedSelection {
+            selectedModel = resolvedSelection
+        }
     }
 
     private func performInitialModelHydration(using modelCatalog: ModelCatalogService) async {
@@ -1084,6 +1097,16 @@ public final class WorkSession: ObservableObject {
         }
     }
 
+    /// Removes all assistant turns except `turn`, collapsing duplicates created by
+    /// multiple gateway runs (each `didStartIteration` appends a new assistant turn).
+    private func consolidateAssistantTurns(keeping turn: ChatTurn) {
+        let extras = liveExecutionTurns.filter { $0.role == .assistant && $0 !== turn }
+        guard !extras.isEmpty else { return }
+        liveExecutionTurns.removeAll { $0.role == .assistant && $0 !== turn }
+        deltaProcessor?.reset(turn: turn)
+        notifyTurnsChanged()
+    }
+
     /// Adds clarification question and response as new turns
     private func addClarificationTurns(question: String, response: String) {
         liveExecutionTurns.append(ChatTurn(role: .user, content: "**\(question)**\n\n\(response)"))
@@ -1336,6 +1359,12 @@ extension WorkSession: WorkEngineDelegate {
         if shouldAdoptActivityAssistantText(cleanedAssistant, over: assistantTurn.content) {
             assistantTurn.content = cleanedAssistant
             assistantTurn.notifyContentChanged()
+        }
+
+        // When the final (non-streaming) snapshot arrives, collapse any duplicate
+        // assistant turns that were created by didStartIteration across gateway runs.
+        if !latestAssistant.isStreaming {
+            consolidateAssistantTurns(keeping: assistantTurn)
         }
 
         if let latestThinking = items.reversed().compactMap({ item -> ThinkingActivity? in
