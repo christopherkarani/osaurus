@@ -7,6 +7,7 @@
 //  Expanded: shows summary header + list of ToolCallRowView items.
 //
 
+import AppKit
 import SwiftUI
 
 // MARK: - ToolCallSummaryLogic (testable)
@@ -144,117 +145,126 @@ enum ToolCallSummaryLogic {
 struct ToolCallSummaryCard: View {
     let calls: [ToolCallItem]
     let blockId: String
+    var onRedirect: ((String) -> Void)? = nil
 
     @Environment(\.theme) private var theme
     @EnvironmentObject private var expandedStore: ExpandedBlocksStore
 
-    private var expansionKey: String {
-        "tool-group-summary-\(blockId)"
+    var body: some View {
+        if calls.count == 1, let item = calls.first {
+            // Single call: bare ToolActionRow, no wrapper
+            ToolActionRow(
+                call: item.call,
+                result: item.result,
+                blockId: blockId,
+                isGroupActive: item.result == nil,
+                onRedirect: onRedirect
+            )
+        } else {
+            // Multiple calls: parallel group header + children
+            ParallelGroupRow(calls: calls, blockId: blockId, onRedirect: onRedirect)
+        }
     }
+}
 
-    private var isExpanded: Bool {
-        expandedStore.isExpanded(expansionKey)
+// MARK: - ParallelGroupRow
+
+private struct ParallelGroupRow: View {
+    let calls: [ToolCallItem]
+    let blockId: String
+    var onRedirect: ((String) -> Void)? = nil
+
+    @Environment(\.theme) private var theme
+    @EnvironmentObject private var expandedStore: ExpandedBlocksStore
+    @State private var isHovered = false
+
+    private var expansionKey: String { "tool-group-summary-\(blockId)" }
+    private var isExpanded: Bool { expandedStore.isExpanded(expansionKey) }
+    private var hasActive: Bool { ToolCallSummaryLogic.hasActiveTools(calls: calls) }
+
+    private var summaryTitle: String {
+        ToolCallSummaryLogic.summaryLabel(
+            totalCount: calls.count,
+            inProgressCount: calls.filter { $0.result == nil }.count
+        )
     }
-
-    // MARK: - Computed Properties
-
-    private var hasActive: Bool {
-        ToolCallSummaryLogic.hasActiveTools(calls: calls)
-    }
-
-    private var hasRejected: Bool {
-        calls.contains { $0.result?.hasPrefix("[REJECTED]") == true }
-    }
-
-    private var inProgressCount: Int {
-        calls.filter { $0.result == nil }.count
-    }
-
-    private var summaryLabel: String {
-        ToolCallSummaryLogic.summaryLabel(totalCount: calls.count, inProgressCount: inProgressCount)
-    }
-
-    // MARK: - Body
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Summary header (always visible, clickable)
-            Button(action: {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                    expandedStore.toggle(expansionKey)
-                }
-            }) {
-                summaryHeader
-            }
-            .buttonStyle(.plain)
+            groupHeader
+                .background(isHovered ? theme.primaryText.opacity(0.04) : Color.clear)
+                .animation(.easeInOut(duration: 0.15), value: isHovered)
 
-            // Expanded rows
             if isExpanded {
-                expandedRows
+                childRows
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .move(edge: .top)),
+                        removal: .opacity
+                    ))
             }
         }
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(theme.secondaryBackground.opacity(0.5))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(
-                    theme.primaryBorder.opacity(0.2),
-                    lineWidth: 1
-                )
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .shimmerEffect(isActive: hasActive, accentColor: theme.accentColor)
-    }
-
-    // MARK: - Summary Header
-
-    private var summaryHeader: some View {
-        HStack(spacing: 8) {
-            // Status icon or pulsing dot
-            if hasActive {
-                Circle()
-                    .fill(theme.accentColor)
-                    .frame(width: 6, height: 6)
-            } else {
-                Image(systemName: hasRejected ? "xmark.circle.fill" : "checkmark.circle.fill")
-                    .font(.system(size: 12))
-                    .foregroundColor(hasRejected ? theme.errorColor : theme.successColor)
-            }
-
-            Text(summaryLabel)
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                .foregroundColor(theme.secondaryText)
-
-            Spacer()
-
-            Image(systemName: "chevron.right")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
-                .rotationEffect(.degrees(isExpanded ? 90 : 0))
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isExpanded)
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .contentShape(Rectangle())
     }
 
-    // MARK: - Expanded Rows
+    private var groupHeader: some View {
+        Button(action: {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                expandedStore.toggle(expansionKey)
+            }
+        }) {
+            HStack(spacing: 10) {
+                // Bare icon — NO container background
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.system(size: 20))
+                    .foregroundColor(theme.tertiaryText)
+                    .symbolEffect(.variableColor.iterative, isActive: hasActive)
+                    .frame(width: 24, height: 24)
 
-    private var expandedRows: some View {
-        VStack(spacing: 0) {
-            Divider()
-                .background(theme.primaryBorder.opacity(0.15))
+                Text(summaryTitle)
+                    .font(theme.font(size: 14, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
 
-            ForEach(Array(calls.enumerated()), id: \.element.call.id) { index, item in
-                ToolCallRowView(call: item.call, result: item.result)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                Spacer()
 
-                if index < calls.count - 1 {
-                    Divider()
-                        .background(theme.primaryBorder.opacity(0.1))
+                // Chevron up/down
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
+                    .contentTransition(.symbolEffect(.replace))
+            }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 7)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var childRows: some View {
+        HStack(alignment: .top, spacing: 0) {
+            // Thread line spanning all children
+            Rectangle()
+                .fill(Color.gray.opacity(0.2))
+                .frame(width: 2)
+                .clipShape(RoundedRectangle(cornerRadius: 1))
+                .padding(.leading, 13)
+                .scaleEffect(y: isExpanded ? 1 : 0, anchor: .top)
+
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(calls, id: \.call.id) { item in
+                    ToolActionRow(
+                        call: item.call,
+                        result: item.result,
+                        blockId: "\(blockId)-\(item.call.id)",
+                        isGroupActive: hasActive,
+                        onRedirect: onRedirect
+                    )
                 }
             }
+            .padding(.leading, 12)
         }
     }
 }
@@ -274,7 +284,7 @@ struct ToolCallSummaryCard: View {
                             arguments: "{\"path\": \"/src/main.swift\"}"
                         )
                     ),
-                    result: "import Foundation\n\nfunc main() {\n    print(\"Hello!\")\n}"
+                    result: "import Foundation\nfunc main() {\n    print(\"Hello!\")\n}"
                 ),
                 ToolCallItem(
                     call: ToolCall(
@@ -301,29 +311,17 @@ struct ToolCallSummaryCard: View {
             ]
 
             VStack(spacing: 20) {
-                Text("In Progress")
+                Text("Single Call")
                     .font(.headline)
                     .foregroundColor(.white)
 
-                ToolCallSummaryCard(calls: calls, blockId: "preview-group-running")
+                ToolCallSummaryCard(calls: [calls[0]], blockId: "preview-single")
 
-                Text("All Complete")
+                Text("Parallel Group")
                     .font(.headline)
                     .foregroundColor(.white)
 
-                ToolCallSummaryCard(calls: [
-                    ToolCallItem(
-                        call: ToolCall(
-                            id: "call_4",
-                            type: "function",
-                            function: ToolCallFunction(
-                                name: "list_files",
-                                arguments: "{\"path\": \"/src\"}"
-                            )
-                        ),
-                        result: "main.swift\nutils.swift"
-                    ),
-                ], blockId: "preview-group-complete")
+                ToolCallSummaryCard(calls: calls, blockId: "preview-group")
             }
             .padding()
             .frame(width: 500, height: 500)
